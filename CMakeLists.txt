@@ -22,15 +22,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(clap)
 
-# 2. Fetch ReaderWriterQueue (Header only)
-FetchContent_Declare(
-    readerwriterqueue
-    GIT_REPOSITORY https://github.com/cameron314/readerwriterqueue.git
-    GIT_TAG v1.0.6
-)
-FetchContent_MakeAvailable(readerwriterqueue)
-
-# 3. Fetch ARA SDK (pinned)
+# 2. Fetch ARA SDK (pinned)
 FetchContent_Declare(
     ara_sdk
     GIT_REPOSITORY https://github.com/Celemony/ARA_SDK.git
@@ -56,7 +48,6 @@ find_library(ONNXRUNTIME_LIB onnxruntime PATHS ${ONNXRUNTIME_LIB_DIR} NO_DEFAULT
 # Common include directories
 set(COMMON_INCLUDES
     ${clap_SOURCE_DIR}/include
-    ${readerwriterqueue_SOURCE_DIR}
     ${ara_sdk_SOURCE_DIR}
     ${ara_sdk_SOURCE_DIR}/ARA_Library/Dispatch
     ${ONNXRUNTIME_INCLUDE_DIR}
@@ -81,6 +72,7 @@ set_target_properties(MambaSuiteClap PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins
     INSTALL_RPATH "$ORIGIN"
     BUILD_RPATH "$ORIGIN"
+    BUILD_WITH_INSTALL_RPATH ON
     CXX_VISIBILITY_PRESET hidden
 )
 target_link_libraries(MambaSuiteClap
@@ -105,6 +97,7 @@ set_target_properties(MambaSuiteARA PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins
     INSTALL_RPATH "$ORIGIN"
     BUILD_RPATH "$ORIGIN"
+    BUILD_WITH_INSTALL_RPATH ON
     CXX_VISIBILITY_PRESET hidden
 )
 target_link_libraries(MambaSuiteARA
@@ -117,4 +110,11 @@ target_link_libraries(MambaSuiteARA
 # Copy models
 if(EXISTS ${CMAKE_SOURCE_DIR}/models)
     file(COPY ${CMAKE_SOURCE_DIR}/models DESTINATION ${CMAKE_BINARY_DIR}/plugins)
+endif()
+
+# Deploy libonnxruntime.so alongside plugins so $ORIGIN resolves at runtime
+set(ONNXRUNTIME_SO ${ONNXRUNTIME_LIB_DIR}/libonnxruntime.so.1.17.1)
+if(EXISTS ${ONNXRUNTIME_SO})
+    file(COPY ${ONNXRUNTIME_SO} DESTINATION ${CMAKE_BINARY_DIR}/plugins)
+    configure_file(${ONNXRUNTIME_SO} ${CMAKE_BINARY_DIR}/plugins/libonnxruntime.so COPYONLY)
 endif()

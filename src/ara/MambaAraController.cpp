@@ -90,8 +90,12 @@ void MambaDocumentController::doDestroyMusicalContext(ARA::PlugIn::MusicalContex
     delete musicalContext;
 }
 
-void MambaDocumentController::doUpdateMusicalContextContent(ARA::PlugIn::MusicalContext*, const ARA::ARAContentTimeRange*, ARA::ContentUpdateScopes) noexcept
+void MambaDocumentController::doUpdateMusicalContextContent(ARA::PlugIn::MusicalContext* context, const ARA::ARAContentTimeRange* range, ARA::ContentUpdateScopes scopeFlags) noexcept
 {
+    // Musical context (tempo, time signature) changed — the companion CLAP plugin
+    // would re-request this info via ARA host bridge if needed for model inference.
+    // Currently unused; the model does not condition behavior on tempo/key.
+    (void)context; (void)range; (void)scopeFlags;
 }
 
 ARA::PlugIn::RegionSequence* MambaDocumentController::doCreateRegionSequence(ARA::PlugIn::Document* document, ARA::ARARegionSequenceHostRef hostRef) noexcept
@@ -114,17 +118,25 @@ void MambaDocumentController::doDestroyAudioSource(ARA::PlugIn::AudioSource* aud
     delete audioSource;
 }
 
-void MambaDocumentController::doUpdateAudioSourceContent(ARA::PlugIn::AudioSource*, const ARA::ARAContentTimeRange*, ARA::ContentUpdateScopes) noexcept
+void MambaDocumentController::doUpdateAudioSourceContent(ARA::PlugIn::AudioSource* source, const ARA::ARAContentTimeRange* range, ARA::ContentUpdateScopes scopeFlags) noexcept
 {
+    // Audio source content (waveform edits, comping) changed.
+    // Would trigger re-analysis if the analysis model was loaded.
+    (void)source; (void)range; (void)scopeFlags;
 }
 
-void MambaDocumentController::willEnableAudioSourceSamplesAccess(ARA::PlugIn::AudioSource*, bool) noexcept
+void MambaDocumentController::willEnableAudioSourceSamplesAccess(ARA::PlugIn::AudioSource* source, bool enable) noexcept
 {
-    audioSourceAccessEnabled_ = true;
+    audioSourceAccessEnabled_ = enable;
+    (void)source;
 }
 
-void MambaDocumentController::didEnableAudioSourceSamplesAccess(ARA::PlugIn::AudioSource*, bool) noexcept
+void MambaDocumentController::didEnableAudioSourceSamplesAccess(ARA::PlugIn::AudioSource* source, bool enable) noexcept
 {
+    // Host has granted/revoked access to audio source sample data.
+    // When enabled, companion plugin can read source samples via
+    // ARA::PlugIn::AudioSourceReader for offline analysis.
+    (void)source; (void)enable;
 }
 
 ARA::PlugIn::AudioModification* MambaDocumentController::doCreateAudioModification(ARA::PlugIn::AudioSource* audioSource, ARA::ARAAudioModificationHostRef hostRef, const ARA::PlugIn::AudioModification* optionalModificationToClone) noexcept

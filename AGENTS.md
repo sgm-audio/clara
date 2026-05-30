@@ -29,7 +29,7 @@ All four dependencies are fetched via CMake FetchContent (no manual install need
 python3 export_mamba_onnx.py
 ```
 
-Requires: `torch`, `onnxruntime`, `onnx`, `numpy`. Exports `models/mamba_rt.onnx` and `models/mamba_analysis.onnx` (both with `.onnx.data` sidecar). Uses `torch.jit.trace` with opset 18, not dynamo. Models already exist in `models/` — re-export only if architecture changes.
+Requires: `torch`, `onnxruntime`, `onnx`, `numpy`. Exports `models/mamba_rt.onnx` (with `.onnx.data` sidecar). Uses `torch.jit.trace` with opset 18, not dynamo. Models already exist in `models/` — re-export only if architecture changes.
 
 ## Architecture
 
@@ -40,15 +40,16 @@ src/ara/MambaAraController     — ARA2 DocumentController + PlaybackRenderer + 
 ```
 
 - `MambaInferenceEngine` is the single shared inference core. Both CLAP and ARA targets link it.
-- CLAP plugin resolves model path relative to the `.clap` binary via `dladdr` at `clap_create_plugin` time.
-- ARA PlaybackRenderer currently hardcodes `models/mamba_rt.onnx` path.
+- Both CLAP and ARA resolve model path relative to their binary via `dladdr`.
+- ARA 2.0 has no `renderSamples()` — audio processing is done by the companion CLAP plugin instance. The ARA library provides timeline metadata and audio source access for offline analysis (currently unused).
 - ONNX model I/O: 9 inputs (`audio_chunk` + 4×conv state + 4×ssm state) → 3 outputs (`processed_audio`, stacked conv state, stacked ssm state). The engine unstacks output states back into per-layer buffers each block.
 - CLAP reports latency of 4 samples (conv_width).
 - Parameters: bypass (stepped), wet/dry, intensity — all atomic, smoothed per-sample in the process loop.
 
 ## Known Blockers
 
-- **ARA2 does not build with the raw Celemony SDK.** The `MambaAraController` uses `ARA::PlugIn::*` C++ wrapper classes from `ARAPlug.h`, but the fetched ARA SDK may not expose all expected wrappers consistently. The `.so` currently builds, but ARA integration may need rework against the raw C API if `ARAPlug.h` wrappers are insufficient. See `TODO_PROGRESS.md` section II.
+- **ARA2 has no `renderSamples()`.** The ARA 2.0 `ARAPlaybackRendererInterface` only provides `addPlaybackRegion`/`removePlaybackRegion`. Audio processing is exclusively handled by the companion CLAP plugin instance. The ARA library provides timeline metadata and audio source access for offline analysis (currently unused).
+- **Models are untrained** — `mamba_rt.onnx` weights are randomly initialized. Audio output is noise until training is implemented.
 - No test suite. No CLAP validator or ARA validation runs are wired.
 
 ## C++ Conventions
@@ -63,4 +64,4 @@ src/ara/MambaAraController     — ARA2 DocumentController + PlaybackRenderer + 
 
 - CLAP: load `build/plugins/MambaSuiteClap.clap` in a CLAP host (Bitwig, Carla, clap-host)
 - ARA2: load in an ARA-compatible DAW (Studio One, Reaper with ARA extension)
-- Must have `models/mamba_rt.onnx` + `.onnx.data` adjacent to the plugin binary (inside the `.clap` bundle or in `models/` dir)
+- Must have `models/mamba_rt.onnx` + `.onnx.data` adjacent to the plugin binary (inside `models/` dir)

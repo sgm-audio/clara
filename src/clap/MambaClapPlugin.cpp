@@ -317,28 +317,31 @@ static clap_process_status mamba_process(const clap_plugin_t* plugin, const clap
         ? ((targetBypass > state->currentBypassValue) ? state->crossfadeStep : -state->crossfadeStep)
         : 0.0f;
 
+    // Process all channels through the engine first
     for (uint32_t ch = 0; ch < processChans; ++ch) {
         float* input = process->audio_inputs[0].data32[ch];
-        float* output = process->audio_outputs[0].data32[ch];
-
         std::memcpy(state->chIn[ch].data(), input, numSamples * sizeof(float));
-
         state->engine->processBlock(state->chIn[ch].data(), state->chOut[ch].data(), numSamples);
+    }
 
-        for (uint32_t s = 0; s < numSamples; ++s) {
+    // Mix per-sample, all channels share the same bypass ramp
+    float bypassVal = state->currentBypassValue;
+    for (uint32_t s = 0; s < numSamples; ++s) {
+        for (uint32_t ch = 0; ch < processChans; ++ch) {
+            float* input = process->audio_inputs[0].data32[ch];
+            float* output = process->audio_outputs[0].data32[ch];
             float dry = input[s];
             float wet = state->chOut[ch][s];
 
             wet = dry + (wet - dry) * intensityVal;
 
-            float mix = (1.0f - state->currentBypassValue) * (wet * wetDry + dry * (1.0f - wetDry))
-                      + state->currentBypassValue * dry;
-
-            state->currentBypassValue = std::clamp(state->currentBypassValue + crossfadeStep, 0.0f, 1.0f);
-
+            float mix = (1.0f - bypassVal) * (wet * wetDry + dry * (1.0f - wetDry))
+                      + bypassVal * dry;
             output[s] = mix;
         }
+        bypassVal = std::clamp(bypassVal + crossfadeStep, 0.0f, 1.0f);
     }
+    state->currentBypassValue = bypassVal;
 
     for (uint32_t ch = processChans; ch < outChans; ++ch) {
         std::memcpy(process->audio_outputs[0].data32[ch],

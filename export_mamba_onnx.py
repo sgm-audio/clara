@@ -350,22 +350,11 @@ if __name__ == "__main__":
     print(f"  Total parameters: {total_params:,}")
     print(f"  d_model={D_MODEL}, d_state={D_STATE}, n_layers={N_LAYERS}, conv_width={CONV_WIDTH}")
 
-    print("\n[2/3] Exporting analysis model...")
-    analysis_path = "models/mamba_analysis.onnx"
-    export_mamba_to_onnx(
-        analysis_path, d_model=D_MODEL, d_state=D_STATE, n_layers=N_LAYERS,
-        conv_width=CONV_WIDTH, dt_rank=DT_RANK, seq_len=SEQ_LEN, opset_version=18
-    )
-
-    print("\n[3/3] Verifying ONNX models...")
-    print(f"\nRT model ({rt_path}):")
+    print("\n[2/3] Verifying ONNX model...")
     verify_onnx_model(rt_path, D_MODEL, D_STATE, N_LAYERS, CONV_WIDTH, seq_len=64)
 
-    print(f"\nAnalysis model ({analysis_path}):")
-    verify_onnx_model(analysis_path, D_MODEL, D_STATE, N_LAYERS, CONV_WIDTH, seq_len=64)
-
     # Verify state continuity: process two chunks back-to-back
-    print("\n[4/4] Verifying state continuity across chunks...")
+    print("\n[3/3] Verifying state continuity across chunks...")
     import onnxruntime as ort
     sess = ort.InferenceSession(rt_path)
     chunk_len = 32
