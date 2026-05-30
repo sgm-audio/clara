@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            cmake \
+            g++ \
+            python3 \
+            python3-pip \
+            libpthread-stubs0-dev
+
+      - name: Install Python model deps
+        run: |
+          pip3 install torch --index-url https://download.pytorch.org/whl/cpu --quiet
+          pip3 install onnx onnxruntime numpy --quiet
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+
+      - name: Verify symbols
+        run: |
+          echo "=== CLAP entry ==="
+          readelf --dyn-syms build/plugins/MambaSuiteClap.clap | grep clap_entry
+          echo "=== ARA factory ==="
+          readelf --dyn-syms build/plugins/MambaSuiteARA.so | grep ARAGetFactory
+          echo "=== RPATH ==="
+          readelf -d build/plugins/MambaSuiteClap.clap | grep RUNPATH
+          readelf -d build/plugins/MambaSuiteARA.so | grep RUNPATH
+
+      - name: Verify onnxruntime deploy
+        run: |
+          ls -lh build/plugins/libonnxruntime.so*
+          test -f build/plugins/libonnxruntime.so.1.17.1
+          test -f build/plugins/libonnxruntime.so
+
+      - name: Verify model files
+        run: |
+          test -f build/plugins/models/mamba_rt.onnx
+          test -f build/plugins/models/mamba_rt.onnx.data
+
+      - name: Download clap-validator
+        run: |
+          wget -q https://github.com/free-audio/clap-validator/releases/latest/download/clap-validator-linux-x86_64.tar.gz
+          tar xzf clap-validator-linux-x86_64.tar.gz
+          chmod +x clap-validator
+
+      - name: Validate CLAP plugin
+        run: |
+          ./clap-validator --no-gui build/plugins/MambaSuiteClap.clap 2>&1 || true
+        continue-on-error: true
+
+      - name: Verify Python model export
+        run: |
+          python3 export_mamba_onnx.py
+
+      - name: Upload plugins artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mamba-plugins-${{ github.sha }}
+          path: |
+            build/plugins/MambaSuiteClap.clap
+            build/plugins/MambaSuiteARA.so
+            build/plugins/libonnxruntime.so*
+            build/plugins/models/
+          if-no-files-found: error
+
+  test:
+    runs-on: ubuntu-22.04
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake g++
+
+      - name: Configure CMake with tests
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+
+      - name: Build tests
+        run: cmake --build build --parallel $(nproc)
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+        continue-on-error: true

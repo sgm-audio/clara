@@ -126,3 +126,87 @@ if(EXISTS ${ONNXRUNTIME_SO})
     file(COPY ${ONNXRUNTIME_SO} DESTINATION ${CMAKE_BINARY_DIR}/plugins)
     configure_file(${ONNXRUNTIME_SO} ${CMAKE_BINARY_DIR}/plugins/libonnxruntime.so COPYONLY)
 endif()
+
+# ---------------------------------------------------------------------------
+# --- Unit Tests (opt-in: cmake -DBUILD_TESTING=ON) ---
+add_subdirectory(tests)
+
+# ---------------------------------------------------------------------------
+# Install Rules
+# ---------------------------------------------------------------------------
+#
+# CLAP bundle structure (for hosts that discover bundles):
+#   ${CMAKE_INSTALL_PREFIX}/lib/clap/MambaSuiteClap.clap/
+#     Contents/
+#       linux-x86-64/
+#         MambaSuiteClap.clap    (the plugin binary)
+#         libonnxruntime.so
+#         models/
+#           mamba_rt.onnx
+#           mamba_rt.onnx.data
+#
+# ARA standalone:
+#   ${CMAKE_INSTALL_PREFIX}/lib/ara/MambaSuiteARA.so
+#
+# Bare CLAP binary (for hosts that scan bare .clap files):
+#   ${CMAKE_INSTALL_PREFIX}/lib/clap/MambaSuiteClap.clap
+#
+# An installed plugin directory includes everything needed at runtime
+# (plugin + runtime lib + model). The RUNPATH is $ORIGIN so all
+# dependencies resolve relative to the plugin binary location.
+# ---------------------------------------------------------------------------
+
+# Determine the bundle resource directory (same-level as the .clap binary)
+set(CLAP_BUNDLE_DIR "lib/clap/MambaSuiteClap.clap/Contents/linux-x86-64")
+
+# --- CLAP bundle install ---
+install(TARGETS MambaSuiteClap
+    LIBRARY DESTINATION ${CLAP_BUNDLE_DIR}
+    COMPONENT clap
+)
+
+# Also install bare .clap for hosts that don't support bundles
+install(FILES ${CMAKE_BINARY_DIR}/plugins/MambaSuiteClap.clap
+    DESTINATION lib/clap
+    COMPONENT clap
+)
+
+# --- ARA install ---
+install(TARGETS MambaSuiteARA
+    LIBRARY DESTINATION lib/ara
+    COMPONENT ara
+)
+
+# --- Runtime dependencies for CLAP bundle ---
+install(FILES
+        ${ONNXRUNTIME_SO}
+        ${CMAKE_BINARY_DIR}/plugins/libonnxruntime.so
+    DESTINATION ${CLAP_BUNDLE_DIR}
+    COMPONENT clap
+)
+
+# --- Models for CLAP bundle ---
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
+    DESTINATION ${CLAP_BUNDLE_DIR}/models
+    COMPONENT clap
+    FILES_MATCHING PATTERN "*.onnx*"
+)
+
+# --- Runtime dependencies for ARA ---
+install(FILES
+        ${ONNXRUNTIME_SO}
+        ${CMAKE_BINARY_DIR}/plugins/libonnxruntime.so
+    DESTINATION lib/ara
+    COMPONENT ara
+)
+
+# --- Models for ARA ---
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
+    DESTINATION lib/ara/models
+    COMPONENT ara
+    FILES_MATCHING PATTERN "*.onnx*"
+)
+
+# Convenience: `cmake --install . --component clap` for CLAP only
+#              `cmake --install . --component ara` for ARA only
+#              `cmake --install .` for both

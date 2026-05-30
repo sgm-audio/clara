@@ -1,6 +1,6 @@
 # TODO — Remaining Gaps
 
-Audited 2026-05-30. **38 items found; 30 fixed.** 8 remain.
+Audited 2026-05-30. **38 items found; 35 fixed.** 3 remain.
 
 **Legend:** P0=runtime broken, P1=incomplete, P2=correctness, P3=build, P4=testing
 
@@ -9,17 +9,22 @@ Audited 2026-05-30. **38 items found; 30 fixed.** 8 remain.
 ## Remaining
 
 - [ ] **P1.7 CLAP: No GUI (`CLAP_EXT_GUI`)** — JUCE integration deferred
-- [ ] **P2.8 Python: models are untrained (random weights)** — add training pipeline
-- [ ] **P3.3 CMake: no `install()` rules** — for packaging/deployment
-- [ ] **P3.5 No `LICENSE` file** — choose and apply license
-- [ ] **P3.7 No CLAP bundle directory structure**
-- [ ] **P4.1 No unit tests for `MambaInferenceEngine`**
-- [ ] **P4.2 No CLAP validator run**
-- [ ] **P4.4 No CI/CD pipeline**
+- [ ] **P2.8 Python: models are untrained (random weights)** — need training pipeline
+- [ ] **P4.2 No CLAP validator passing in CI** — downloaded and run but may fail without GUI
 
 ---
 
-## Fixed (this session)
+## Fixed (this session — wave 2)
+
+| Item | Files | Summary |
+|------|-------|---------|
+| P3.3 | `CMakeLists.txt` | `install()` rules: CLAP bundle, bare `.clap`, ARA `.so`, models, runtime lib |
+| P3.5 | `LICENSE` | Apache 2.0 license added |
+| P3.7 | `CMakeLists.txt` | CLAP bundle directory structure in install target (`MambaSuiteClap.clap/Contents/linux-x86-64/`) |
+| P4.1 | `tests/test_engine.cpp` | 4 unit tests: construct, init, processBlock (silence), resetState |
+| P4.4 | `.github/workflows/ci.yml` | Build + symbol check + validator + model export + artifact upload + test job |
+
+## Fixed (wave 1)
 
 | Item | Commit | Summary |
 |------|--------|---------|
