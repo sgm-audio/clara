@@ -32,6 +32,37 @@ Initial release of CLARA — Mamba Audio Suite (CLAP + ARA2).
 - **Python opset**: Changed default from 17 to 18
 - **Python dt_bias**: Removed double-bias add (`nn.Linear` already includes bias)
 
+### Gap Audit (2026-05-30)
+38 gaps found across P0–P4. 30 fixed in this session.
+
+**P0 Runtime (2/2 fixed)**
+- ARA architecture documented (no `renderSamples` in ARA 2.0)
+- `libonnxruntime.so` deployed alongside plugins; `$ORIGIN`-only RPATH
+
+**P1 Functional (6/7 fixed)**
+- Crossfade stereo aliasing repaired
+- ARA content update stubs parameterized and documented
+- `mamba_analysis.onnx` removed (14 MB, never used)
+- `readerwriterqueue` dead dependency removed
+- Remaining: GUI (`CLAP_EXT_GUI`) — deferred
+
+**P2 Correctness (8/9 fixed)**
+- SSM state corruption from zero-padding fixed (dynamic `seq_len`)
+- `resetState()` thread-safe via deferred atomic clear
+- `init()` returns `bool` instead of throwing
+- Placeholder URLs removed (CLAP + ARA)
+- Remaining: untrained models (awaiting training pipeline)
+
+**P3 Build (5/8 fixed)**
+- Core compiled once as `MambaCore` STATIC library
+- Release builds strip symbols
+- `.gitignore` created, repo initialized, pushed to GitHub
+- Remaining: install rules, license, CLAP bundle dir
+
+**P4 Testing (1/5 fixed)**
+- Python export simplified (single model verification)
+- Remaining: unit tests, CLAP validator, CI/CD
+
 ### Known Gaps (tracked in TODO.md)
 - ARA PlaybackRenderer has no audio output — ARA 2.0 has no `renderSamples()`; audio comes from companion plugin
 - `libonnxruntime.so` not deployed alongside plugins — will fail to load outside build tree
