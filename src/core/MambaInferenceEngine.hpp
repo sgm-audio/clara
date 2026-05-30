@@ -3,6 +3,7 @@
 #include <vector>
 #include <memory>
 #include <string>
+#include <atomic>
 #include <onnxruntime_cxx_api.h>
 #include <cstdint>
 #include <array>
@@ -22,7 +23,7 @@ public:
     explicit MambaInferenceEngine(const Config& config);
     ~MambaInferenceEngine();
 
-    void init();
+    bool init();
     void resetState();
     void processBlock(const float* input, float* output, int numSamples);
 
@@ -33,6 +34,8 @@ private:
     Ort::MemoryInfo memoryInfo_{Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)};
 
     static constexpr size_t kMaxLayers = 4;
+
+    std::atomic<bool> resetRequested_{false};
 
     std::vector<int64_t> audioChunkShape_;
     std::vector<int64_t> processedAudioShape_;

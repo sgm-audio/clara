@@ -54,7 +54,7 @@ src/ara/MambaAraController     — ARA2 DocumentController + PlaybackRenderer + 
 
 ## C++ Conventions
 
-- C++17, no exceptions, no RTTI in release (`-ffast-math -O3 -DNDEBUG`)
+- C++17, no RTTI in release (`-ffast-math -O3 -DNDEBUG -fno-rtti`); exceptions allowed (ORT C++ API requires them)
 - RT-safe: no allocations on audio thread; all buffers pre-allocated in `init()`
 - `-Wall -Wextra -Werror=return-type` always on
 - Plugin symbol visibility: hidden (`CXX_VISIBILITY_PRESET hidden`)

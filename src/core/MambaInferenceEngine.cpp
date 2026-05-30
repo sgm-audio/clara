@@ -1,8 +1,6 @@
 #include "MambaInferenceEngine.hpp"
 #include <algorithm>
 #include <cstring>
-#include <stdexcept>
-
 MambaInferenceEngine::MambaInferenceEngine(const Config& config) : config_(config) {
     convLayerShape_ = {1, static_cast<int64_t>(config.dModel), static_cast<int64_t>(config.convWidth)};
     ssmLayerShape_ = {1, static_cast<int64_t>(config.dModel), static_cast<int64_t>(config.dState)};
@@ -15,15 +13,15 @@ MambaInferenceEngine::MambaInferenceEngine(const Config& config) : config_(confi
 
 MambaInferenceEngine::~MambaInferenceEngine() = default;
 
-void MambaInferenceEngine::init() {
+bool MambaInferenceEngine::init() {
     Ort::SessionOptions sessionOptions;
     sessionOptions.SetIntraOpNumThreads(1);
     sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
     try {
         session_ = std::make_unique<Ort::Session>(env_, config_.modelPath.c_str(), sessionOptions);
-    } catch (const Ort::Exception& e) {
-        throw std::runtime_error("ONNX session creation failed: " + std::string(e.what()));
+    } catch (const Ort::Exception&) {
+        return false;
     }
 
     const size_t convLayerSize = config_.dModel * config_.convWidth;
@@ -42,35 +40,45 @@ void MambaInferenceEngine::init() {
     processedAudioShape_ = {1, static_cast<int64_t>(config_.maxBlockSize), 1};
 
     initialized_ = true;
+    return true;
 }
 
 void MambaInferenceEngine::resetState() {
-    for (size_t i = 0; i < config_.nLayers && i < kMaxLayers; ++i) {
-        std::fill(convStateIn_[i].begin(), convStateIn_[i].end(), 0.0f);
-        std::fill(ssmStateIn_[i].begin(), ssmStateIn_[i].end(), 0.0f);
-    }
+    // Deferred clear — the actual zeroing happens at the start of the next
+    // processBlock() on the audio thread. This makes resetState() safe to call
+    // from any thread without synchronizing with the audio thread.
+    resetRequested_.store(true, std::memory_order_release);
 }
 
 void MambaInferenceEngine::processBlock(const float* input, float* output, int numSamples) {
     if (!initialized_ || !session_) return;
 
+    // Deferred reset: if resetState() was called from another thread, clear
+    // state buffers now on the audio thread before processing this block.
+    if (resetRequested_.exchange(false, std::memory_order_acq_rel)) {
+        for (size_t i = 0; i < config_.nLayers && i < kMaxLayers; ++i) {
+            std::fill(convStateIn_[i].begin(), convStateIn_[i].end(), 0.0f);
+            std::fill(ssmStateIn_[i].begin(), ssmStateIn_[i].end(), 0.0f);
+        }
+    }
+
     const int blockSamples = std::min(numSamples, static_cast<int>(config_.maxBlockSize));
 
     std::memcpy(inputBuffer_.data(), input, blockSamples * sizeof(float));
-    if (blockSamples < static_cast<int>(config_.maxBlockSize)) {
-        std::memset(inputBuffer_.data() + blockSamples, 0,
-            (config_.maxBlockSize - blockSamples) * sizeof(float));
-    }
 
-    // Pre-allocated vector avoids per-call heap allocations after the first few calls.
-    // The vector is local but its capacity grows to kNumInputs/kNumOutputs and stays there.
+    // Use dynamic shape based on actual block size — model was exported with
+    // dynamic_axes={'audio_chunk': {1: 'seq_len'}, 'processed_audio': {1: 'seq_len'}}.
+    // This avoids feeding zeros into the SSM recurrent state for partial blocks.
+    const int64_t audioShape[] = {1, blockSamples, 1};
+    const int64_t procAudioShape[] = {1, blockSamples, 1};
+
     thread_local std::vector<Ort::Value> inputTensors_;
     inputTensors_.clear();
     inputTensors_.reserve(kNumInputs);
 
     inputTensors_.push_back(Ort::Value::CreateTensor<float>(
-        memoryInfo_, inputBuffer_.data(), inputBuffer_.size(),
-        audioChunkShape_.data(), 3));
+        memoryInfo_, inputBuffer_.data(), blockSamples,
+        audioShape, 3));
 
     for (size_t i = 0; i < config_.nLayers && i < kMaxLayers; ++i) {
         inputTensors_.push_back(Ort::Value::CreateTensor<float>(
@@ -88,8 +96,8 @@ void MambaInferenceEngine::processBlock(const float* input, float* output, int n
     outputTensors_.reserve(kNumOutputs);
 
     outputTensors_.push_back(Ort::Value::CreateTensor<float>(
-        memoryInfo_, processedAudioOut_.data(), processedAudioOut_.size(),
-        processedAudioShape_.data(), 3));
+        memoryInfo_, processedAudioOut_.data(), blockSamples,
+        procAudioShape, 3));
     outputTensors_.push_back(Ort::Value::CreateTensor<float>(
         memoryInfo_, convStateOutStack_.data(), convStateOutStack_.size(),
         convStackShape_.data(), 4));
@@ -108,7 +116,6 @@ void MambaInferenceEngine::processBlock(const float* input, float* output, int n
 
     std::memcpy(output, processedAudioOut_.data(), blockSamples * sizeof(float));
 
-    // Unstack conv/ssm state outputs back into per-layer buffers
     const size_t convLayerSize = config_.dModel * config_.convWidth;
     const size_t ssmLayerSize = config_.dModel * config_.dState;
 

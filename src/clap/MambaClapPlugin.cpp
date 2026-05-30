@@ -34,9 +34,9 @@ const clap_plugin_descriptor_t mamba_plugin_info = {
     .id = "com.mamba.audio.suite",
     .name = "Mamba-SSM Processor",
     .vendor = "Elite DSP",
-    .url = "https://example.com/mamba_audio_suite",
-    .manual_url = "https://example.com/mamba_audio_suite/manual",
-    .support_url = "https://example.com/mamba_audio_suite/support",
+    .url = nullptr,
+    .manual_url = nullptr,
+    .support_url = nullptr,
     .version = "1.0.0",
     .description = "Real-time Mamba-SSM audio processor with ARA2 integration",
     .features = (const char* const[]){CLAP_PLUGIN_FEATURE_AUDIO_EFFECT, CLAP_PLUGIN_FEATURE_UTILITY, nullptr},
@@ -132,7 +132,7 @@ static bool clap_params_text_to_value(const clap_plugin_t*, clap_id param_id, co
     }
 }
 
-static void clap_params_flush(const clap_plugin_t* plugin, const clap_input_events_t* in, const clap_output_events_t*) {
+static void clap_params_flush(const clap_plugin_t* plugin, const clap_input_events_t* in, const clap_output_events_t* out) {
     auto* state = (MambaPluginState*)plugin->plugin_data;
     if (!in) return;
     const uint32_t num_events = in->size(in);
@@ -147,6 +147,7 @@ static void clap_params_flush(const clap_plugin_t* plugin, const clap_input_even
             }
         }
     }
+    (void)out;
 }
 
 static const clap_plugin_params_t mamba_params_extension = {
@@ -380,7 +381,9 @@ static const void* mamba_get_extension(const clap_plugin_t*, const char* extensi
     return nullptr;
 }
 
-static void mamba_on_main_thread(const clap_plugin_t*) {}
+static void mamba_on_main_thread(const clap_plugin_t*) {
+    // No deferred tasks currently. Future: model reload, analysis queue drain.
+}
 
 const clap_plugin_t mamba_plugin = {
     &mamba_plugin_info,

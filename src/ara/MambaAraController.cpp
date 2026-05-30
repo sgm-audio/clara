@@ -251,7 +251,7 @@ const char* MambaFactoryConfig::getManufacturerName() const noexcept
 
 const char* MambaFactoryConfig::getInformationURL() const noexcept
 {
-    return "https://example.com/mamba_audio_suite";
+    return nullptr;
 }
 
 const char* MambaFactoryConfig::getVersion() const noexcept
