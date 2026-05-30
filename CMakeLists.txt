@@ -53,18 +53,20 @@ set(COMMON_INCLUDES
     ${ONNXRUNTIME_INCLUDE_DIR}
 )
 
-# Common sources (inference engine shared by both CLAP and ARA)
-set(CORE_SOURCES
-    src/core/MambaInferenceEngine.cpp
+# --- Shared Core (compiled once, linked into both targets) ---
+add_library(MambaCore STATIC src/core/MambaInferenceEngine.cpp)
+target_include_directories(MambaCore PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${ONNXRUNTIME_INCLUDE_DIR}
+)
+target_link_libraries(MambaCore PUBLIC ${ONNXRUNTIME_LIB})
+set_target_properties(MambaCore PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    POSITION_INDEPENDENT_CODE ON
 )
 
 # --- CLAP Plugin ---
-set(CLAP_SOURCES
-    ${CORE_SOURCES}
-    src/clap/MambaClapPlugin.cpp
-)
-
-add_library(MambaSuiteClap MODULE ${CLAP_SOURCES})
+add_library(MambaSuiteClap MODULE src/clap/MambaClapPlugin.cpp)
 target_include_directories(MambaSuiteClap PRIVATE ${COMMON_INCLUDES})
 set_target_properties(MambaSuiteClap PROPERTIES
     PREFIX ""
@@ -77,14 +79,13 @@ set_target_properties(MambaSuiteClap PROPERTIES
 )
 target_link_libraries(MambaSuiteClap
     PRIVATE
-    ${ONNXRUNTIME_LIB}
+    MambaCore
     pthread
     dl
 )
 
 # --- ARA Plugin ---
 set(ARA_SOURCES
-    ${CORE_SOURCES}
     src/ara/MambaAraController.cpp
     ${ara_sdk_SOURCE_DIR}/ARA_Library/PlugIn/ARAPlug.cpp
 )
@@ -102,10 +103,17 @@ set_target_properties(MambaSuiteARA PROPERTIES
 )
 target_link_libraries(MambaSuiteARA
     PRIVATE
-    ${ONNXRUNTIME_LIB}
+    MambaCore
     pthread
     dl
 )
+
+# Strip release builds
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set_target_properties(MambaSuiteClap MambaSuiteARA PROPERTIES
+        LINK_FLAGS "-s"
+    )
+endif()
 
 # Copy models
 if(EXISTS ${CMAKE_SOURCE_DIR}/models)
