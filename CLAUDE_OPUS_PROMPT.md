@@ -10,12 +10,11 @@ The same `MambaInferenceEngine` C++ class powers both — no code duplication.
 
 ## Build System
 - CMake 3.14+, C++17, no exceptions, no RTTI in release
-- Four dependencies fetched via FetchContent (no manual install):
+- Three dependencies fetched via FetchContent (no manual install):
   - CLAP SDK (commit `29ffcc27`) — plugin format
-  - moodycamel::ReaderWriterQueue v1.0.6 — lock-free SPSC queue
   - ARA SDK (commit `1ca0b0aa`) — Audio Random Access protocol
-  - ONNX Runtime v1.17.1 — prebuilt Linux x64 tarball
-- Linux-only (uses `dlfcn.h`, ELF visibility, `$ORIGIN` RUNPATH)
+  - ONNX Runtime v1.17.1 — prebuilt packages for Linux/macOS/Windows
+- Cross-platform via Platform.hpp abstractions (uses `mambaGetModulePath()`, `MAMBA_EXPORT`)
 - Outputs to `build/plugins/`
 - WSL Ubuntu build env (g++ 15.2.0, cmake 4.2.3)
 
@@ -24,6 +23,7 @@ The same `MambaInferenceEngine` C++ class powers both — no code duplication.
 src/core/MambaInferenceEngine  — RT-safe ONNX wrapper
 src/clap/MambaClapPlugin       — Full CLAP plugin
 src/ara/MambaAraController     — ARA2 DocumentController + PlaybackRenderer + FactoryConfig
+src/core/Platform.hpp        — Cross-platform abstractions (module path, visibility, threading)
 ```
 
 **MambaInferenceEngine** (`src/core/`):
@@ -78,12 +78,15 @@ src/ara/MambaAraController     — ARA2 DocumentController + PlaybackRenderer + 
 - No test suite exists; no CLAP validator or ARA validation runs wired
 
 ## Known Blockers / Risks
-- **ARA2 integration may need rework against raw C API** if `ARAPlug.h` C++ wrappers are incomplete (noted in `TODO_PROGRESS.md`)
+- **ARA2 integration may need rework against raw C API** if `ARAPlug.h` C++ wrappers are incomplete (see `TODO.md` item pending for verification)
 - No CI/CD pipeline
-- No cross-platform support yet (Linux x64 only)
+- Cross-platform support in progress — Platform.hpp abstracts module path, visibility, threading for macOS and Windows
 - ONNX model files must be deployed adjacent to plugin binary at runtime
 
 ## Important Caveats
 - `ARA::PlugIn::PlugInEntry::getPlugInEntry<F, D>()` creates static singletons — you cannot inject custom constructor arguments to DocumentController or PlaybackRenderer
 - `Ort::Value` has NO default constructor — only created via `Ort::Value::CreateTensor<T>(...)` static factories
 - Model file: `models/mamba_rt.onnx` with sidecar `models/mamba_rt.onnx.data` (external data format)
+
+## Master TODO List
+The comprehensive master TODO list is at `TODO.md` — 34 items organized by priority (P0–P5). It supersedes the now-deprecated `TODO_PROGRESS.md`.

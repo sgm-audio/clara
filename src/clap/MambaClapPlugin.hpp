@@ -3,6 +3,7 @@
 #include <clap/clap.h>
 #include <clap/ext/state.h>
 #include "../core/MambaInferenceEngine.hpp"
+#include "../core/SPSCQueue.hpp"
 #include <atomic>
 #include <vector>
 #include <memory>
@@ -29,10 +30,19 @@ struct MambaPluginState {
 
     std::vector<float> chIn[2];
     std::vector<float> chOut[2];
+
+    // Deferred task queue (SPSC, lock-free)
+    enum class DeferredTask : uint8_t {
+        ModelReload = 0,
+        AnalysisQueueDrain,
+    };
+    SPSCQueue<DeferredTask, 64> deferredTaskQueue;
 };
 
 extern "C" const clap_plugin_descriptor_t mamba_plugin_info;
 
+extern const clap_plugin_t mamba_plugin;
+
 extern "C" const clap_plugin_state_t mamba_state_extension;
 
-extern const clap_plugin_t mamba_plugin;
+const void* mamba_get_extension(const clap_plugin_t* plugin, const char* extensionId);

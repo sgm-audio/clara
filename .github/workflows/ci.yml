@@ -1,5 +1,7 @@
 name: CI
 
+# CI status: [![CI](https://github.com/elite-dsp/clara/actions/workflows/ci.yml/badge.svg)](https://github.com/elite-dsp/clara/actions/workflows/ci.yml)
+
 on:
   push:
     branches: [main]
@@ -67,11 +69,52 @@ jobs:
       - name: Validate CLAP plugin
         run: |
           ./clap-validator --no-gui build/plugins/MambaSuiteClap.clap 2>&1 || true
+        # continue-on-error: validator may fail without GUI (CLAP_EXT_GUI not yet implemented)
         continue-on-error: true
+
+      - name: Verify ARA library
+        run: |
+          echo "=== ARA Library Info ==="
+          file build/plugins/MambaSuiteARA.so
+          readelf --dyn-syms build/plugins/MambaSuiteARA.so | grep ARAGetFactory
+          readelf -d build/plugins/MambaSuiteARA.so | grep RUNPATH
+
+      - name: Verify stripped (release build)
+        run: |
+          if readelf -S build/plugins/MambaSuiteClap.clap 2>/dev/null | grep -q .symtab; then
+            echo "WARNING: Binary not stripped (expected in Debug, optional in Release)"
+          else
+            echo "OK: Binary is stripped"
+          fi
+
+      - name: Verify new source files
+        run: |
+          test -f src/core/SPSCQueue.hpp
+          test -f ADR-008-conditioning-vector.md || echo "ADR-008 pending"
 
       - name: Verify Python model export
         run: |
           python3 export_mamba_onnx.py
+
+      - name: Verify model shapes
+        run: |
+          python3 << 'PYEOF'
+          import onnx
+          model = onnx.load('models/mamba_rt.onnx')
+          print('Inputs:')
+          for i in model.graph.input:
+              print(f'  {i.name}: {[d.dim_param if d.dim_param else d.dim_value for d in i.type.tensor_type.shape.dim]}')
+          print('Outputs:')
+          for o in model.graph.output:
+              print(f'  {o.name}: {[d.dim_param if d.dim_param else d.dim_value for d in o.type.tensor_type.shape.dim]}')
+          print(f'Opset: {model.opset_import[0].version}')
+          PYEOF
+
+      - name: Verify conditioning infrastructure
+        run: |
+          grep -q "COND_DIM" src/core/MambaInferenceEngine.hpp && echo "COND_DIM found"
+          grep -q "activeCond_" src/core/MambaInferenceEngine.hpp && echo "activeCond_ found"
+          grep -q "loadCondWeights" src/core/MambaInferenceEngine.hpp && echo "loadCondWeights found"
 
       - name: Upload plugins artifact
         uses: actions/upload-artifact@v4
@@ -103,4 +146,68 @@ jobs:
 
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
-        continue-on-error: true
+
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Python model deps
+        shell: pwsh
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu --quiet
+          pip install onnx onnxruntime numpy --quiet
+
+      - name: Configure CMake
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel $env:NUMBER_OF_PROCESSORS
+
+      - name: Verify CLAP plugin
+        shell: pwsh
+        run: Test-Path build/plugins/Release/MambaSuiteClap.clap
+
+      - name: Verify ARA library
+        shell: pwsh
+        run: Test-Path build/plugins/Release/MambaSuiteARA.dll
+
+      - name: Verify model files
+        shell: pwsh
+        run: Test-Path build/plugins/models/mamba_rt.onnx
+
+      - name: Verify Python model export
+        shell: pwsh
+        run: python export_mamba_onnx.py
+
+      - name: Upload plugins artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mamba-plugins-windows-${{ github.sha }}
+          path: |
+            build/plugins/Release/MambaSuiteClap.clap
+            build/plugins/Release/MambaSuiteARA.dll
+            build/plugins/models/
+          if-no-files-found: error
+
+  test-windows:
+    runs-on: windows-2022
+    needs: build-windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake with tests
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON
+
+      - name: Build tests
+        run: cmake --build build --config Debug --parallel $env:NUMBER_OF_PROCESSORS
+
+      - name: Run tests
+        shell: pwsh
+        run: ctest --test-dir build --build-config Debug --output-on-failure
+

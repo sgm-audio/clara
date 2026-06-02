@@ -2,28 +2,19 @@
 
 #include "ARA_Library/PlugIn/ARAPlug.h"
 #include "../core/MambaInferenceEngine.hpp"
+#include "../core/Platform.hpp"
 #include <memory>
 #include <vector>
 #include <atomic>
 
-// Resolve model directory relative to the .so location (via dladdr), cached.
-const std::string& getMambaModelDir();
-
 class MambaPlaybackRenderer : public ARA::PlugIn::PlaybackRenderer
 {
 public:
-    explicit MambaPlaybackRenderer(ARA::PlugIn::DocumentController* documentController) noexcept;
+    explicit MambaPlaybackRenderer(ARA::PlugIn::DocumentController* documentController);
     ~MambaPlaybackRenderer() noexcept override;
-
-protected:
-    void willAddPlaybackRegion(ARA::PlugIn::PlaybackRegion* playbackRegion) noexcept override;
-    void didAddPlaybackRegion(ARA::PlugIn::PlaybackRegion* playbackRegion) noexcept override;
-    void willRemovePlaybackRegion(ARA::PlugIn::PlaybackRegion* playbackRegion) noexcept override;
-    void didRemovePlaybackRegion(ARA::PlugIn::PlaybackRegion* playbackRegion) noexcept override;
 
 private:
     std::unique_ptr<MambaInferenceEngine> rtEngine_;
-    bool engineValid_{false};
 };
 
 class MambaDocumentController : public ARA::PlugIn::DocumentController
@@ -72,7 +63,7 @@ protected:
     bool doStoreObjectsToArchive(ARA::PlugIn::HostArchiveWriter* archiveWriter, const ARA::PlugIn::StoreObjectsFilter* filter) noexcept override;
 
 private:
-    bool audioSourceAccessEnabled_{false};
+    std::atomic<bool> contentDirty_{false};
 };
 
 class MambaFactoryConfig : public ARA::PlugIn::FactoryConfig
@@ -88,6 +79,6 @@ public:
     const char* getDocumentArchiveID() const noexcept override;
 };
 
-__attribute__((visibility("default"))) const ARA::ARAFactory* getMambaARAFactory() noexcept;
+MAMBA_EXPORT const ARA::ARAFactory* getMambaARAFactory() noexcept;
 
-extern "C" __attribute__((visibility("default"))) const ARA::ARAFactory* ARAGetFactory();
+extern "C" MAMBA_EXPORT const ARA::ARAFactory* ARAGetFactory();

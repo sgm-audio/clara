@@ -1,5 +1,7 @@
 # TODO List Progress Summary
 
+> **Note:** A comprehensive master TODO list with per-file issue tracking now exists at `TODO.md` — it supersedes this file for detailed tracking. This file remains as a high-level progress summary.
+
 ## Completed
 ### I. CLAP Plugin Completion
 - [x] Implement all required CLAP vtable callbacks (init, destroy, get/set parameters, etc.)
@@ -8,8 +10,8 @@
 - [x] Implement full state extension for preset/chunk support
 
 ### II. ARA2 Controller Completion
-- [x] Implement full ARA2 plugin factory (`ARA::PlugIn::PlugIn`) - Started, needs refinement for ownership
-- [ ] Complete DocumentController with state persistence methods
+- [x] Implement full ARA2 plugin factory (`ARA::PlugIn::PlugIn`)
+- [x] DocumentController with state persistence methods (archive save/restore working)
 - [ ] Complete PlaybackRenderer with edit state handling
 - [ ] Implement required ARA2 interfaces based on capabilities (AudioRandomAccess, Presets, etc.)
 
@@ -20,7 +22,7 @@
     - ONNXRuntime (with GPU/CUDA options)
     - CLAP SDK (github.com/free-audio/clap)
     - ARA2 SDK (celemony.com/ARA)
-    - moodycamel::ReaderWriterQueue (header-only)
+    - (ReaderWriterQueue dependency was removed — no longer used)
 
 ### IV. Model & Audio Processing
 - [x] Run Phase 1 Python export script to generate ONNX model
@@ -35,11 +37,12 @@
 
 ### VI. Optional Enhancements
 - [ ] Implement GUI using JUCE (connect via lock-free queue)
-- [ ] Add state chunking and preset support
+- [x] Add state chunking and preset support (via `clap_plugin_state` extension)
 - [ ] Implement optional metering via CLAP extension
 - [ ] Add non-RT debug logging system
 
 ### VII. Testing & Validation
+- [x] CLAP validator integration test (`clap_validator` CTest target — runs [clap-validator](https://github.com/free-audio/clap-validator) against the built `.clap`; required categories: audio-ports, params, state, latency)
 - [ ] Build and link validation on target platforms
 - [ ] Functional testing with CLAP hosts and ARA2 DAWs
 - [ ] Real-time safety validation with stress tests
@@ -51,23 +54,43 @@
 - [ ] Choose and apply license (e.g., GPLv3/MIT)
 - [ ] Create packaging scripts for distribution
 
+### IX. Cross-Platform Portability
+- [x] Phase 0: Scaffolding — `Platform.hpp` with `MAMBA_EXPORT`, `mambaResolveModulePath`, platform guards
+- [x] `CMakePresets.json` for Linux/macOS/Windows
+- [ ] Phase 1: macOS — Clang preset, CI, `@loader_path` RPATH
+- [ ] Phase 2: Windows — MSVC preset, CI, `.dll` deployment
+- [ ] Phase 3: CI matrix expansion + docs update
+
 ## Current Implementation Status
 - **CLAP Plugin**: Fully implemented with all required callbacks, parameter handling, latency reporting, click-free bypass, and state extension (`src/clap/MambaClapPlugin.hpp/.cpp`)
 - **ARA2 Controller**: Implements DocumentController and PlaybackRenderer with background analysis thread using lock-free SPSC queue (`src/ara/MambaAraController.hpp/.cpp`)
-- **ARA2 Plugin Factory**: Created basic factory (`src/ara/MambaAraPlugIn.hpp/.cpp`) - needs refinement for proper ownership of engines
+- **ARA2 Plugin Factory**: Factory implemented in `src/ara/MambaAraController.cpp` using standard `ARAPlug.h` C++ wrappers (the `MambaAraPlugIn.hpp/.cpp` files never existed — the factory lives directly in the controller)
 - **Mamba Inference Engine**: RT-safe ONNX wrapper with pre-allocated tensors and state management (`src/core/MambaInferenceEngine.hpp/.cpp`)
-- **Build System**: `CMakeLists.txt` fully uses `FetchContent` to download `ONNXRuntime`, `CLAP`, `ARA SDK`, and `ReaderWriterQueue`.
-- **Model Export**: Python export script has successfully exported the `mamba_rt.onnx` and `mamba_analysis.onnx` models.
+- **Build System**: `CMakeLists.txt` uses `FetchContent` to download `ONNXRuntime`, `CLAP`, and `ARA SDK`. `ReaderWriterQueue` was removed as a dependency. `CMakePresets.json` supports Linux (GCC), macOS (Clang), and Windows (MSVC).
+- **Model Export**: Python export script exports `mamba_rt.onnx` (with `.onnx.data` sidecar). The `mamba_analysis.onnx` model was removed — only one ONNX model is used.
 
 ## Known Issues / Blockers
-- **ARA SDK Missing Wrappers**: The code assumes JUCE-like C++ wrappers for the ARA SDK (e.g. `ARA::PlugIn::DocumentController`) that do not exist natively in the Celemony ARA SDK. ARA integration is currently commented out in `CMakeLists.txt` until it can be rewritten to use the raw C ARA API or `ARAPlug.h` correctly.
+- ~~**ARA SDK Missing Wrappers**~~ — **RESOLVED**: The code now correctly uses the Celemony `ARA_Library/PlugIn/ARAPlug.h` C++ wrappers (`ARA::PlugIn::DocumentController`, `ARA::PlugIn::PlaybackRenderer`, etc.). These are the official Celemony-provided wrappers, not JUCE-specific. ARA integration is fully enabled in `CMakeLists.txt`.
 
 ## Next Steps
-1. Re-implement the `MambaAraController` to use the standard Celemony `ARAPlug.h` C++ extensions instead of hallucinated JUCE-like wrapper classes.
-2. Complete DocumentController with state persistence methods (save/load plugin state) for ARA.
-3. Complete PlaybackRenderer with edit state handling (handle changes in the DAW timeline).
-6. Implement state reset behavior in the CLAP plugin (for transport seek)
-7. Add optional enhancements (GUI, presets, metering) if desired
-8. Conduct comprehensive testing and validation
+1. **Address clap-validator failures (P1):** First validation pass shows `clap_plugin::init()` returns false in 11/21 tests. Root cause likely model path resolution (the validator loads the plugin from a working directory that may not have `models/` adjacent). Investigate `mamba_init()` and `mambaResolveModulePath()` when the plugin is loaded from an unexpected CWD.
+2. Complete PlaybackRenderer with edit state handling (handle changes in the DAW timeline).
+3. Implement required ARA2 interfaces (AudioRandomAccess, Presets, etc.).
+4. Implement state reset behavior in the CLAP plugin (for transport seek).
+5. Verify thread safety of atomic parameters and lock-free queues.
+6. Add optional enhancements (GUI, metering) if desired.
+7. Conduct comprehensive testing and validation.
+8. **Phase 1:** Finalize macOS support (Clang, `@loader_path`, CI).
+9. **Phase 2:** Finalize Windows support (MSVC, `.dll`, CI).
+10. **Phase 3:** Expand CI matrix and update documentation.
+
+## CLAP Validator Test (added 2026-06-02)
+- New CTest target `clap_validator` registered in `tests/CMakeLists.txt`
+- Test runner: `tests/clap_validator.cmake` (CMake script-mode)
+- Required CLAP extension categories: `audio-ports`, `params`, `state`, `latency`
+- Validator resolution: `find_program(clap-validator)` → `cargo install --git https://github.com/free-audio/clap-validator clap-validator` (Rust toolchain) → SKIP
+- SKIP detection: configure-time in CMakeLists (primary); runtime via `[SKIPPED]` log marker in clap_validator.cmake (since `cmake -P` cannot return arbitrary exit codes)
+- Convenience target: `cmake --build . --target clara_test` (named `clara_test` because `test` is reserved by CTest)
+- Initial run on the freshly-built Debug `.clap`: 21 tests, 6 passed, 11 failed (all `init() returned false`), 4 skipped (preset discovery + Unix-only)
 
 The foundation is now RT-safe and complete for the core audio processing. Remaining work focuses on plugin completeness, build system, and integration features.

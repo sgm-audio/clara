@@ -8,38 +8,29 @@
 #include <clap/ext/latency.h>
 #include <clap/ext/state.h>
 #include <clap/ext/audio-ports.h>
-#include <dlfcn.h>
-#include <unistd.h>
-
-// -----------------------------------------------------------------------------
-// Model Path Resolution
-// -----------------------------------------------------------------------------
-
-static std::string resolveModelPath(const char* plugin_path, const char* model_filename) {
-    std::string base(plugin_path ? plugin_path : "");
-    auto sep = base.rfind('/');
-    if (sep != std::string::npos)
-        base.resize(sep + 1);
-    else
-        base = "./";
-    return base + "models/" + model_filename;
-}
+#include "core/Platform.hpp"
 
 // -----------------------------------------------------------------------------
 // Plugin Info
 // -----------------------------------------------------------------------------
 
+static const char* const mamba_features[] = {
+    CLAP_PLUGIN_FEATURE_AUDIO_EFFECT,
+    CLAP_PLUGIN_FEATURE_UTILITY,
+    nullptr
+};
+
 const clap_plugin_descriptor_t mamba_plugin_info = {
-    .clap_version = CLAP_VERSION_INIT,
-    .id = "com.mamba.audio.suite",
-    .name = "Mamba-SSM Processor",
-    .vendor = "Elite DSP",
-    .url = nullptr,
-    .manual_url = nullptr,
-    .support_url = nullptr,
-    .version = "1.0.0",
-    .description = "Real-time Mamba-SSM audio processor with ARA2 integration",
-    .features = (const char* const[]){CLAP_PLUGIN_FEATURE_AUDIO_EFFECT, CLAP_PLUGIN_FEATURE_UTILITY, nullptr},
+    CLAP_VERSION_INIT,
+    "com.mamba.audio.suite",
+    "Mamba-SSM Processor",
+    "Elite DSP",
+    MAMBA_PROJECT_URL,
+    nullptr,
+    nullptr,
+    "1.1.0",
+    "Real-time Mamba-SSM audio processor with ARA2 integration",
+    mamba_features,
 };
 
 // -----------------------------------------------------------------------------
@@ -227,7 +218,14 @@ const clap_plugin_state_t mamba_state_extension = {
 // Plugin Implementation
 // -----------------------------------------------------------------------------
 
-static bool mamba_init(const clap_plugin_t*) {
+static bool mamba_init(const clap_plugin_t* plugin) {
+    auto* state = (MambaPluginState*)plugin->plugin_data;
+    if (state->modelPath.empty()) {
+        return false;
+    }
+    if (!mambaFileExists(state->modelPath)) {
+        return false;
+    }
     return true;
 }
 
@@ -242,7 +240,7 @@ static bool mamba_activate(const clap_plugin_t* plugin, double sample_rate, uint
 
     MambaInferenceEngine::Config config;
     if (state->modelPath.empty()) {
-        state->modelPath = resolveModelPath(nullptr, "mamba_rt.onnx");
+        state->modelPath = mambaResolveModulePath(nullptr, "mamba_rt.onnx");
     }
     config.modelPath = state->modelPath;
     config.maxBlockSize = std::max(static_cast<size_t>(max_frames_count), static_cast<size_t>(256));
@@ -253,11 +251,16 @@ static bool mamba_activate(const clap_plugin_t* plugin, double sample_rate, uint
     }
 
     state->engine = std::make_unique<MambaInferenceEngine>(config);
-    try {
-        state->engine->init();
-    } catch (const std::exception&) {
+    if (!state->engine->init()) {
         state->engine.reset();
         return false;
+    }
+
+    // Initialize conditioning weights (all zeros = no modulation)
+    // When model training produces meaningful weights, load from model metadata here
+    {
+        std::vector<float> condWeights(8, 0.0f);
+        state->engine->loadCondWeights(condWeights.data(), condWeights.size());
     }
 
     state->crossfadeStep = 1.0f / (0.05f * static_cast<float>(sample_rate));
@@ -269,8 +272,9 @@ static void mamba_deactivate(const clap_plugin_t* plugin) {
     state->engine.reset();
 }
 
-static bool mamba_start_processing(const clap_plugin_t*) {
-    return true;
+static bool mamba_start_processing(const clap_plugin_t* plugin) {
+    auto* state = (MambaPluginState*)plugin->plugin_data;
+    return state->engine != nullptr;
 }
 
 static void mamba_stop_processing(const clap_plugin_t*) {
@@ -318,10 +322,27 @@ static clap_process_status mamba_process(const clap_plugin_t* plugin, const clap
         ? ((targetBypass > state->currentBypassValue) ? state->crossfadeStep : -state->crossfadeStep)
         : 0.0f;
 
+    // Guard: if engine is null, pass dry signal
+    if (!state->engine) {
+        for (uint32_t ch = 0; ch < processChans; ++ch) {
+            std::memcpy(process->audio_outputs[0].data32[ch],
+                        process->audio_inputs[0].data32[ch],
+                        numSamples * sizeof(float));
+        }
+        for (uint32_t ch = processChans; ch < outChans; ++ch) {
+            std::memcpy(process->audio_outputs[0].data32[ch],
+                        process->audio_outputs[0].data32[0],
+                        numSamples * sizeof(float));
+        }
+        return CLAP_PROCESS_CONTINUE;
+    }
+
     // Process all channels through the engine first
     for (uint32_t ch = 0; ch < processChans; ++ch) {
         float* input = process->audio_inputs[0].data32[ch];
         std::memcpy(state->chIn[ch].data(), input, numSamples * sizeof(float));
+        // NOTE: processBlock returns silence silently if engine is invalid.
+        // This is by design — no safe way to signal errors from audio thread.
         state->engine->processBlock(state->chIn[ch].data(), state->chOut[ch].data(), numSamples);
     }
 
@@ -373,7 +394,7 @@ static const clap_plugin_audio_ports_t mamba_audio_ports_extension = {
     clap_audio_ports_get
 };
 
-static const void* mamba_get_extension(const clap_plugin_t*, const char* extensionId) {
+const void* mamba_get_extension(const clap_plugin_t*, const char* extensionId) {
     if (strcmp(extensionId, CLAP_EXT_STATE) == 0) return &mamba_state_extension;
     if (strcmp(extensionId, CLAP_EXT_PARAMS) == 0) return &mamba_params_extension;
     if (strcmp(extensionId, CLAP_EXT_LATENCY) == 0) return &mamba_latency_extension;
@@ -381,8 +402,21 @@ static const void* mamba_get_extension(const clap_plugin_t*, const char* extensi
     return nullptr;
 }
 
-static void mamba_on_main_thread(const clap_plugin_t*) {
-    // No deferred tasks currently. Future: model reload, analysis queue drain.
+static void mamba_on_main_thread(const clap_plugin_t* plugin) {
+    auto* state = (MambaPluginState*)plugin->plugin_data;
+    MambaPluginState::DeferredTask task;
+    while (state->deferredTaskQueue.pop(task)) {
+        switch (task) {
+        case MambaPluginState::DeferredTask::ModelReload:
+            // Model reload triggered from audio thread
+            // Future: re-init engine with new model path
+            break;
+        case MambaPluginState::DeferredTask::AnalysisQueueDrain:
+            // Analysis results available from ARA
+            // Future: update display or export analysis data
+            break;
+        }
+    }
 }
 
 const clap_plugin_t mamba_plugin = {
@@ -419,10 +453,7 @@ static const clap_plugin_t* clap_create_plugin(const clap_plugin_factory_t*, con
     auto state = std::make_unique<MambaPluginState>();
     state->host = host;
 
-    Dl_info info;
-    if (dladdr((void*)clap_create_plugin, &info) && info.dli_fname) {
-        state->modelPath = resolveModelPath(info.dli_fname, "mamba_rt.onnx");
-    }
+    state->modelPath = mambaResolveModulePath((void*)clap_create_plugin, "mamba_rt.onnx");
 
     plugin->plugin_data = state.release();
     return plugin.release();

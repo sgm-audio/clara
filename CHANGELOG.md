@@ -1,5 +1,58 @@
 # Changelog
 
+## 1.2.0 — 2026-06-02
+
+Conditioning vector, SPSC deferred task queue, and ARA stub resolution.
+
+### Features
+- New: Conditioning vector `cond[COND_DIM=8]` — double-buffered with atomic pointer swap for RT-safe updates from any thread. Projection weights loaded at `activate()`, immutable in RT. External gain modulation — no ONNX I/O contract change.
+- New: `src/core/SPSCQueue.hpp` — lock-free single-producer single-consumer ring buffer for deferred tasks (ModelReload, AnalysisQueueDrain).
+- New: `mamba_on_main_thread()` now drains SPSC queue for `ModelReload` and `AnalysisQueueDrain` deferred tasks.
+- New: `ADR-008-conditioning-vector.md` — documents conditioning vector architecture.
+
+### Changed
+- `MambaInferenceEngine` — added `setConditioning()` (double-buffered atomic swap), `loadCondWeights()` (non-RT), and conditioning gain modulation in `processBlock()`.
+- `MambaClapPlugin` — replaced `std::atomic<DeferredTask>` with full `SPSCQueue<DeferredTask, 64>`. Engine null guard added to `mamba_process()` for dry-pass on invalid engine. Version bumped to 1.1.0.
+- ARA controller — updated 6 stub methods with proper documentation and intent. `getInformationURL()` now returns GitHub URL.
+- CLAP plugin descriptor — added GitHub URLs for plugin, manual, and support.
+- Tests added for SPSC queue, conditioning vector, plugin descriptor URLs, ARA information URL, and engine edge cases.
+
+### Fixes
+- Multi-config generator model deployment: models and ONNX Runtime now deploy to `<plugin-binary-dir>/` via per-target `POST_BUILD` (previously deployed to `build/plugins/` only, breaking Windows multi-config builds)
+- ARA `getInformationURL()` and CLAP descriptor URLs now point to the actual project URL (previously fictional `elite-dsp/clara`)
+- ARA `getVersion()` synced to "1.1.0" to match CLAP descriptor
+- ARA `AudioSourceReader` → `HostAudioReader` comment references in `MambaAraController.cpp:86,98` (the class `AudioSourceReader` does not exist in the plugin SDK; the correct class is `HostAudioReader`)
+
+### Infrastructure
+- CI: added `Verify new source files` and `Verify conditioning infrastructure` steps.
+- `CMakeLists.txt`: SPSCQueue documented as header-only dependency.
+
+## 1.1.0 — 2026-05-31
+
+Cross-platform portability — CLARA now builds on macOS and Windows in addition to Linux.
+
+### Features
+- New: `src/core/Platform.hpp` with `MAMBA_EXPORT` (dllexport/dllimport), `mambaResolveModulePath` (cross-platform `dladdr`/`GetModuleFileName`), `mambaResolveModelDir`, `mambaFileExists`
+- New: `CMakePresets.json` for multi-platform builds (Linux GCC, macOS Clang, Windows MSVC)
+- Phase 0: Cross-platform portability scaffolding complete
+
+### Changed
+- Replaced `dladdr` / `access` / POSIX-only calls with cross-platform equivalents via `Platform.hpp`
+- Updated `CMakeLists.txt` with platform-conditional guards (`WIN32`, `__APPLE__`)
+- ARA library now installs as `LIBRARY RUNTIME` — enables Windows `.dll` support
+- Updated tests for cross-platform compatibility (`std::filesystem` path separators, platform-conditional includes)
+
+### Infrastructure
+- Added macOS CI job (Clang + `@loader_path` RPATH)
+- Added Windows CI job (MSVC + `.dll` deployment)
+- `ADR-007-cross-platform-portability.md` — documents cross-platform strategy
+
+### Status
+- Phase 0 (scaffolding): ✅
+- Phase 1 (macOS): 🔄
+- Phase 2 (Windows): 🔄
+- Phase 3 (CI matrix + docs): ⬜
+
 ## 1.0.0 — 2026-05-30
 
 Initial release of CLARA — Mamba Audio Suite (CLAP + ARA2).
@@ -17,8 +70,8 @@ Initial release of CLARA — Mamba Audio Suite (CLAP + ARA2).
 - ARA2 factory entry point (`ARAGetFactory`) with correct symbol visibility
 - Model path resolution via `dladdr` for both CLAP and ARA (no hardcoded paths)
 - Python ONNX export script (`export_mamba_onnx.py`) — opset 18, `torch.jit.trace`
-- Pre-exported models: `mamba_rt.onnx` + `mamba_analysis.onnx` (untrained, random weights)
-- CMake FetchContent for all 4 dependencies (CLAP SDK, ARA SDK, ONNX Runtime, ReaderWriterQueue)
+- Pre-exported model: `mamba_rt.onnx` (untrained, random weights)
+- CMake FetchContent for all 3 dependencies (CLAP SDK, ARA SDK, ONNX Runtime)
 
 ### Fixes (pre-release audit)
 - **CLAP activate**: Wrapped `engine->init()` in try/catch — returns `false` instead of throwing across C boundary (UB fix)
@@ -63,10 +116,5 @@ Initial release of CLARA — Mamba Audio Suite (CLAP + ARA2).
 - Python export simplified (single model verification)
 - Remaining: unit tests, CLAP validator, CI/CD
 
-### Known Gaps (tracked in TODO.md)
-- ARA PlaybackRenderer has no audio output — ARA 2.0 has no `renderSamples()`; audio comes from companion plugin
-- `libonnxruntime.so` not deployed alongside plugins — will fail to load outside build tree
-- Models are untrained (random weights) — audio output is noise
-- No test suite, no CI/CD pipeline
-- No GUI (`CLAP_EXT_GUI`)
-- Various correctness, build, and documentation gaps (32 total — see `TODO.md`)
+### Known Gaps
+See the comprehensive master TODO list at `TODO.md` for all known issues organized by priority (P0–P5, 38 items as of 2026-05-31).

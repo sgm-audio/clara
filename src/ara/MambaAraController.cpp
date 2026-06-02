@@ -1,70 +1,21 @@
 #include "MambaAraController.hpp"
-#include <cstring>
-#include <dlfcn.h>
-
-// -----------------------------------------------------------------------------
-// Model Path Resolution (same strategy as CLAP plugin — via dladdr)
-// -----------------------------------------------------------------------------
-
-static std::string resolveModelDirOnce() {
-    Dl_info info;
-    if (dladdr((void*)resolveModelDirOnce, &info) && info.dli_fname) {
-        std::string path(info.dli_fname);
-        auto sep = path.rfind('/');
-        if (sep != std::string::npos)
-            path.resize(sep + 1);
-        else
-            return "./";
-        return path + "models/";
-    }
-    return "./models/";
-}
-
-const std::string& getMambaModelDir() {
-    static const std::string dir = resolveModelDirOnce();
-    return dir;
-}
+#include "core/Platform.hpp"
 
 // -----------------------------------------------------------------------------
 // PlaybackRenderer
 // -----------------------------------------------------------------------------
 
-MambaPlaybackRenderer::MambaPlaybackRenderer(ARA::PlugIn::DocumentController* documentController) noexcept
+MambaPlaybackRenderer::MambaPlaybackRenderer(ARA::PlugIn::DocumentController* documentController)
 : ARA::PlugIn::PlaybackRenderer(documentController)
 {
     MambaInferenceEngine::Config config;
-    config.modelPath = getMambaModelDir() + "mamba_rt.onnx";
+    config.modelPath = mambaResolveModulePath((void*)&ARAGetFactory, "mamba_rt.onnx");
     config.maxBlockSize = 1024;
     rtEngine_ = std::make_unique<MambaInferenceEngine>(config);
-    try {
-        rtEngine_->init();
-        engineValid_ = true;
-    } catch (const std::exception&) {
-        engineValid_ = false;
-    }
+    rtEngine_->init();
 }
 
 MambaPlaybackRenderer::~MambaPlaybackRenderer() noexcept = default;
-
-void MambaPlaybackRenderer::willAddPlaybackRegion(ARA::PlugIn::PlaybackRegion* playbackRegion) noexcept
-{
-    ARA::PlugIn::PlaybackRenderer::willAddPlaybackRegion(playbackRegion);
-}
-
-void MambaPlaybackRenderer::didAddPlaybackRegion(ARA::PlugIn::PlaybackRegion* playbackRegion) noexcept
-{
-    ARA::PlugIn::PlaybackRenderer::didAddPlaybackRegion(playbackRegion);
-}
-
-void MambaPlaybackRenderer::willRemovePlaybackRegion(ARA::PlugIn::PlaybackRegion* playbackRegion) noexcept
-{
-    ARA::PlugIn::PlaybackRenderer::willRemovePlaybackRegion(playbackRegion);
-}
-
-void MambaPlaybackRenderer::didRemovePlaybackRegion(ARA::PlugIn::PlaybackRegion* playbackRegion) noexcept
-{
-    ARA::PlugIn::PlaybackRenderer::didRemovePlaybackRegion(playbackRegion);
-}
 
 // -----------------------------------------------------------------------------
 // DocumentController
@@ -92,9 +43,11 @@ void MambaDocumentController::doDestroyMusicalContext(ARA::PlugIn::MusicalContex
 
 void MambaDocumentController::doUpdateMusicalContextContent(ARA::PlugIn::MusicalContext* context, const ARA::ARAContentTimeRange* range, ARA::ContentUpdateScopes scopeFlags) noexcept
 {
-    // Musical context (tempo, time signature) changed — the companion CLAP plugin
-    // would re-request this info via ARA host bridge if needed for model inference.
-    // Currently unused; the model does not condition behavior on tempo/key.
+    // Musical context (tempo, time signature) changed.
+    // TODO: When model conditions on tempo/key, extract context and call
+    // engine->setConditioning() with derived features here.
+    // For now, mark content as dirty and continue.
+    contentDirty_.store(true, std::memory_order_release);
     (void)context; (void)range; (void)scopeFlags;
 }
 
@@ -121,13 +74,20 @@ void MambaDocumentController::doDestroyAudioSource(ARA::PlugIn::AudioSource* aud
 void MambaDocumentController::doUpdateAudioSourceContent(ARA::PlugIn::AudioSource* source, const ARA::ARAContentTimeRange* range, ARA::ContentUpdateScopes scopeFlags) noexcept
 {
     // Audio source content (waveform edits, comping) changed.
-    // Would trigger re-analysis if the analysis model was loaded.
+    // TODO: When analysis model is loaded, trigger re-analysis here.
+    // For now, mark content dirty and continue.
+    contentDirty_.store(true, std::memory_order_release);
     (void)source; (void)range; (void)scopeFlags;
 }
 
 void MambaDocumentController::willEnableAudioSourceSamplesAccess(ARA::PlugIn::AudioSource* source, bool enable) noexcept
 {
-    audioSourceAccessEnabled_ = enable;
+    // When enabled, companion plugin can read source samples via
+    // ARA::PlugIn::HostAudioReader for offline analysis.
+    // Reset dirty flag since we may re-read content.
+    if (enable) {
+        contentDirty_.store(false, std::memory_order_release);
+    }
     (void)source;
 }
 
@@ -135,8 +95,14 @@ void MambaDocumentController::didEnableAudioSourceSamplesAccess(ARA::PlugIn::Aud
 {
     // Host has granted/revoked access to audio source sample data.
     // When enabled, companion plugin can read source samples via
-    // ARA::PlugIn::AudioSourceReader for offline analysis.
-    (void)source; (void)enable;
+    // ARA::PlugIn::HostAudioReader for offline analysis.
+    // TODO: If enabled and content is dirty, push AnalysisQueueDrain
+    // to the companion plugin's SPSC task queue (requires host bridge).
+    // For now, just mark content dirty if re-enabled.
+    if (enable) {
+        contentDirty_.store(true, std::memory_order_release);
+    }
+    (void)source;
 }
 
 ARA::PlugIn::AudioModification* MambaDocumentController::doCreateAudioModification(ARA::PlugIn::AudioSource* audioSource, ARA::ARAAudioModificationHostRef hostRef, const ARA::PlugIn::AudioModification* optionalModificationToClone) noexcept
@@ -171,20 +137,32 @@ void MambaDocumentController::doDestroyPlaybackRenderer(ARA::PlugIn::PlaybackRen
 
 ARA::PlugIn::EditorRenderer* MambaDocumentController::doCreateEditorRenderer() noexcept
 {
+    // EditorRenderer is deferred until GUI is built (CLAP_EXT_GUI).
+    // Returns nullptr — DAW will not show ARA editor views.
+    // See CLAP_EXT_GUI tracking in TODO.md.
     return nullptr;
 }
 
-void MambaDocumentController::doDestroyEditorRenderer(ARA::PlugIn::EditorRenderer*) noexcept
+void MambaDocumentController::doDestroyEditorRenderer(ARA::PlugIn::EditorRenderer* editorRenderer) noexcept
 {
+    // EditorRenderer is deferred — this is a no-op stub.
+    // If EditorRenderer is created in the future, delete here.
+    (void)editorRenderer;
 }
 
 ARA::PlugIn::EditorView* MambaDocumentController::doCreateEditorView() noexcept
 {
+    // EditorView is deferred until GUI is built (CLAP_EXT_GUI).
+    // Returns nullptr — DAW will not show ARA editor views.
+    // See CLAP_EXT_GUI tracking in TODO.md.
     return nullptr;
 }
 
-void MambaDocumentController::doDestroyEditorView(ARA::PlugIn::EditorView*) noexcept
+void MambaDocumentController::doDestroyEditorView(ARA::PlugIn::EditorView* editorView) noexcept
 {
+    // EditorView is deferred — this is a no-op stub.
+    // If EditorView is created in the future, delete here.
+    (void)editorView;
 }
 
 bool MambaDocumentController::doRestoreObjectsFromArchive(ARA::PlugIn::HostArchiveReader* archiveReader, const ARA::PlugIn::RestoreObjectsFilter*) noexcept
@@ -251,12 +229,12 @@ const char* MambaFactoryConfig::getManufacturerName() const noexcept
 
 const char* MambaFactoryConfig::getInformationURL() const noexcept
 {
-    return nullptr;
+    return MAMBA_PROJECT_URL;
 }
 
 const char* MambaFactoryConfig::getVersion() const noexcept
 {
-    return "1.0.0";
+    return "1.1.0";
 }
 
 const char* MambaFactoryConfig::getDocumentArchiveID() const noexcept

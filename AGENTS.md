@@ -1,6 +1,8 @@
 # CLARA — Mamba Audio Suite (CLAP + ARA2)
 
-C++17 audio plugin running a Mamba SSM (Selective State Space Model) via ONNX Runtime. Linux x64 only. Produces a CLAP plugin and an ARA2 shared library sharing one inference core.
+C++17 audio plugin running a Mamba SSM (Selective State Space Model) via ONNX Runtime. Supports Linux (stable), macOS and Windows (in progress). Produces a CLAP plugin and an ARA2 shared library sharing one inference core.
+
+See `ADR-001` through `ADR-008` in `ADR-*.md` for architectural decisions and `ADR-WORKFLOW.md` for the ADR drafting backlog and system prompts.
 
 ## Build
 
@@ -14,6 +16,14 @@ With tests:
 ```bash
 cmake .. -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
 cmake --build . --parallel && ctest --output-on-failure
+```
+
+Cross-platform builds via CMake presets:
+```bash
+cmake --preset linux-release      # Linux
+cmake --preset macos-release      # macOS
+cmake --preset windows-release    # Windows
+cmake --build --preset <preset>
 ```
 
 Install (default prefix `/usr/local`):
@@ -50,7 +60,13 @@ Exports `models/mamba_rt.onnx` + `.onnx.data` (external data sidecar) using `tor
 
 `src/ara/MambaAraController` — DocumentController + PlaybackRenderer + `extern "C" ARAGetFactory()` with `visibility("default")`. ARA 2.0 has NO `renderSamples()` — audio processing is exclusively through the companion CLAP plugin. Content stubs documented with proper `enable` handling in `willEnableAudioSourceSamplesAccess`. Archive state persists 3 floats (bypass, wetDry, intensity) via `HostArchiveReader/Writer`.
 
+`src/core/Platform.hpp` — cross-platform abstractions for module path resolution (`mambaGetModulePath()`), symbol visibility (`MAMBA_EXPORT`/`MAMBA_IMPORT`), and thread naming. Each target platform (Linux, macOS, Windows) provides a conforming implementation via `#ifdef` guards.
+
 ONNX model: 9 inputs (`audio_chunk` + 4×conv state + 4×ssm state) → 3 outputs (`processed_audio`, stacked conv state, stacked ssm state). The engine unstacks output states per-layer each block.
+
+Conditioning vector `cond[COND_DIM]` (`COND_DIM=8`): double-buffered with atomic pointer swap for RT-safe updates from non-RT threads. Projection weights (`COND_DIM` scalars) loaded at `activate()`, immutable in RT. Applied as output gain modulation in `processBlock()` — does not change ONNX I/O contract. See ADR-008.
+
+`src/core/SPSCQueue.hpp` — fixed-capacity lock-free SPSC ring buffer for deferred task communication between audio thread and main thread. Capacity 64 entries, supports push from any thread, pop from main thread. Used for `ModelReload` and `AnalysisQueueDrain` deferred tasks.
 
 ## C++ Conventions
 
@@ -64,12 +80,12 @@ ONNX model: 9 inputs (`audio_chunk` + 4×conv state + 4×ssm state) → 3 output
 ## CI/CD
 
 GitHub Actions workflow at `.github/workflows/ci.yml`:
-- Builds Release on `ubuntu-22.04` with all three FetchContent dependencies
-- Verifies symbol exports (`clap_entry`, `ARAGetFactory`), RPATH (`$ORIGIN`), model deployment, onnxruntime deploy
+- Builds Release on `ubuntu-22.04`, `macos-14`, and `windows-2022` with all three FetchContent dependencies
+- Verifies symbol exports (`clap_entry`, `ARAGetFactory`), RPATH / install name / DLL search path, model deployment, onnxruntime deploy
 - Runs `clap-validator` against built `.clap` (continues on error — validator may fail without GUI)
 - Re-exports and verifies ONNX model via `python3 export_mamba_onnx.py`
-- Uploads plugin artifact (`.clap`, `.so`, `libonnxruntime.so*`, `models/`)
-- Test job builds Debug with `BUILD_TESTING=ON` and runs CTest
+- Uploads plugin artifact (`.clap`, `.so`/`.dylib`/`.dll`, `libonnxruntime.*`, `models/`)
+- Test job builds Debug on all three platforms with `BUILD_TESTING=ON` and runs CTest
 
 ## Verification
 
@@ -88,12 +104,15 @@ Tests cover: construct/destroy lifecycle, `init()` with model path, `processBloc
 | No GUI (`CLAP_EXT_GUI`) | P1 | Deferred until model training is complete and JUCE/pugl integration is planned |
 | No CLAP validator passing in CI | P4 | Validator downloaded and run; may fail without GUI — `continue-on-error: true` |
 | Model training pipeline | P2 | Need training data, loss function, and export pipeline |
-| No `clap-validator` passing in CI | P4 | Downloaded and run but may fail — blocker for merge confidence |
+| Conditioning vector is zeros — no ARA integration to populate it | P2 | `COND_DIM=8` infrastructure exists but never set from musical context |
+| ARA deferred analysis pipeline is a stub | P2 | `contentDirty_` flag set but never consumed — no analysis loop |
+| `mamba_on_main_thread` case bodies empty (ModelReload, AnalysisQueueDrain) — queue drains but no real work | P2 | `MambaClapPlugin.cpp:410-417`; ARA `didEnableAudioSourceSamplesAccess` cannot push without host bridge |
 
 ## Key Design Constraints
 
 - `Ort::Value` has NO default constructor — use `thread_local std::vector` with `reserve()` instead of `std::array`
 - `ARA::PlugIn::PlugInEntry::getPlugInEntry<F, D>()` creates static singletons — cannot inject custom constructor args
 - ARA 2.0 `PlaybackRendererInterface` has no `renderSamples()` method; audio processing is companion CLAP plugin only
-- Plugins resolve model path via `dladdr()` relative to their own binary; models must be in `models/` subdirectory adjacent to plugin
-- `libonnxruntime.so` must be deployed alongside plugins (resolved via `$ORIGIN` RUNPATH)
+- Plugins resolve model path via `mambaGetModulePath()` (Platform.hpp abstraction over `dladdr`/`GetModuleFileName`/`_NSGetExecutablePath`) relative to their own binary; models must be in `models/` subdirectory adjacent to plugin
+- `MAMBA_EXPORT` macro (Platform.hpp) handles symbol visibility across platforms: ELF hidden/visibility(default), DLL export, macOS weak import
+- Runtime library (`libonnxruntime.so`, `onnxruntime.dll`, `libonnxruntime.dylib`) must be deployed alongside plugins (resolved via platform-specific search path)

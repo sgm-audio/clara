@@ -27,6 +27,23 @@ public:
     void resetState();
     void processBlock(const float* input, float* output, int numSamples);
 
+    // Set conditioning vector from any thread (double-buffered atomic swap)
+    void setConditioning(const float* cond, size_t dim);
+    // Load projection weights (must be called from non-RT thread, typically activate())
+    void loadCondWeights(const float* weights, size_t dim);
+
+    // Test-only accessors for verifying the double-buffer swap and weights
+    // loading state. Not part of the production API. Returns the address of
+    // the currently active conditioning buffer (nullptr before any
+    // setConditioning() call).
+    const float* getActiveConditioningForTest() const noexcept {
+        return activeCond_.load(std::memory_order_acquire);
+    }
+    // Test-only: returns true if loadCondWeights() populated condWeights_.
+    bool getCondWeightsLoadedForTest() const noexcept {
+        return condWeightsLoaded_;
+    }
+
 private:
     Config config_;
     Ort::Env env_{ORT_LOGGING_LEVEL_WARNING, "MambaInference"};
@@ -55,6 +72,15 @@ private:
     static constexpr size_t kNumOutputs = 3;
     std::array<const char*, kNumInputs> inputNames_;
     std::array<const char*, kNumOutputs> outputNames_;
+
+    static constexpr size_t COND_DIM = 8;
+
+    // Conditioning vector: double-buffered for RT-safe updates
+    std::array<float, COND_DIM> condBufA_{};
+    std::array<float, COND_DIM> condBufB_{};
+    std::atomic<float*> activeCond_{nullptr};
+    std::vector<float> condWeights_;  // COND_DIM scalars, loaded at activate()
+    bool condWeightsLoaded_{false};
 
     bool initialized_{false};
 };

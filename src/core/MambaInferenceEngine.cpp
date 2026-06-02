@@ -19,7 +19,12 @@ bool MambaInferenceEngine::init() {
     sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
     try {
+#ifdef _WIN32
+        std::wstring wPath(config_.modelPath.begin(), config_.modelPath.end());
+        session_ = std::make_unique<Ort::Session>(env_, wPath.c_str(), sessionOptions);
+#else
         session_ = std::make_unique<Ort::Session>(env_, config_.modelPath.c_str(), sessionOptions);
+#endif
     } catch (const Ort::Exception&) {
         return false;
     }
@@ -39,7 +44,11 @@ bool MambaInferenceEngine::init() {
     audioChunkShape_ = {1, static_cast<int64_t>(config_.maxBlockSize), 1};
     processedAudioShape_ = {1, static_cast<int64_t>(config_.maxBlockSize), 1};
 
+    // NOTE: Engine initialized — model weights are untrained (random), output will be noise
     initialized_ = true;
+    condWeights_.resize(COND_DIM, 0.0f);
+    condWeightsLoaded_ = false;
+    activeCond_.store(nullptr, std::memory_order_release);
     return true;
 }
 
@@ -50,8 +59,38 @@ void MambaInferenceEngine::resetState() {
     resetRequested_.store(true, std::memory_order_release);
 }
 
+void MambaInferenceEngine::setConditioning(const float* cond, size_t dim) {
+    if (!cond || dim == 0) return;
+    const size_t copyDim = std::min(dim, COND_DIM);
+
+    // Determine which buffer is NOT currently active and write to it
+    float* active = activeCond_.load(std::memory_order_acquire);
+    float* target = (active == condBufA_.data()) ? condBufB_.data() : condBufA_.data();
+
+    std::copy(cond, cond + copyDim, target);
+    if (copyDim < COND_DIM) {
+        std::fill(target + copyDim, target + COND_DIM, 0.0f);
+    }
+
+    activeCond_.store(target, std::memory_order_release);
+}
+
+void MambaInferenceEngine::loadCondWeights(const float* weights, size_t dim) {
+    if (!weights || dim == 0) {
+        condWeightsLoaded_ = false;
+        return;
+    }
+    const size_t copyDim = std::min(dim, COND_DIM);
+    condWeights_.resize(COND_DIM, 0.0f);
+    std::copy(weights, weights + copyDim, condWeights_.data());
+    condWeightsLoaded_ = true;
+}
+
 void MambaInferenceEngine::processBlock(const float* input, float* output, int numSamples) {
-    if (!initialized_ || !session_) return;
+    if (!initialized_ || !session_) {
+        std::memset(output, 0, numSamples * sizeof(float));
+        return;
+    }
 
     // Deferred reset: if resetState() was called from another thread, clear
     // state buffers now on the audio thread before processing this block.
@@ -112,6 +151,20 @@ void MambaInferenceEngine::processBlock(const float* input, float* output, int n
     } catch (const Ort::Exception&) {
         std::memset(output, 0, numSamples * sizeof(float));
         return;
+    }
+
+    // Apply conditioning as output gain modulation
+    if (condWeightsLoaded_) {
+        float* active = activeCond_.load(std::memory_order_acquire);
+        if (active) {
+            float condScale = 1.0f;
+            for (size_t d = 0; d < COND_DIM; ++d) {
+                condScale += active[d] * condWeights_[d];
+            }
+            for (int s = 0; s < blockSamples; ++s) {
+                processedAudioOut_[s] *= condScale;
+            }
+        }
     }
 
     std::memcpy(output, processedAudioOut_.data(), blockSamples * sizeof(float));
