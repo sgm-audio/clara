@@ -183,7 +183,7 @@ Current phase: **functional prototype** — all core CLAP and ARA scaffolding is
 ## Cross-Platform Migration
 
 Cross-platform support is in progress. Key changes:
-- `Platform.hpp` in `src/core/` abstracts platform-specific APIs: module path resolution (`mambaGetModulePath()`), symbol visibility (`MAMBA_EXPORT`/`MAMBA_IMPORT`), thread naming, and filesystem operations.
+- `Platform.hpp` in `src/core/` abstracts platform-specific APIs: module path resolution (`mambaResolveModulePath()`), symbol visibility (`MAMBA_EXPORT`/`MAMBA_IMPORT`), thread naming, and filesystem operations.
 - macOS: `dlopen`/`dlsym` with `.dylib` extension, Mach-O visibility attributes, `@rpath` install names.
 - Windows: `LoadLibrary`/`GetProcAddress` with `.dll` extension, `__declspec(dllexport/import)`, `SetThreadDescription` for thread naming.
 - ONNX Runtime prebuilt packages are downloaded per-platform via FetchContent URL selection in `CMakeLists.txt`.

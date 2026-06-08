@@ -8,6 +8,12 @@
 #include <cstdint>
 #include <array>
 #include <algorithm>
+#include "ConditioningFrame.h"
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
 
 class MambaInferenceEngine {
 public:
@@ -18,31 +24,40 @@ public:
         size_t nLayers = 4;
         size_t convWidth = 4;
         size_t maxBlockSize = 256;
+        // Conditioning projection weights (1x1 matrices for delta and B).
+        // Each vector must be kCondDim elements. Empty vectors → zeros (no effect).
+        std::vector<float> deltaWeights;
+        std::vector<float> bWeights;
     };
 
     explicit MambaInferenceEngine(const Config& config);
     ~MambaInferenceEngine();
 
     bool init();
+    void loadCondWeights();
     void resetState();
-    void processBlock(const float* input, float* output, int numSamples);
+    void processBlock(const float* input, float* output, int numSamples, bool* ok = nullptr);
 
-    // Set conditioning vector from any thread (double-buffered atomic swap)
+    // Set conditioning vector from any thread (double-buffered atomic swap).
+    // Writes to the non-active buffer, then atomically swaps the pointer.
     void setConditioning(const float* cond, size_t dim);
-    // Load projection weights (must be called from non-RT thread, typically activate())
-    void loadCondWeights(const float* weights, size_t dim);
 
-    // Test-only accessors for verifying the double-buffer swap and weights
-    // loading state. Not part of the production API. Returns the address of
-    // the currently active conditioning buffer (nullptr before any
-    // setConditioning() call).
+    const ConditioningFrame* getActiveFrameForTest() const noexcept {
+        return activeFrame_.load(std::memory_order_acquire);
+    }
+
     const float* getActiveConditioningForTest() const noexcept {
-        return activeCond_.load(std::memory_order_acquire);
+        auto* frame = activeFrame_.load(std::memory_order_acquire);
+        return frame ? frame->data.data() : nullptr;
     }
-    // Test-only: returns true if loadCondWeights() populated condWeights_.
-    bool getCondWeightsLoadedForTest() const noexcept {
-        return condWeightsLoaded_;
-    }
+
+    bool isInitialized() const noexcept { return initialized_; }
+    bool condWeightsLoaded() const noexcept { return condWeightsLoaded_; }
+    const std::vector<float>& getCombinedWeights() const noexcept { return combinedWeights_; }
+
+    // Pre-allocate thread_local vectors on the calling thread.
+    // Call once per audio thread before real-time processing begins.
+    void warmUp();
 
 private:
     Config config_;
@@ -51,11 +66,11 @@ private:
     Ort::MemoryInfo memoryInfo_{Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)};
 
     static constexpr size_t kMaxLayers = 4;
+    static constexpr int kSubBlockSize = 64;
+    static constexpr size_t COND_DIM = ConditioningFrame::kCondDim;
 
     std::atomic<bool> resetRequested_{false};
 
-    std::vector<int64_t> audioChunkShape_;
-    std::vector<int64_t> processedAudioShape_;
     std::vector<int64_t> convLayerShape_;
     std::vector<int64_t> ssmLayerShape_;
     std::vector<int64_t> convStackShape_;
@@ -68,19 +83,27 @@ private:
     std::vector<float> convStateOutStack_;
     std::vector<float> ssmStateOutStack_;
 
-    static constexpr size_t kNumInputs = 9;
+    static constexpr size_t kNumInputs = 10;
     static constexpr size_t kNumOutputs = 3;
     std::array<const char*, kNumInputs> inputNames_;
     std::array<const char*, kNumOutputs> outputNames_;
 
-    static constexpr size_t COND_DIM = 8;
+    // Conditioning: double-buffered ConditioningFrame with atomic pointer swap.
+    ConditioningFrame frameA_;
+    ConditioningFrame frameB_;
+    std::atomic<ConditioningFrame*> activeFrame_{nullptr};
 
-    // Conditioning vector: double-buffered for RT-safe updates
-    std::array<float, COND_DIM> condBufA_{};
-    std::array<float, COND_DIM> condBufB_{};
-    std::atomic<float*> activeCond_{nullptr};
-    std::vector<float> condWeights_;  // COND_DIM scalars, loaded at activate()
+    // Projection weights pre-combined at activate() time.
+    // combinedWeights_[d] = deltaWeights[d] + bWeights[d]
+    // Applied as: output *= (1.0f + sum(cond[d] * combinedWeights_[d]))
+    std::vector<float> combinedWeights_;
     bool condWeightsLoaded_{false};
 
     bool initialized_{false};
+
+    void validateManifest();
 };
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif

@@ -11,6 +11,10 @@
 #define MAMBA_EXPORT __declspec(dllexport)
 #elif defined(__GNUC__) || defined(__clang__)
 #include <dlfcn.h>
+#include <cstdint>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #define MAMBA_EXPORT __attribute__((visibility("default")))
 #endif
 
@@ -35,6 +39,15 @@ inline std::string mambaResolveModulePath(void* funcAddr, const char* modelFile)
             base = info.dli_fname;
         }
     }
+#if defined(__APPLE__)
+    if (base.empty()) {
+        char path[1024];
+        uint32_t size = sizeof(path);
+        if (_NSGetExecutablePath(path, &size) == 0) {
+            base = path;
+        }
+    }
+#endif
 #endif
 
     auto sep = base.rfind('/');
@@ -73,6 +86,15 @@ inline std::string mambaResolveModelDir(void* funcAddr) {
             base = info.dli_fname;
         }
     }
+#if defined(__APPLE__)
+    if (base.empty()) {
+        char path[1024];
+        uint32_t size = sizeof(path);
+        if (_NSGetExecutablePath(path, &size) == 0) {
+            base = path;
+        }
+    }
+#endif
 #endif
 
     auto sep = base.rfind('/');

@@ -69,13 +69,14 @@ Alternatives considered:
 
 ### 3. ONNX Model I/O Contract
 
-**9 inputs → 3 outputs. This contract must never change without updating `export_mamba_onnx.py` in lockstep.**
+**10 inputs → 3 outputs. This contract must never change without updating `export_mamba_onnx.py` in lockstep.**
 
 | Index | Input Name | Shape | Description |
 |-------|-----------|-------|-------------|
 | 0 | `audio_chunk` | `{1, seq_len, 1}` | Mono audio samples, float32 |
 | 1-4 | `conv{0..3}` | `{1, 64, 4}` | Per-layer causal conv state (rolling buffer) |
 | 5-8 | `ssm{0..3}` | `{1, 64, 16}` | Per-layer SSM recurrent state (h matrix) |
+| 9 | `cond` | `{1, 8}` | Conditioning vector (FiLM), 8-dim float32 |
 
 | Index | Output Name | Shape | Description |
 |-------|------------|-------|-------------|
@@ -90,6 +91,24 @@ The output states are stacked (layer count at dim=1) to simplify the ONNX graph 
 `seq_len` is dynamic (`dynamic_axes={'audio_chunk': {1: 'seq_len'}}`). This is deliberate — using a fixed large shape and zero-padding the unused portion would feed zeros through the SSM's recurrent state, corrupting it. With dynamic shapes, ORT only operates on the actual sample count.
 
 Tradeoff: Static shapes let ORT perform more aggressive pre-allocation and memory planning. Dynamic shapes incur a small runtime cost for shape propagation. We chose correctness over peak throughput.
+
+#### Sub-block Processing (64 samples)
+
+`processBlock()` decomposes the host's audio block into fixed-size sub-blocks of 64 samples (`kSubBlockSize = 64`). Each sub-block runs one ONNX inference call:
+```
+while (offset < totalSamples):
+    chunkSamples = min(64, remaining)
+    pad to 64 if needed
+    session_->Run()
+    copy output, unstack states
+    offset += chunkSamples
+```
+
+This bounds ONNX inference to a predictable per-call size regardless of the host's block size (which can range from 64 to 1024+). The 64-sample choice balances dispatch overhead (too small → too many `Run()` calls) against latency (larger sub-blocks increase per-call inference time). The sub-block must be at least `conv_width` (4) to satisfy the causal convolution's minimum input length.
+
+#### Cond Input
+
+The `cond` tensor (10th input, index 9) carries an 8-dimensional conditioning vector (`COND_DIM=8`) into the ONNX graph, enabling FiLM-style feature modulation inside the model. It is double-buffered with an atomic pointer swap for RT-safe updates from non-RT threads. After ONNX inference, an additional external scalar gain modulation is applied using `combinedWeights_` (sum of delta and b projection weights) — see ADR-008 for full details.
 
 ### 4. Pre-allocate All RT Buffers in `init()`
 
@@ -167,7 +186,7 @@ The `$ORIGIN` RPATH is set at build time (`BUILD_WITH_INSTALL_RPATH ON` and `CMA
 - Model architecture is frozen at export time — changing hyperparameters requires re-export.
 
 ### Constraints
-- Model I/O contract is hard: 9 inputs / 3 outputs. Any change requires lockstep update of `export_mamba_onnx.py` and `MambaInferenceEngine`.
+- Model I/O contract is hard: 10 inputs / 3 outputs. Any change requires lockstep update of `export_mamba_onnx.py` and `MambaInferenceEngine`.
 - `processBlock()` must remain allocation-free — enforced by code review, not tooling.
 - `MambaCore` must be compiled with `-fPIC` for linking into shared libraries (set via `POSITION_INDEPENDENT_CODE ON`).
 - Fixed point: `d_model=64`, `n_layers=4`, `d_state=16`, `conv_width=4`. Changing any of these requires re-exporting the model and updating shape constants in `MambaInferenceEngine`.

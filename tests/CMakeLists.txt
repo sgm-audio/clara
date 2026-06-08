@@ -10,6 +10,8 @@ endif()
 # NOTE: enable_testing() is called in the top-level CMakeLists.txt (it must
 # be at the top level, before any add_subdirectory(), per CMake docs).
 
+find_package(Threads REQUIRED)
+
 # --- Test: MambaInferenceEngine smoke test ---
 add_executable(test_engine
     test_engine.cpp
@@ -19,7 +21,7 @@ target_include_directories(test_engine PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${ONNXRUNTIME_INCLUDE_DIR}
 )
-target_link_libraries(test_engine PRIVATE ${ONNXRUNTIME_LIB})
+target_link_libraries(test_engine PRIVATE ${ONNXRUNTIME_LIB} Threads::Threads)
 if(UNIX AND NOT APPLE)
     target_link_libraries(test_engine PRIVATE pthread dl)
 endif()
@@ -30,6 +32,24 @@ target_compile_definitions(test_engine PRIVATE
 )
 
 add_test(NAME test_engine COMMAND test_engine)
+
+# --- Test: Latency (timing verification) ---
+add_executable(test_latency
+    test_latency.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/MambaInferenceEngine.cpp
+)
+target_include_directories(test_latency PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${ONNXRUNTIME_INCLUDE_DIR}
+)
+target_link_libraries(test_latency PRIVATE ${ONNXRUNTIME_LIB})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_latency PRIVATE pthread dl)
+endif()
+target_compile_definitions(test_latency PRIVATE
+    TEST_MODEL_DIR="${CMAKE_SOURCE_DIR}/models"
+)
+add_test(NAME test_latency COMMAND test_latency)
 
 # --- Test: CLAP plugin ---
 add_executable(test_clap_plugin
@@ -98,8 +118,9 @@ add_test(NAME test_ara_controller COMMAND test_ara_controller)
 set(_clap_validator_required_categories "audio-ports;params;state;latency")
 
 # Quick mode skips processing tests because the Mamba SSM runs in CPU-only
-# ONNX Runtime with currently-untrained random weights (see TODO.md P2
-# "Models are untrained"). A full 21-case validation pass with process()
+# ONNX Runtime with untrained random weights (the export/training pipeline
+# exists at export_mamba_onnx.py but trained weights are not yet available).
+# A full 21-case validation pass with process()
 # calls takes many minutes per call and is impractical for CI. Quick mode
 # exercises the four required categories at the structural / lifecycle
 # layer (init, descriptor, audio-ports shape, param roundtrip, state

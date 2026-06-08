@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(MambaAudioSuite LANGUAGES CXX)
+project(MambaAudioSuite VERSION 1.1.0 LANGUAGES CXX)
 
 # CTest must be enabled at the top level (before any add_subdirectory) for
 # `enable_testing()` to register tests from subdirectories. Guarded by
@@ -14,6 +14,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
+    # /MD (dynamic CRT): Required because ONNX Runtime's prebuilt onnxruntime.dll
+    # is compiled with /MD. Mixing /MT (static CRT) and /MD in the same process
+    # causes undefined behavior (separate heaps, incompatible object ownership).
+    # Users must install the VC++ Redistributable:
+    #   https://aka.ms/vs/17/release/vc_redist.x64.exe
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4 /FS /EHsc")
     set(CMAKE_CXX_FLAGS_RELEASE "/O2 /fp:fast /DNDEBUG /GR- /MD")
     set(CMAKE_CXX_FLAGS_DEBUG "/Od /Zi /DDEBUG /MDd /FS /EHsc")
@@ -181,12 +186,9 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(MambaSuiteARA PRIVATE pthread dl)
 endif()
 
-# Strip release builds (Unix linker flag)
-if(UNIX AND CMAKE_BUILD_TYPE STREQUAL "Release")
-    set_target_properties(MambaSuiteClap MambaSuiteARA PROPERTIES
-        LINK_FLAGS "-s"
-    )
-endif()
+# Strip release builds (Unix linker flag — generator-expr for multi-config support)
+target_link_options(MambaSuiteClap PRIVATE $<$<AND:$<PLATFORM_ID:Linux,Darwin>,$<CONFIG:Release>>:-s>)
+target_link_options(MambaSuiteARA PRIVATE $<$<AND:$<PLATFORM_ID:Linux,Darwin>,$<CONFIG:Release>>:-s>)
 
 # ---------------------------------------------------------------------------
 # Per-target post-build deploy (multi-config safe)
@@ -351,13 +353,20 @@ endif()
 # dependencies resolve relative to the plugin binary location.
 # ---------------------------------------------------------------------------
 
-# Determine the bundle resource directory (same-level as the .clap binary)
+# CLAP bundle install destinations per CLAP specification:
+#   Windows: %COMMONPROGRAMFILES%\CLAP\<name>.clap\
+#   macOS:   /Library/Audio/Plug-Ins/CLAP/<name>.clap/
+#   Linux:   /usr/lib/clap/<name>.clap/
+# Set CMAKE_INSTALL_PREFIX to override (e.g., $HOME/.clap for per-user install).
 if(WIN32)
-    set(CLAP_BUNDLE_DIR "lib/clap/MambaSuiteClap.clap/Contents/x86_64-windows")
+    set(CLAP_INSTALL_PREFIX "CLAP" CACHE STRING "CLAP install directory relative to CMAKE_INSTALL_PREFIX")
+    set(CLAP_BUNDLE_DIR "${CLAP_INSTALL_PREFIX}/MambaSuiteClap.clap/Contents/x86_64-windows")
 elseif(APPLE)
-    set(CLAP_BUNDLE_DIR "lib/clap/MambaSuiteClap.clap/Contents/MacOS")
+    set(CLAP_INSTALL_PREFIX "lib/clap" CACHE STRING "CLAP install directory relative to CMAKE_INSTALL_PREFIX")
+    set(CLAP_BUNDLE_DIR "${CLAP_INSTALL_PREFIX}/MambaSuiteClap.clap/Contents/MacOS")
 else()
-    set(CLAP_BUNDLE_DIR "lib/clap/MambaSuiteClap.clap/Contents/linux-x86-64")
+    set(CLAP_INSTALL_PREFIX "lib/clap" CACHE STRING "CLAP install directory relative to CMAKE_INSTALL_PREFIX")
+    set(CLAP_BUNDLE_DIR "${CLAP_INSTALL_PREFIX}/MambaSuiteClap.clap/Contents/linux-x86-64")
 endif()
 
 # --- CLAP bundle install ---
@@ -368,15 +377,16 @@ install(TARGETS MambaSuiteClap
 
 # Also install bare .clap for hosts that don't support bundles
 install(FILES ${CMAKE_BINARY_DIR}/plugins/MambaSuiteClap.clap
-    DESTINATION lib/clap
+    DESTINATION ${CLAP_INSTALL_PREFIX}
     COMPONENT clap
 )
 
 # --- ARA install ---
+set(ARA_INSTALL_PREFIX "lib/ara" CACHE STRING "ARA install directory relative to CMAKE_INSTALL_PREFIX")
 install(TARGETS MambaSuiteARA
-    LIBRARY DESTINATION lib/ara
+    LIBRARY DESTINATION ${ARA_INSTALL_PREFIX}
     COMPONENT ara
-    RUNTIME DESTINATION lib/ara
+    RUNTIME DESTINATION ${ARA_INSTALL_PREFIX}
 )
 
 # --- Runtime dependencies for CLAP bundle ---
@@ -411,28 +421,28 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
 # --- Runtime dependencies for ARA ---
 if(WIN32)
     install(FILES ${ONNXRUNTIME_DLL}
-        DESTINATION lib/ara
+        DESTINATION ${ARA_INSTALL_PREFIX}
         COMPONENT ara
     )
 elseif(APPLE)
     install(FILES
             ${ONNXRUNTIME_DYLIB}
             ${CMAKE_BINARY_DIR}/plugins/libonnxruntime.dylib
-        DESTINATION lib/ara
+        DESTINATION ${ARA_INSTALL_PREFIX}
         COMPONENT ara
     )
 else()
     install(FILES
             ${ONNXRUNTIME_SO}
             ${CMAKE_BINARY_DIR}/plugins/libonnxruntime.so
-        DESTINATION lib/ara
+        DESTINATION ${ARA_INSTALL_PREFIX}
         COMPONENT ara
     )
 endif()
 
 # --- Models for ARA ---
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
-    DESTINATION lib/ara/models
+    DESTINATION ${ARA_INSTALL_PREFIX}/models
     COMPONENT ara
     FILES_MATCHING PATTERN "*.onnx*"
 )

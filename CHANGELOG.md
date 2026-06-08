@@ -1,5 +1,35 @@
 # Changelog
 
+## In Progress — 2026-06-02
+
+### CLARA-06: Latency Reporting Verification
+- Investigating: Does the 4-sample latency claim hold at all sample rates?
+- Adding: `tests/test_latency.cpp` — impulse-response test at 44.1k/48k/96k/192k
+- Adding: `scripts/verify_latency.py` — Python ONNX-level latency verification
+- Fixing: P0/A1 silent engine failure path (processBlock now has optional `bool* ok` out-param)
+- Fixing: P0/A2 duplicate param flush (removed redundant param handling from mamba_process)
+
+### CLARA-09: Conditioning Vector from Musical Context
+- New: `src/core/ConditioningGenerator.hpp` — encodes musical context to cond[8]
+- Changed: `mamba_activate()` now loads non-zero test weights and sets default conditioning
+- Changed: ARA stubs updated with ConditioningGenerator API references for future host-bridge integration
+- Tests: 4 new ConditioningGenerator tests in test_engine.cpp
+- Known gap: Real ARA integration requires host bridge — conditioning currently uses hardcoded default context
+
+### CLARA-08: ONNX Export Pipeline Hardening
+- New: Pre-flight checks in export_mamba_onnx.py (Python, torch, onnx, onnxruntime, numpy versions; opset availability; dry-run forward pass)
+- New: ONNX vs PyTorch output validation (cosine similarity, max absolute difference)
+- New: models/manifest.json generation (schema_version, architecture contract, SHA256 hashes, export timestamp)
+- New: MambaInferenceEngine::validateManifest() — validates model architecture at init() against manifest
+- Changed: Export script flow reorganized to [1/4] Export → [2/4] Verify → [3/4] Validate → [4/4] Manifest
+
+### CLARA-07: Cross-Platform Build Matrix
+- Changed: Windows CLAP install path now uses CLAP convention (lib/clap → CLAP/)
+- Changed: CLAP_INSTALL_PREFIX and ARA_INSTALL_PREFIX CMake cache variables for customizable install paths
+- Changed: Windows MSVC CRT constraint documented (/MD required because onnxruntime.dll is built with /MD)
+- Known gap: macOS universal binary (arm64+x86_64) not yet wired; code signing not implemented
+- Known gap: ONNX Runtime built with /MD — static CRT (/MT) would require building ORT from source
+
 ## 1.2.0 — 2026-06-02
 
 Conditioning vector, SPSC deferred task queue, and ARA stub resolution.

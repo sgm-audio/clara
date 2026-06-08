@@ -92,9 +92,13 @@ jobs:
           test -f src/core/SPSCQueue.hpp
           test -f ADR-008-conditioning-vector.md || echo "ADR-008 pending"
 
-      - name: Verify Python model export
+      - name: Verify Python model export (random weights - CI only)
         run: |
           python3 export_mamba_onnx.py
+          echo ""
+          echo "NOTE: CI exports RANDOM weights. For production:"
+          echo "  python export_mamba_onnx.py --checkpoint checkpoints_clara/best.pt"
+          echo ""
 
       - name: Verify model shapes
         run: |
@@ -181,9 +185,14 @@ jobs:
         shell: pwsh
         run: Test-Path build/plugins/models/mamba_rt.onnx
 
-      - name: Verify Python model export
+      - name: Verify Python model export (random weights - CI only)
         shell: pwsh
-        run: python export_mamba_onnx.py
+        run: |
+          python export_mamba_onnx.py
+          echo ""
+          echo "NOTE: CI exports RANDOM weights. For production:"
+          echo "  python export_mamba_onnx.py --checkpoint checkpoints_clara/best.pt"
+          echo ""
 
       - name: Upload plugins artifact
         uses: actions/upload-artifact@v4

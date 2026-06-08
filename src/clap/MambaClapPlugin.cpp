@@ -8,7 +8,12 @@
 #include <clap/ext/latency.h>
 #include <clap/ext/state.h>
 #include <clap/ext/audio-ports.h>
+#include <clap/ext/state-context.h>
+#include <clap/ext/render.h>
+#include <clap/ext/tail.h>
+#include <clap/ext/log.h>
 #include "core/Platform.hpp"
+#include "core/ConditioningGenerator.hpp"
 
 // -----------------------------------------------------------------------------
 // Plugin Info
@@ -112,9 +117,16 @@ static bool clap_params_text_to_value(const clap_plugin_t*, clap_id param_id, co
     case PARAM_WET_DRY:
     case PARAM_INTENSITY: {
         double pct = 0.0;
-        if (std::sscanf(display, "%lf%%", &pct) == 1 || std::sscanf(display, "%lf", &pct) == 1) {
-            *value = std::clamp(pct / 100.0, 0.0, 1.0);
-            return true;
+        if (std::strchr(display, '%')) {
+            if (std::sscanf(display, "%lf%%", &pct) == 1) {
+                *value = std::clamp(pct / 100.0, 0.0, 1.0);
+                return true;
+            }
+        } else {
+            if (std::sscanf(display, "%lf", &pct) == 1) {
+                *value = std::clamp(pct, 0.0, 1.0);
+                return true;
+            }
         }
         return false;
     }
@@ -214,6 +226,71 @@ const clap_plugin_state_t mamba_state_extension = {
     mamba_state_load
 };
 
+static bool mamba_state_context_save(const clap_plugin_t* plugin, const clap_ostream_t* stream, uint32_t context_type) {
+    // All contexts save the same params for now.
+    (void)context_type;
+    return mamba_state_save(plugin, stream);
+}
+
+static bool mamba_state_context_load(const clap_plugin_t* plugin, const clap_istream_t* stream, uint32_t context_type) {
+    auto* state = (MambaPluginState*)plugin->plugin_data;
+
+    int32_t version = 0;
+    if (stream->read(stream, &version, sizeof(version)) < (int64_t)sizeof(version)) return false;
+    if (version > 1) return false;
+
+    MambaPresetData data;
+    if (stream->read(stream, &data, sizeof(data)) < (int64_t)sizeof(data)) return false;
+
+    state->bypass.store(data.bypass, std::memory_order_release);
+    state->wetDry.store(data.wetDry, std::memory_order_release);
+    state->intensity.store(data.intensity, std::memory_order_release);
+    state->currentBypassValue = data.bypass;
+
+    // Only reset engine when loading a preset or duplicating.
+    // Project state loads preserve the SSM's internal state for seamless resume.
+    if (context_type != CLAP_STATE_CONTEXT_FOR_PROJECT) {
+        if (state->engine) {
+            state->engine->resetState();
+        }
+    }
+    return true;
+}
+
+static const clap_plugin_state_context_t mamba_state_context_extension = {
+    mamba_state_context_save,
+    mamba_state_context_load
+};
+
+// -----------------------------------------------------------------------------
+// Render Extension
+// -----------------------------------------------------------------------------
+
+static bool clap_render_has_hard_realtime(const clap_plugin_t*) {
+    return true;  // ML inference needs deterministic timing
+}
+
+static bool clap_render_set_mode(const clap_plugin_t*, clap_plugin_render_mode mode) {
+    return mode == CLAP_RENDER_REALTIME;  // Only realtime supported
+}
+
+static const clap_plugin_render_t mamba_render_extension = {
+    clap_render_has_hard_realtime,
+    clap_render_set_mode
+};
+
+// -----------------------------------------------------------------------------
+// Tail Extension
+// -----------------------------------------------------------------------------
+
+static uint32_t clap_tail_get(const clap_plugin_t*) {
+    return 0;  // No reverb tail — 4-sample conv latency only
+}
+
+static const clap_plugin_tail_t mamba_tail_extension = {
+    clap_tail_get
+};
+
 // -----------------------------------------------------------------------------
 // Plugin Implementation
 // -----------------------------------------------------------------------------
@@ -250,18 +327,22 @@ static bool mamba_activate(const clap_plugin_t* plugin, double sample_rate, uint
         state->chOut[ch].resize(config.maxBlockSize);
     }
 
-    state->engine = std::make_unique<MambaInferenceEngine>(config);
-    if (!state->engine->init()) {
-        state->engine.reset();
+    // Load conditioning projection weights (1x1 matrices for delta and B).
+    // Zero weights = no conditioning effect. CLARA-09 will load trained weights.
+    config.deltaWeights.assign(ConditioningFrame::kCondDim, 0.0f);
+    config.bWeights.assign(ConditioningFrame::kCondDim, 0.0f);
+
+    auto newEngine = std::make_unique<MambaInferenceEngine>(config);
+    if (!newEngine->init()) {
         return false;
     }
+    state->enginePtr.store(newEngine.get(), std::memory_order_release);
+    state->engine = std::move(newEngine);
 
-    // Initialize conditioning weights (all zeros = no modulation)
-    // When model training produces meaningful weights, load from model metadata here
-    {
-        std::vector<float> condWeights(8, 0.0f);
-        state->engine->loadCondWeights(condWeights.data(), condWeights.size());
-    }
+    // Initialize conditioning with default musical context.
+    float cond[ConditioningFrame::kCondDim];
+    ConditioningGenerator::encode(ConditioningGenerator::defaultContext(), cond, ConditioningFrame::kCondDim);
+    state->engine->setConditioning(cond, ConditioningFrame::kCondDim);
 
     state->crossfadeStep = 1.0f / (0.05f * static_cast<float>(sample_rate));
     return true;
@@ -269,15 +350,20 @@ static bool mamba_activate(const clap_plugin_t* plugin, double sample_rate, uint
 
 static void mamba_deactivate(const clap_plugin_t* plugin) {
     auto* state = (MambaPluginState*)plugin->plugin_data;
+    state->enginePtr.store(nullptr, std::memory_order_release);
     state->engine.reset();
 }
 
 static bool mamba_start_processing(const clap_plugin_t* plugin) {
     auto* state = (MambaPluginState*)plugin->plugin_data;
-    return state->engine != nullptr;
+    return state->enginePtr.load(std::memory_order_acquire) != nullptr;
 }
 
-static void mamba_stop_processing(const clap_plugin_t*) {
+static void mamba_stop_processing(const clap_plugin_t* plugin) {
+    auto* state = (MambaPluginState*)plugin->plugin_data;
+    if (state && state->enginePtr.load(std::memory_order_acquire)) {
+        state->enginePtr.load(std::memory_order_acquire)->resetState();
+    }
 }
 
 static void mamba_reset(const clap_plugin_t* plugin) {
@@ -289,19 +375,6 @@ static void mamba_reset(const clap_plugin_t* plugin) {
 
 static clap_process_status mamba_process(const clap_plugin_t* plugin, const clap_process_t* process) {
     auto* state = (MambaPluginState*)plugin->plugin_data;
-
-    const uint32_t num_events = process->in_events->size(process->in_events);
-    for (uint32_t i = 0; i < num_events; ++i) {
-        const clap_event_header_t* event = process->in_events->get(process->in_events, i);
-        if (event->space_id == CLAP_CORE_EVENT_SPACE_ID && event->type == CLAP_EVENT_PARAM_VALUE) {
-            const clap_event_param_value_t* param_event = (const clap_event_param_value_t*)event;
-            switch (param_event->param_id) {
-            case PARAM_BYPASS:    state->bypass.store(static_cast<float>(param_event->value), std::memory_order_release); break;
-            case PARAM_WET_DRY:   state->wetDry.store(static_cast<float>(param_event->value), std::memory_order_release); break;
-            case PARAM_INTENSITY: state->intensity.store(static_cast<float>(param_event->value), std::memory_order_release); break;
-            }
-        }
-    }
 
     if (process->audio_outputs_count == 0 || process->audio_inputs_count == 0) {
         return CLAP_PROCESS_CONTINUE;
@@ -322,8 +395,11 @@ static clap_process_status mamba_process(const clap_plugin_t* plugin, const clap
         ? ((targetBypass > state->currentBypassValue) ? state->crossfadeStep : -state->crossfadeStep)
         : 0.0f;
 
-    // Guard: if engine is null, pass dry signal
-    if (!state->engine) {
+    // Guard: if engine is null or model reload is pending, pass dry signal.
+    // Load engine pointer atomically at the start of process() to ensure
+    // we have a consistent view for the entire callback.
+    auto* enginePtr = state->enginePtr.load(std::memory_order_acquire);
+    if (!enginePtr || state->modelReloadPending.load(std::memory_order_acquire)) {
         for (uint32_t ch = 0; ch < processChans; ++ch) {
             std::memcpy(process->audio_outputs[0].data32[ch],
                         process->audio_inputs[0].data32[ch],
@@ -341,9 +417,12 @@ static clap_process_status mamba_process(const clap_plugin_t* plugin, const clap
     for (uint32_t ch = 0; ch < processChans; ++ch) {
         float* input = process->audio_inputs[0].data32[ch];
         std::memcpy(state->chIn[ch].data(), input, numSamples * sizeof(float));
-        // NOTE: processBlock returns silence silently if engine is invalid.
-        // This is by design — no safe way to signal errors from audio thread.
-        state->engine->processBlock(state->chIn[ch].data(), state->chOut[ch].data(), numSamples);
+        // NOTE: processBlock returns silence when engine is invalid.
+        // Pass nullptr for 'ok' — silent failure is acceptable on the audio thread.
+        // Use locally-captured enginePtr — this is safe because the engine
+        // won't be destroyed while we're in processBlock() (the main thread
+        // waits for modelReloadPending to be consumed before destroying).
+        enginePtr->processBlock(state->chIn[ch].data(), state->chOut[ch].data(), numSamples);
     }
 
     // Mix per-sample, all channels share the same bypass ramp
@@ -384,7 +463,7 @@ static bool clap_audio_ports_get(const clap_plugin_t*, uint32_t index, bool is_i
     info->id = 0;
     info->channel_count = 2;
     info->flags = CLAP_AUDIO_PORT_IS_MAIN;
-    info->port_type = CLAP_PORT_STEREO;
+    info->port_type = nullptr;
     std::strncpy(info->name, is_input ? "Stereo In" : "Stereo Out", sizeof(info->name));
     return true;
 }
@@ -396,9 +475,12 @@ static const clap_plugin_audio_ports_t mamba_audio_ports_extension = {
 
 const void* mamba_get_extension(const clap_plugin_t*, const char* extensionId) {
     if (strcmp(extensionId, CLAP_EXT_STATE) == 0) return &mamba_state_extension;
+    if (strcmp(extensionId, CLAP_EXT_STATE_CONTEXT) == 0) return &mamba_state_context_extension;
     if (strcmp(extensionId, CLAP_EXT_PARAMS) == 0) return &mamba_params_extension;
     if (strcmp(extensionId, CLAP_EXT_LATENCY) == 0) return &mamba_latency_extension;
     if (strcmp(extensionId, CLAP_EXT_AUDIO_PORTS) == 0) return &mamba_audio_ports_extension;
+    if (strcmp(extensionId, CLAP_EXT_RENDER) == 0) return &mamba_render_extension;
+    if (strcmp(extensionId, CLAP_EXT_TAIL) == 0) return &mamba_tail_extension;
     return nullptr;
 }
 
@@ -407,13 +489,44 @@ static void mamba_on_main_thread(const clap_plugin_t* plugin) {
     MambaPluginState::DeferredTask task;
     while (state->deferredTaskQueue.pop(task)) {
         switch (task) {
-        case MambaPluginState::DeferredTask::ModelReload:
-            // Model reload triggered from audio thread
-            // Future: re-init engine with new model path
+        case MambaPluginState::DeferredTask::ModelReload: {
+            // Signal audio thread to go passthrough during reload
+            state->modelReloadPending.store(true, std::memory_order_release);
+            std::atomic_thread_fence(std::memory_order_seq_cst);
+
+            // Create new engine with the current model path
+            MambaInferenceEngine::Config reloadConfig;
+            reloadConfig.modelPath = state->modelPath;
+            reloadConfig.maxBlockSize = std::max(
+                static_cast<size_t>(256),
+                static_cast<size_t>(state->sampleRate / 10.0f));  // ~100ms at current SR
+            auto newEngine = std::make_unique<MambaInferenceEngine>(reloadConfig);
+            if (newEngine->init()) {
+                // Set default conditioning on the new engine
+                float cond[ConditioningFrame::kCondDim];
+                ConditioningGenerator::encode(ConditioningGenerator::defaultContext(),
+                    cond, ConditioningFrame::kCondDim);
+                newEngine->setConditioning(cond, ConditioningFrame::kCondDim);
+
+                // Update atomic pointer BEFORE destroying old engine.
+                // This ensures the audio thread always sees a valid pointer.
+                state->enginePtr.store(newEngine.get(), std::memory_order_release);
+                state->engine = std::move(newEngine);
+            } else {
+                std::fprintf(stderr,
+                    "[CLARA] WARNING: model reload failed -- keeping existing engine\n");
+            }
+
+            state->modelReloadPending.store(false, std::memory_order_release);
             break;
+        }
         case MambaPluginState::DeferredTask::AnalysisQueueDrain:
-            // Analysis results available from ARA
-            // Future: update display or export analysis data
+            // Analysis results available from ARA.
+            // Future: When ARA host bridge is implemented, update conditioning
+            // vector here from ARA musical context (tempo, key):
+            //   float cond[8];
+            //   ConditioningGenerator::encode(araContext, cond, 8);
+            //   state->engine->setConditioning(cond, 8);
             break;
         }
     }

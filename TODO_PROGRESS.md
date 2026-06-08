@@ -57,8 +57,8 @@
 ### IX. Cross-Platform Portability
 - [x] Phase 0: Scaffolding — `Platform.hpp` with `MAMBA_EXPORT`, `mambaResolveModulePath`, platform guards
 - [x] `CMakePresets.json` for Linux/macOS/Windows
-- [ ] Phase 1: macOS — Clang preset, CI, `@loader_path` RPATH
-- [ ] Phase 2: Windows — MSVC preset, CI, `.dll` deployment
+- [ ] Phase 1: macOS — Clang preset, CI, `@loader_path` RPATH — 🔄 macOS install paths ready, universal binary pending
+- [ ] Phase 2: Windows — MSVC preset, CI, `.dll` deployment — 🔄 Windows install paths ready, static CRT deferred
 - [ ] Phase 3: CI matrix expansion + docs update
 
 ## Current Implementation Status
@@ -73,16 +73,20 @@
 - ~~**ARA SDK Missing Wrappers**~~ — **RESOLVED**: The code now correctly uses the Celemony `ARA_Library/PlugIn/ARAPlug.h` C++ wrappers (`ARA::PlugIn::DocumentController`, `ARA::PlugIn::PlaybackRenderer`, etc.). These are the official Celemony-provided wrappers, not JUCE-specific. ARA integration is fully enabled in `CMakeLists.txt`.
 
 ## Next Steps
-1. **Address clap-validator failures (P1):** First validation pass shows `clap_plugin::init()` returns false in 11/21 tests. Root cause likely model path resolution (the validator loads the plugin from a working directory that may not have `models/` adjacent). Investigate `mamba_init()` and `mambaResolveModulePath()` when the plugin is loaded from an unexpected CWD.
-2. Complete PlaybackRenderer with edit state handling (handle changes in the DAW timeline).
-3. Implement required ARA2 interfaces (AudioRandomAccess, Presets, etc.).
-4. Implement state reset behavior in the CLAP plugin (for transport seek).
-5. Verify thread safety of atomic parameters and lock-free queues.
-6. Add optional enhancements (GUI, metering) if desired.
-7. Conduct comprehensive testing and validation.
-8. **Phase 1:** Finalize macOS support (Clang, `@loader_path`, CI).
-9. **Phase 2:** Finalize Windows support (MSVC, `.dll`, CI).
-10. **Phase 3:** Expand CI matrix and update documentation.
+0. **CLARA-08: ONNX export hardening (P2):** Pre-flight checks, ONNX vs PyTorch validation, manifest.json generation, plugin-side manifest validation. DONE.
+0. **CLARA-09: Conditioning wiring (P1):** ConditioningGenerator created and wired in CLAP. Next: ARA host bridge for real musical context → cond flow.
+0. **CLARA-07: Cross-platform build matrix (P2):** Windows install paths improved; static CRT deferred (ONNX Runtime constraint). Remaining: macOS universal binary, code signing, static MSVC runtime investigation.
+1. **CLARA-06: Latency verification test (P0):** Write impulse-response test proving 4-sample latency claim at all sample rates. If measured latency doesn't match, fix latency reporting before any user-facing release.
+2. **Address clap-validator failures (P1):** First validation pass shows `clap_plugin::init()` returns false in 11/21 tests. Root cause likely model path resolution (the validator loads the plugin from a working directory that may not have `models/` adjacent). Investigate `mamba_init()` and `mambaResolveModulePath()` when the plugin is loaded from an unexpected CWD.
+3. Complete PlaybackRenderer with edit state handling (handle changes in the DAW timeline).
+4. Implement required ARA2 interfaces (AudioRandomAccess, Presets, etc.).
+5. Implement state reset behavior in the CLAP plugin (for transport seek).
+6. Verify thread safety of atomic parameters and lock-free queues.
+7. Add optional enhancements (GUI, metering) if desired.
+8. Conduct comprehensive testing and validation.
+9. **Phase 1:** Finalize macOS support (Clang, `@loader_path`, CI).
+10. **Phase 2:** Finalize Windows support (MSVC, `.dll`, CI).
+11. **Phase 3:** Expand CI matrix and update documentation.
 
 ## CLAP Validator Test (added 2026-06-02)
 - New CTest target `clap_validator` registered in `tests/CMakeLists.txt`

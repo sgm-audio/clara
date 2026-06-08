@@ -14,7 +14,7 @@ The same `MambaInferenceEngine` C++ class powers both — no code duplication.
   - CLAP SDK (commit `29ffcc27`) — plugin format
   - ARA SDK (commit `1ca0b0aa`) — Audio Random Access protocol
   - ONNX Runtime v1.17.1 — prebuilt packages for Linux/macOS/Windows
-- Cross-platform via Platform.hpp abstractions (uses `mambaGetModulePath()`, `MAMBA_EXPORT`)
+- Cross-platform via Platform.hpp abstractions (uses `mambaResolveModulePath()`, `MAMBA_EXPORT`)
 - Outputs to `build/plugins/`
 - WSL Ubuntu build env (g++ 15.2.0, cmake 4.2.3)
 

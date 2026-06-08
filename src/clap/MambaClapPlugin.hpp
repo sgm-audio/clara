@@ -2,6 +2,9 @@
 
 #include <clap/clap.h>
 #include <clap/ext/state.h>
+#include <clap/ext/state-context.h>
+#include <clap/ext/render.h>
+#include <clap/ext/tail.h>
 #include "../core/MambaInferenceEngine.hpp"
 #include "../core/SPSCQueue.hpp"
 #include <atomic>
@@ -37,6 +40,14 @@ struct MambaPluginState {
         AnalysisQueueDrain,
     };
     SPSCQueue<DeferredTask, 64> deferredTaskQueue;
+
+    // Flag to signal audio thread to go passthrough during model reload
+    std::atomic<bool> modelReloadPending{false};
+
+    // Atomic engine pointer for RT-safe access from audio thread.
+    // The unique_ptr owns the engine; the atomic pointer provides lock-free access
+    // without risk of use-after-free during model reload.
+    std::atomic<MambaInferenceEngine*> enginePtr{nullptr};
 };
 
 extern "C" const clap_plugin_descriptor_t mamba_plugin_info;
@@ -44,5 +55,8 @@ extern "C" const clap_plugin_descriptor_t mamba_plugin_info;
 extern const clap_plugin_t mamba_plugin;
 
 extern "C" const clap_plugin_state_t mamba_state_extension;
+extern const clap_plugin_state_context_t mamba_state_context_extension;
+extern const clap_plugin_render_t mamba_render_extension;
+extern const clap_plugin_tail_t mamba_tail_extension;
 
 const void* mamba_get_extension(const clap_plugin_t* plugin, const char* extensionId);

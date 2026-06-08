@@ -22,45 +22,47 @@ std::atomic<float*> activeCond_  // points to which buffer to read in RT
 
 `setConditioning(cond, dim)`: writes to the non-active buffer, issues atomic store to swap pointer (release ordering). `processBlock()` loads the active pointer (acquire ordering) and applies the projection. No locks, no allocations.
 
-### 3. Projection weights loaded at `activate()`, immutable in RT
+### 3. Dual-path conditioning: ONNX-integrated FiLM + external scalar gain
 
-A `std::vector<float> condWeights_` of size `COND_DIM * dModel` is loaded once per engine instance in `activate()`. Each element is a scalar that modulates the corresponding cond dimension's contribution to the output gain.
+The conditioning system now operates in two parallel paths:
 
-### 4. External application — does not change ONNX I/O contract
+**Path A — ONNX-integrated FiLM (10th input):** The `cond` tensor is passed directly into the ONNX graph as the 10th input (index 9, shape `{1, 8}`). Inside the model, FiLM-style feature modulation applies the conditioning at each layer, modulating the SSM's internal representations. This changes the ONNX I/O contract from 9 to 10 inputs.
 
-The conditioning is applied as output gain modulation in `processBlock()` after the ONNX inference run:
-
+**Path B — External scalar gain modulation (`combinedWeights_`):** After ONNX inference, a second scalar gain is applied as output modulation:
 ```
-condScale = 1.0f + sum(cond[d] * weights[d])  // scalar modulation
+condScale = 1.0f + sum(cond[d] * combinedWeights_[d])
 output[s] *= condScale
 ```
+where `combinedWeights_[d] = deltaWeights[d] + bWeights[d]` is pre-computed at `loadCondWeights()` time (called from `init()` / `activate()`) and is immutable in RT.
 
-This means:
-- The ONNX model I/O stays at 9 inputs / 3 outputs (no model re-export required)
-- Zero condition vector → output unchanged
-- When model training is ready, conditioning can be folded into the ONNX graph
+Both paths read the same `cond` vector via double-buffered atomic pointer swap. The dual-path design was retained for backward compatibility and to allow coarser gain modulation alongside the more expressive ONNX-integrated conditioning.
+
+### 4. Projection weights loaded at `init()` / `activate()`, immutable in RT
+
+`combinedWeights_` of size `COND_DIM` is computed once from `config_.deltaWeights` and `config_.bWeights` via `loadCondWeights()`. Each element is a scalar that modulates the corresponding cond dimension's contribution to the output gain.
 
 ### 5. RT-safe constraints
 
 - `setConditioning()`: writes to non-active buffer, then atomic store to swap. Callable from any thread.
-- `loadCondWeights()`: called from `activate()` only — non-RT thread, uses `std::vector::resize` + `memcpy`.
-- `processBlock()`: reads active pointer, reads weights. Zero allocations, zero locks.
+- `loadCondWeights()`: called from `init()` / `activate()` only — non-RT thread, uses `std::vector::resize` + `memcpy`.
+- `processBlock()`: reads active pointer, reads weights, passes cond as 10th ONNX input. Zero allocations, zero locks.
 
 ## Consequences
 
 ### Positive
 
 - ARA musical context (tempo, key) can modulate model output via the cond vector
-- No ONNX model re-export needed
+- ONNX-integrated FiLM provides per-layer feature modulation for more expressive conditioning
 - RT-safe with zero allocations on audio thread
 - Backward-compatible: zero cond = no change
 - atomic pointer swap is lock-free and wait-free on all target platforms
 
 ### Negative
 
-- `COND_DIM` is fixed at compile time — changing it requires recompilation
-- Scalar gain modulation is coarse — full conditioning in the ONNX graph would be more expressive
-- No ARA integration yet to populate the cond vector
+- `COND_DIM` is fixed at compile time — changing it requires recompilation and model re-export
+- Dual-path (ONNX FiLM + external gain) adds complexity — both use the same `cond` vector but apply differently
+- No ARA integration yet to populate the cond vector from musical context
+- Conditioning now changes the ONNX I/O contract: 10 inputs instead of 9, requiring model re-export
 - Dual buffers add `2 × COND_DIM × sizeof(float) = 64 bytes` of persistent memory per engine instance
 
 ## Compliance
@@ -71,15 +73,19 @@ This means:
 - Verified: `processBlock()` loads `activeCond_` via `activeCond_.load(memory_order_acquire)` and computes `condScale` — no allocations, no locks.
 - Verified: `loadCondWeights()` called from `mamba_activate()` (`MambaClapPlugin.cpp:263`) — non-RT context, uses `resize` + `memcpy` into `condWeights_`.
 - Verified: `COND_DIM` defined as `static constexpr size_t kCondDim = 8` in `MambaInferenceEngine.hpp`.
-- Verified: The ONNX model I/O contract (9 inputs / 3 outputs) is unchanged — verified by comparing input/output name arrays before and after conditioning implementation.
-- Verified: Zero condition vector (`cond[d] = 0 ∀d`) produces `condScale = 1.0f` — output bit-identical to unconditioned path.
+- Verified: `kNumInputs = 10` in `MambaInferenceEngine.hpp`, `"cond"` is last entry in `inputNames_` in `MambaInferenceEngine.cpp:16`.
+- Verified: Cond tensor passed as 10th ONNX input with shape `{1, COND_DIM}` in `processBlock()`.
+- Verified: External scalar gain `condScale` applied in `processBlock()` using `combinedWeights_` after ONNX `Run()`.
+- Verified: `loadCondWeights()` computes `combinedWeights_[d] = deltaWeights[d] + bWeights[d]` and is called from `init()`.
+- Verified: Zero condition vector (`cond[d] = 0 ∀d`) produces `condScale = 1.0f` — output consistent with unconditioned path.
 
 ## Related
 
 - AGENTS.md — invariant #7 (conditioning vector design summary at line 67)
-- ADR-001: ONNX I/O contract (conditioning is external, doesn't change 9/3 contract)
-- `src/core/MambaInferenceEngine.hpp` — `setConditioning()`, `loadCondWeights()`, `activeCond_`, `condWeights_`, `kCondDim`
-- `src/core/MambaInferenceEngine.cpp` — `processBlock()` gain modulation, `setConditioning()` atomic swap, `loadCondWeights()` weight copy
-- `src/clap/MambaClapPlugin.cpp:263` — `mamba_activate()` calls `loadCondWeights()` from non-RT context
+- ADR-001: ONNX I/O contract (now 10 inputs, cond is input 10)
+- `src/core/MambaInferenceEngine.hpp` — `kNumInputs=10`, `setConditioning()`, `loadCondWeights()`, `activeCond_`, `combinedWeights_`, `kCondDim`
+- `src/core/MambaInferenceEngine.cpp` — `processBlock()` passes cond as ONNX input + gain modulation, `setConditioning()` atomic swap, `loadCondWeights()` combined weight computation
+- `src/core/ConditioningGenerator.hpp` — `MusicalContext` struct, `ConditioningGenerator::encode()` for ARA context → cond
+- `src/clap/MambaClapPlugin.cpp` — `mamba_activate()` calls `loadCondWeights()` from non-RT context
 - `src/clap/MambaClapPlugin.hpp` — `MambaPluginState` holds no cond state (cond lives in engine)
 - ADR-002: Deferred atomic state reset (sibling RT-safety pattern with atomic flag)

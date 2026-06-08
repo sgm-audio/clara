@@ -1,0 +1,20 @@
+{
+  "fallbackModels": [
+    "opencode/big-pickle",
+    "gpt-4o",
+    "claude-3-5-sonnet",
+    "gemini-1.5-pro"
+  ],
+  "maxRetries": 3,
+  "accuracyThreshold": 0.8,
+  "sisyphusMaxLoops": 5,
+  "ulwMaxIterations": 10,
+  "ralphMaxIterations": 5,
+  "ralphCompletionMarker": "<promise>DONE</promise>",
+  "monitoredProviders": [
+    "opencode",
+    "openai",
+    "anthropic",
+    "google"
+  ]
+}

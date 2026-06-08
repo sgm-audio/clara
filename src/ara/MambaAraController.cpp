@@ -1,5 +1,6 @@
 #include "MambaAraController.hpp"
 #include "core/Platform.hpp"
+#include "core/ConditioningGenerator.hpp"
 
 // -----------------------------------------------------------------------------
 // PlaybackRenderer
@@ -11,8 +12,24 @@ MambaPlaybackRenderer::MambaPlaybackRenderer(ARA::PlugIn::DocumentController* do
     MambaInferenceEngine::Config config;
     config.modelPath = mambaResolveModulePath((void*)&ARAGetFactory, "mamba_rt.onnx");
     config.maxBlockSize = 1024;
+    // Zero projection weights — no conditioning effect until model training.
+    // CLARA-09 will replace these with trained weights.
+    config.deltaWeights.assign(ConditioningFrame::kCondDim, 0.0f);
+    config.bWeights.assign(ConditioningFrame::kCondDim, 0.0f);
     rtEngine_ = std::make_unique<MambaInferenceEngine>(config);
-    rtEngine_->init();
+    if (!rtEngine_->init()) {
+        // Engine init failed — keep the controller usable but log the error.
+        // The engine pointer will remain nullptr in the document controller
+        // so doUpdateMusicalContextContent() will be a no-op.
+        std::fprintf(stderr, "[CLARA] ARA: PlaybackRenderer engine init failed — conditioning disabled\n");
+        rtEngine_.reset();
+        return;
+    }
+
+    // Give the document controller access to the engine so
+    // doUpdateMusicalContextContent() can push conditioning updates.
+    auto* docCtrl = static_cast<MambaDocumentController*>(documentController);
+    docCtrl->setAraEngine(rtEngine_.get());
 }
 
 MambaPlaybackRenderer::~MambaPlaybackRenderer() noexcept = default;
@@ -43,10 +60,26 @@ void MambaDocumentController::doDestroyMusicalContext(ARA::PlugIn::MusicalContex
 
 void MambaDocumentController::doUpdateMusicalContextContent(ARA::PlugIn::MusicalContext* context, const ARA::ARAContentTimeRange* range, ARA::ContentUpdateScopes scopeFlags) noexcept
 {
-    // Musical context (tempo, time signature) changed.
-    // TODO: When model conditions on tempo/key, extract context and call
-    // engine->setConditioning() with derived features here.
-    // For now, mark content as dirty and continue.
+    // ARA musical context (tempo, key, time signature) changed.
+    // The engine pointer is wired and setConditioning() is ready.
+    //
+    // TODO(CLARA-09): Extract actual context via ARA host content reader:
+    //   1. Check content availability via host content access controller
+    //   2. Create content reader for ARAContentType::kMusicalContext
+    //   3. Read tempo, key pitch class, key mode from content events
+    //   4. Encode to cond vector via ConditioningGenerator::encode()
+    //   5. Call engine->setConditioning()
+    //
+    // For now, push a neutral (all-zeros) conditioning to prove the path.
+    // This effectively disables conditioning until CLARA-09 delivers
+    // the host bridge with proper ARA content reading.
+    auto* engine = araEngine_;
+    if (engine) {
+        float neutral[ConditioningFrame::kCondDim];
+        ConditioningGenerator::neutral(neutral, ConditioningFrame::kCondDim);
+        engine->setConditioning(neutral, ConditioningFrame::kCondDim);
+    }
+
     contentDirty_.store(true, std::memory_order_release);
     (void)context; (void)range; (void)scopeFlags;
 }
@@ -73,32 +106,32 @@ void MambaDocumentController::doDestroyAudioSource(ARA::PlugIn::AudioSource* aud
 
 void MambaDocumentController::doUpdateAudioSourceContent(ARA::PlugIn::AudioSource* source, const ARA::ARAContentTimeRange* range, ARA::ContentUpdateScopes scopeFlags) noexcept
 {
-    // Audio source content (waveform edits, comping) changed.
-    // TODO: When analysis model is loaded, trigger re-analysis here.
-    // For now, mark content dirty and continue.
     contentDirty_.store(true, std::memory_order_release);
     (void)source; (void)range; (void)scopeFlags;
 }
 
+void MambaDocumentController::doAnalyzeRegion(ARA::PlugIn::AudioSource*, ARA::ARAAudioModificationHostRef,
+    const ARA::ARAContentTimeRange*, ARA::ContentUpdateScopes) noexcept
+{
+    // Stub — analysis pipeline not yet implemented.
+    // Future: when ARA host bridge is built, feed audio samples
+    // through the inference engine and write content (tempo, key)
+    // back to the host via ContentUpdateScopes.
+}
+
 void MambaDocumentController::willEnableAudioSourceSamplesAccess(ARA::PlugIn::AudioSource* source, bool enable) noexcept
 {
-    // When enabled, companion plugin can read source samples via
-    // ARA::PlugIn::HostAudioReader for offline analysis.
-    // Reset dirty flag since we may re-read content.
-    if (enable) {
-        contentDirty_.store(false, std::memory_order_release);
-    }
+    // When the host is about to grant sample access, prepare internal buffers.
+    // Future: pre-allocate analysis buffers or increment access ref count.
     (void)source;
+    (void)enable;
 }
 
 void MambaDocumentController::didEnableAudioSourceSamplesAccess(ARA::PlugIn::AudioSource* source, bool enable) noexcept
 {
-    // Host has granted/revoked access to audio source sample data.
-    // When enabled, companion plugin can read source samples via
-    // ARA::PlugIn::HostAudioReader for offline analysis.
-    // TODO: If enabled and content is dirty, push AnalysisQueueDrain
-    // to the companion plugin's SPSC task queue (requires host bridge).
-    // For now, just mark content dirty if re-enabled.
+    // The host has granted (or revoked) sample access.
+    // When access is enabled, mark content dirty so it can be re-analyzed.
+    // When disabled, clean up analysis state.
     if (enable) {
         contentDirty_.store(true, std::memory_order_release);
     }
@@ -137,49 +170,72 @@ void MambaDocumentController::doDestroyPlaybackRenderer(ARA::PlugIn::PlaybackRen
 
 ARA::PlugIn::EditorRenderer* MambaDocumentController::doCreateEditorRenderer() noexcept
 {
-    // EditorRenderer is deferred until GUI is built (CLAP_EXT_GUI).
-    // Returns nullptr — DAW will not show ARA editor views.
-    // See CLAP_EXT_GUI tracking in TODO.md.
-    return nullptr;
+    return new MambaEditorRenderer(this);
 }
 
 void MambaDocumentController::doDestroyEditorRenderer(ARA::PlugIn::EditorRenderer* editorRenderer) noexcept
 {
-    // EditorRenderer is deferred — this is a no-op stub.
-    // If EditorRenderer is created in the future, delete here.
-    (void)editorRenderer;
+    if (editorRenderer) {
+        delete static_cast<MambaEditorRenderer*>(editorRenderer);
+    }
 }
 
 ARA::PlugIn::EditorView* MambaDocumentController::doCreateEditorView() noexcept
 {
-    // EditorView is deferred until GUI is built (CLAP_EXT_GUI).
-    // Returns nullptr — DAW will not show ARA editor views.
-    // See CLAP_EXT_GUI tracking in TODO.md.
-    return nullptr;
+    return new MambaEditorView(this);
 }
 
 void MambaDocumentController::doDestroyEditorView(ARA::PlugIn::EditorView* editorView) noexcept
 {
-    // EditorView is deferred — this is a no-op stub.
-    // If EditorView is created in the future, delete here.
-    (void)editorView;
+    if (editorView) {
+        delete static_cast<MambaEditorView*>(editorView);
+    }
 }
+
+// Archive versioning: magic number + version byte permit forward-compatible
+// format evolution without corrupting old projects.
+static constexpr uint32_t kArchiveMagic = 0x4D424152;  // "MBAR"
+static constexpr uint32_t kArchiveVersion = 1;
+
+#pragma pack(push, 1)
+struct ArchiveHeader {
+    uint32_t magic;
+    uint32_t version;
+};
+struct ArchivedParams {
+    float bypass;
+    float wetDry;
+    float intensity;
+};
+#pragma pack(pop)
 
 bool MambaDocumentController::doRestoreObjectsFromArchive(ARA::PlugIn::HostArchiveReader* archiveReader, const ARA::PlugIn::RestoreObjectsFilter*) noexcept
 {
     if (!archiveReader) return false;
 
-    struct ArchivedParams {
-        float bypass;
-        float wetDry;
-        float intensity;
-    };
-
     ARA::ARASize archiveSize = archiveReader->getArchiveSize();
-    if (archiveSize < sizeof(ArchivedParams)) return false;
+    if (archiveSize < sizeof(ArchiveHeader) + sizeof(ArchivedParams)) return false;
+
+    ArchiveHeader header{};
+    if (!archiveReader->readBytesFromArchive(0, sizeof(header), reinterpret_cast<ARA::ARAByte*>(&header))) {
+        return false;
+    }
+
+    if (header.magic != kArchiveMagic) {
+        std::fprintf(stderr, "[CLARA] ARA: archive magic mismatch — expected 0x%08X, got 0x%08X\n",
+                     kArchiveMagic, header.magic);
+        return false;
+    }
+
+    if (header.version > kArchiveVersion) {
+        std::fprintf(stderr, "[CLARA] ARA: archive version %u > supported %u — rejecting\n",
+                     header.version, kArchiveVersion);
+        return false;
+    }
 
     ArchivedParams params{};
-    if (!archiveReader->readBytesFromArchive(0, sizeof(params), reinterpret_cast<ARA::ARAByte*>(&params))) {
+    if (!archiveReader->readBytesFromArchive(sizeof(header), sizeof(params),
+                                              reinterpret_cast<ARA::ARAByte*>(&params))) {
         return false;
     }
 
@@ -194,18 +250,19 @@ bool MambaDocumentController::doStoreObjectsToArchive(ARA::PlugIn::HostArchiveWr
 {
     if (!archiveWriter) return false;
 
-    struct ArchivedParams {
-        float bypass;
-        float wetDry;
-        float intensity;
-    };
+    ArchiveHeader header{kArchiveMagic, kArchiveVersion};
+    if (!archiveWriter->writeBytesToArchive(0, sizeof(header),
+                                             reinterpret_cast<const ARA::ARAByte*>(&header))) {
+        return false;
+    }
 
     ArchivedParams params;
     params.bypass = bypass.load(std::memory_order_acquire);
     params.wetDry = wetDry.load(std::memory_order_acquire);
     params.intensity = intensity.load(std::memory_order_acquire);
 
-    return archiveWriter->writeBytesToArchive(0, sizeof(params), reinterpret_cast<const ARA::ARAByte*>(&params));
+    return archiveWriter->writeBytesToArchive(sizeof(header), sizeof(params),
+                                               reinterpret_cast<const ARA::ARAByte*>(&params));
 }
 
 // -----------------------------------------------------------------------------

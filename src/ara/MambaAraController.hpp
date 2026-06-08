@@ -13,6 +13,8 @@ public:
     explicit MambaPlaybackRenderer(ARA::PlugIn::DocumentController* documentController);
     ~MambaPlaybackRenderer() noexcept override;
 
+    MambaInferenceEngine* getEngine() noexcept { return rtEngine_.get(); }
+
 private:
     std::unique_ptr<MambaInferenceEngine> rtEngine_;
 };
@@ -26,6 +28,16 @@ public:
     std::atomic<float> bypass{0.0f};
     std::atomic<float> wetDry{1.0f};
     std::atomic<float> intensity{0.5f};
+
+    // Set by MambaPlaybackRenderer at construction time.
+    // Raw non-owning pointer — engine lifetime managed by the renderer.
+    void setAraEngine(MambaInferenceEngine* engine) noexcept {
+        araEngine_ = engine;
+    }
+
+    MambaInferenceEngine* getAraEngine() const noexcept {
+        return araEngine_;
+    }
 
 protected:
     ARA::PlugIn::Document* doCreateDocument() noexcept override;
@@ -43,6 +55,7 @@ protected:
     void doUpdateAudioSourceContent(ARA::PlugIn::AudioSource* audioSource, const ARA::ARAContentTimeRange* range, ARA::ContentUpdateScopes scopeFlags) noexcept override;
     void willEnableAudioSourceSamplesAccess(ARA::PlugIn::AudioSource* audioSource, bool enable) noexcept override;
     void didEnableAudioSourceSamplesAccess(ARA::PlugIn::AudioSource* audioSource, bool enable) noexcept override;
+    void doAnalyzeRegion(ARA::PlugIn::AudioSource* audioSource, ARA::ARAAudioModificationHostRef hostRef, const ARA::ARAContentTimeRange* range, ARA::ContentUpdateScopes scopeFlags) noexcept override;
 
     ARA::PlugIn::AudioModification* doCreateAudioModification(ARA::PlugIn::AudioSource* audioSource, ARA::ARAAudioModificationHostRef hostRef, const ARA::PlugIn::AudioModification* optionalModificationToClone) noexcept override;
     void doDestroyAudioModification(ARA::PlugIn::AudioModification* audioModification) noexcept override;
@@ -52,6 +65,11 @@ protected:
 
     ARA::PlugIn::PlaybackRenderer* doCreatePlaybackRenderer() noexcept override;
     void doDestroyPlaybackRenderer(ARA::PlugIn::PlaybackRenderer* playbackRenderer) noexcept override;
+
+    // Content type declaration — tells the host which content types
+    // this controller can read/write.
+    void doGetContentTypes(ARA::PlugIn::ContentTypeList& types) const noexcept override { (void)types; }
+    void doGetContentGrades(ARA::PlugIn::ContentGradeList& grades) const noexcept override { (void)grades; }
 
     ARA::PlugIn::EditorRenderer* doCreateEditorRenderer() noexcept override;
     void doDestroyEditorRenderer(ARA::PlugIn::EditorRenderer* editorRenderer) noexcept override;
@@ -64,6 +82,21 @@ protected:
 
 private:
     std::atomic<bool> contentDirty_{false};
+    MambaInferenceEngine* araEngine_{nullptr};
+};
+
+class MambaEditorRenderer : public ARA::PlugIn::EditorRenderer
+{
+public:
+    using ARA::PlugIn::EditorRenderer::EditorRenderer;
+    ~MambaEditorRenderer() noexcept override = default;
+};
+
+class MambaEditorView : public ARA::PlugIn::EditorView
+{
+public:
+    using ARA::PlugIn::EditorView::EditorView;
+    ~MambaEditorView() noexcept override = default;
 };
 
 class MambaFactoryConfig : public ARA::PlugIn::FactoryConfig
