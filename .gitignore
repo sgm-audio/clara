@@ -19,3 +19,19 @@ __pycache__/
 *~
 .DS_Store
 Thumbs.db
+
+# Checkpoints — trained weights, LARGE binary files, LOCAL ONLY
+checkpoints_clara/
+*.pt
+*.pth
+*.ckpt
+
+# ONNX models — trained weights, LOCAL ONLY
+*.onnx
+*.onnx.data
+
+# Noise dataset — PROPRIETARY audio, LOCAL ONLY, NEVER COMMIT
+# Add your noise dataset path below, e.g.:
+# /home/sgm/data/noise-dataset/
+# C:/Users/scott/data/noise-dataset/
+*noise*/

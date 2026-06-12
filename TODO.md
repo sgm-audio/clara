@@ -289,41 +289,28 @@ class ChunkedRamCache:
 
 ### 4.5 Phase 2: Contrastive Noise Training
 
-The Phase 1 identity autoencoder (step 0-49,200) learned to reconstruct clean audio. Phase 2 applies **contrastive learning against a noise dataset**:
+**UPDATE 2026-06-12:** The noise dataset is **LOCAL ONLY, PROPRIETARY**. It is NOT on GitHub and must NEVER be committed. Verify `.gitignore` blocks all audio files before any push.
+
+**Noise dataset contents (LOCAL, UNPUBLISHED):**
+- Suno-generated audio (various quality levels, artifacts)
+- Personal recordings (proprietary, low quality)
+- Live band recordings: Coore's Event Centre, Saskatoon (line array PA recordings)
+
+**Dataset path:** User must configure. Add to `train_clara_now.py`:
+```bash
+# Example local paths — REPLACE with actual paths:
+--clean-data /path/to/clean/reference/audio
+--noise-data /path/to/noise/dataset  # Suno + recordings + live bands
+```
 
 **Goal:** Train CLARA to output clean audio when given noisy input — denoising.
 
 **Architecture for Phase 2:**
 - `train_clara_model.py` → `MambaRTModelParallel` / `MambaRTModelSequential` already support this
-- Dataset: (clean, noisy) pairs from MUSDB18-HQ synthetic noise augmentation
+- Dataset: (clean, noisy) pairs from real-world noise dataset
 - Loss: SI-SDR(clean_pred, clean_target) — scale-invariant to match Phase 1
 
-**Synthetic noise augmentation (no extra dataset needed):**
-```python
-def add_noise(audio, snr_db_range=(-10, 20)):
-    """Add white/pink noise at random SNR."""
-    noise = torch.randn_like(audio) * noise_std
-    # Mix at target SNR
-    return clean + noise
-```
-
-**Training command for Phase 2:**
-```bash
-python train_clara_now.py \
-  --data /path/to/musdb18hq/train \
-  --resume checkpoints_clara/best.pt \
-  --steps 50000 \
-  --batch 2 \
-  --grad-accum 8 \
-  --num-workers 4 \
-  --cache \
-  --cache-chunked \
-  --no-amp \
-  --phase contrastive \
-  --noise-augment
-```
-
-**OR**: Continue from best.pt with the existing identity loss + noise-augmented batches mixed in.
+**IMPORTANT:** Do NOT add noise dataset paths to any committed files. Use command-line args or environment variables for local paths.
 
 ### 4.6 ONNX Export After Training
 
