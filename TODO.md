@@ -1,174 +1,533 @@
-# CLARA — Master TODO
+# CLARA — Master TODO (2026-06-12)
 
-**Generated:** 2026-06-02 | **Last update:** 2026-06-04 (session 2) | **Status key:** `⬜ pending` `🔄 in progress` `✅ done` `❌ cancelled`
-
----
-
-## 🔴 P0 — Critical Bugs & Architecture
-
-| # | File | Issue | Status |
-|---|------|-------|--------|
-| 1 | `src/core/MambaInferenceEngine.hpp/.cpp` | **Conditioning vector `cond[COND_DIM]`** — double-buffered with atomic pointer swap, FiLM inside ONNX, removed external gain modulation (See ADR-008) | ✅ |
-| 2 | `src/core/SPSCQueue.hpp` | **SPSC ring buffer** — lock-free queue for deferred tasks (ModelReload, AnalysisQueueDrain) | ✅ |
-| 3 | `models/mamba_rt.onnx`, `export_mamba_onnx.py` | **ONNX graph too large for ORT** — 256-step unrolled Mamba (25,199 nodes) caused ORT session creation timeout >120s. **Fix:** Export at seq_len=64 (6,575 nodes), C++ engine processes in 64-sample sub-blocks with state carry-over and zero-padding for partial final blocks. All 23 engine tests pass. | ✅ |
-| 4 | `src/core/MambaInferenceEngine.cpp` | **Dynamic seq_len limitation** — TorchScript trace bakes fixed Gather indices for conv slicing. Inference at different seq_len fails with "indices element out of data bounds". **Mitigation:** Sub-block processing at fixed 64 samples; ONNX model always receives exactly 64. | ✅ (documented) |
-| 5 | `tests/test_latency.cpp` (new) | **CLARA-06**: Latency reporting verification test — prove 4-sample claim at 44.1k/48k/96k/192k via impulse-response. | ✅ |
-
-## 🟠 P1 — Functional Gaps
-
-| # | File | Issue | Status |
-|---|------|-------|--------|
-| 6 | `src/clap/MambaClapPlugin.cpp` | `mamba_on_main_thread` — `ModelReload` now creates new engine, does RT-safe swap via `modelReloadPending` flag; `AnalysisQueueDrain` still a stub awaiting ARA host bridge | ✅ |
-| 7 | `src/clap/MambaClapPlugin.hpp` | `DeferredTask` enum unchanged; added `modelReloadPending` atomic flag for thread-safe engine swap | ✅ |
-| 8 | `src/ara/MambaAraController.cpp` | `doUpdateMusicalContextContent` — already calls `setConditioning()` with neutral values, sets `contentDirty_`. Ready for CLARA-09 host bridge. | ✅ |
-| 9 | `src/ara/MambaAraController.cpp` | `doUpdateAudioSourceContent` — sets `contentDirty_`. ARA analysis pipeline stub awaiting host bridge. | ✅ |
-| 10 | `src/ara/MambaAraController.cpp` | `didEnableAudioSourceSamplesAccess` — sets `contentDirty_` when enabled. Stub for future analysis trigger. | ✅ |
-| 11 | `src/ara/MambaAraController.cpp` | `doCreateEditorRenderer` — now returns proper `MambaEditorRenderer` instance instead of nullptr | ✅ |
-| 12 | `src/ara/MambaAraController.cpp` | `doDestroyEditorRenderer` — properly deletes via `static_cast<MambaEditorRenderer*>` | ✅ |
-| 13 | `src/ara/MambaAraController.cpp` | `doCreateEditorView` — now returns proper `MambaEditorView` instance instead of nullptr | ✅ |
-| 14 | `src/ara/MambaAraController.cpp` | `doDestroyEditorView` — properly deletes via `static_cast<MambaEditorView*>` | ✅ |
-| 15 | `src/core/ConditioningGenerator.hpp` | **CLARA-09**: See `docs/ara-host-bridge-design.md` for detailed architecture to wire ARA MusicalContext → cond flow | ✅ |
-| 16 | `train_clara.py` + all training files | **Training pipeline written, verified, and launch-ready.** 56/56 PASS. New issues found and fixed: (a) CUDA OOM at 2s clips — added `--clip-seconds 0.5` CLI arg; (b) ROCm HIPFFT_PARSE_ERROR on MR-STFT — added CPU fallback in loss. Launcher fixed: `_phase_num` hoisted, `num_workers=4` default. Ready to launch Phase 1 with `--clip-seconds 0.5`. | 🔄 |
-
-## 🟡 P2 — Correctness & Technical Debt
-
-| # | File | Issue | Status |
-|---|------|-------|--------|
-| 17 | `src/core/MambaInferenceEngine.cpp` | FIXME: Silent failure — `!initialized_` path now prints one-time stderr warning | ✅ |
-| 18 | `src/clap/MambaClapPlugin.cpp` | Duplicate param flush — Code review: `mamba_process` reads atomics directly, `clap_params_flush` handles events. No duplication. Already correct per CLAP spec. | ✅ |
-| 19 | `tests/test_clap_plugin.cpp` | wetDry `text_to_value` — Source handles both `"N%"` and raw `"0.5"` formats. Test sends both. Already correct. | ✅ |
-| 20 | `CMakeLists.txt:203-298` | Multi-config generators (VS/Xcode/Ninja MC) — fixed model deploy via POST_BUILD for Debug/Release/RelWithDebInfo/MinSizeRel × {clap, ara} | ✅ |
-| 21 | `tests/CMakeLists.txt:99-122` | Quick-mode clap-validator (CLAP_VALIDATOR_FULL=OFF default) | ✅ |
-| 22 | `CMakeLists.txt:354-361,370-380` | **CLARA-07**: Cross-platform build matrix — Windows install paths, MSVC CRT /MD constraint | ✅ |
-| 23 | `export_mamba_onnx.py`, `MambaInferenceEngine.cpp` | **CLARA-08**: ONNX export hardening — pre-flight checks, ONNX vs PyTorch validation (cosine >0.999), manifest.json with SHA256 + schema version | ✅ |
-| 24 | `docs/training-plan.md` | Training pipeline reference document — architecture, phases, datasets, loss, infrastructure, risks, implementation order | ✅ |
-| 25 | `export_mamba_onnx.py` | Cond integration: 10th input, InputProjection(1+cond_dim→64), CondFiLM per layer, manifest schema v1→v2 | ✅ |
-| 26 | `MambaInferenceEngine.cpp` | Cond input tensor fed via `activeCond_` double-buffer; external gain modulation loop removed | ✅ |
-| 27 | `MambaClapPlugin.cpp` | Removed `loadCondWeights()` call; kept `setConditioning()` with default context | ✅ |
-| 28 | `tests/test_engine.cpp` | Updated conditioning tests — removed `loadCondWeights`/`condWeightsLoaded` refs, verifies cond reaches ONNX through FiLM | ✅ |
-
-## 🟢 P3 — Training Pipeline & Model Export
-
-| # | File | Issue | Status |
-|---|------|-------|--------|
-| 29 | `train_clara_config.py` | Config dataclass with per-phase presets (identity, saturation, compression, denoising, effects) | ✅ |
-| 30 | `train_clara_model.py` | Parallel-scan training model + sequential export model + CondFiLM + make_zero_states/cond | ✅ |
-| 31 | `train_clara_dataset.py` | ClaraAudioDataset with MUSDB18/MAESTRO/DNS loading, RAM caching, librosa conditioning extraction | ✅ |
-| 32 | `train_clara_dsp.py` | Synthetic DSP generators: saturation, RMSCompressor, noise, EQ, TRANSFORM_REGISTRY | ✅ |
-| 33 | `train_clara_loss.py` | MultiResolutionSTFTLoss, SI_SDRLoss, ClaraLoss with SI-SDR ramp-in schedule | ✅ |
-| 34 | `train_clara.py` | Main training loop (AdamW, cosine schedule, gradient accumulation, checkpointing, validation, interrupt handler) | ✅ |
-| 35 | `train_clara_export.py` | ONNX export from checkpoint with shape/parity/state-continuity verification | ✅ |
-| 36 | `train_clara_launcher.py` | Auto-detect dataset, resume, ROCm env vars | ✅ |
-| 37 | `train_clara.ps1` | PowerShell wrapper | ✅ |
-| 38 | `train_clara_requirements.txt` | Python dependencies | ✅ |
-
-## 🔵 P4 — Test Coverage
-
-| # | File | Issue | Status |
-|---|------|-------|--------|
-| 39 | `tests/test_engine.cpp` | All 23 C++ engine tests pass (construct/destroy, init, processBlock 256/64/0/512, reset, stereo, conditioning with model, atomic swap, conditioning generator encode/different/neutral/unknown) | ✅ |
-| 40 | `tests/test_engine.cpp:396` | `test_init_missing_model_path()` — graceful failure when model absent | ✅ |
-| 41 | `tests/test_engine.cpp:407` | `test_conditioning_atomic_swap()` — double-buffer atomic pointer swap RT-safe verified | ✅ |
-| 42 | `tests/test_engine.cpp:376-419` | `test_conditioning_with_model()` — proves cond tensor reaches ONNX via FiLM (output differs with non-zero cond) | ✅ |
-| 43 | `tests/test_ara_controller.cpp:20-42` | Model dir resolution uses real symbol address to exercise `mambaResolveModulePath` | ✅ |
-| 44 | `tests/test_clap_plugin.cpp:434` | `test_spsc_two_thread()` — producer/consumer across two threads for SPSC FIFO | ✅ |
-| 45 | `tests/test_clap_plugin.cpp` | No test for conditioning activation or deferred task wiring — `test_set_conditioning`, `test_conditioning_with_model`, `test_conditioning_atomic_swap` etc. already cover conditioning at the engine level. CLAP-level tests deferred until ARA host bridge is integrated (CLARA-09). | 🔄 |
-| 46 | `tests/test_engine.cpp:119-141` | `test_process_block_partial_block()` — proves 64-sample sub-block boundary works | ✅ |
-| 47 | `tests/test_engine.cpp:144-175` | `test_process_block_stereo()` — sequential channel processing | ✅ |
-| 48 | `tests/test_engine.cpp:201-231` | `test_multiple_process_blocks()` — state carry-over across 5 sequential blocks | ✅ |
-| 49 | `tests/test_engine.cpp:251-272` | `test_large_block_size()` — clamping to maxBlockSize | ✅ |
-
-## 🟣 P5 — Next Actions
-
-| # | Action | Details | Priority |
-|---|--------|---------|----------|
-| N1 | Verify Python training pipeline | `verify_training_pipeline.py` written and run — **56 checks, all PASS** | ✅ |
-| N2 | Launch Phase 1 training (identity) | 860M iGPU, clip_seconds=0.5 to fit 12GB VRAM (parallel scan memory). Use `--clip-seconds 0.5`. STFT loss has ROCm HIPFFT fallback to CPU. First do 500-step smoke test: `python train_clara_launcher.py --phase identity --clip-seconds 0.5 --steps 500 --no-cache` | P0 |
-| N3 | Export Phase 1 checkpoint → ONNX | Use train_clara_export.py, verify with C++ engine test | P0 |
-| N4 | Phase 1B with conditioning | Train with librosa-extracted tempo/key conditioning, proves cond integration end-to-end | P1 |
-| N5 | Phase 2: saturation training | Requires synthetic data only (already in train_clara_dsp.py) | P1 |
-| N6 | Phase 3: compression training | RMSCompressor in train_clara_dsp.py | P1 |
-| N7 | Phase 4: denoising training | Requires DNS Challenge dataset download (~20 GB) | P1 |
-| N8 | Phase 5: multi-effect training | EQ, transient shaping, de-essing, stereo widening | P2 |
-| N9 | ARA host bridge for cond | Real musical context → cond flow via ARA MusicalContext | P1 |
-| N10 | MAESTRO v3 download | Required before Phase 2 (saturation with piano data) | P2 |
-| N11 | DNS Challenge download | Required before Phase 4 (denoising) | P2 |
-| N12 | ONNX dynamic seq_len fix | Replace fixed Gather indices with dynamic Slice/Reshape approach for truly dynamic seq_len | P2 |
+**Repo:** `SGM-Studios/clara` | **Branch:** `main` | **Status key:** `⬜ pending` `🔄 in progress` `✅ done` `❌ cancelled`
 
 ---
 
-## Previous Sessions — Completed
+## 1. Project Overview
 
-### 🔴 P0 — Runtime Bugs (4/4)
-| # | Item | Status |
-|---|------|--------|
-| — | `init()` return value ignored — plugin returns true even when init fails | ✅ |
-| — | ARA constructor marked `noexcept` but calls `std::make_unique` | ✅ |
-| — | Dead try/catch around `engine->init()` | ✅ |
-| — | ORT timeout on 25K-node graph — switched to 64-step export + sub-block processing | ✅ |
+### What CLARA Is
 
-### 🟠 P1 — Dead Code & Cleanup (6/9)
-| # | Item | Status |
-|---|------|--------|
-| — | `engineValid_` dead member removed | ✅ |
-| — | `audioSourceAccessEnabled_` dead member removed | ✅ |
-| — | 4 PlaybackRegion delegation stubs removed | ✅ |
-| — | Placeholder URLs → TODO comments | ✅ |
-| — | `getInformationURL()` returns nullptr → TODO comment | ✅ |
-| — | Phase 0: cross-platform portability scaffolding (Platform.hpp) | ✅ |
+CLARA is a real-time Mamba SSM (Selective State Space Model) audio processor distributed as a **CLAP plugin** (`MambaSuiteClap.clap`) and an **ARA2 shared library** (`MambaSuiteARA.so/.dll/.dylib`). Both share a single inference core (`MambaCore` static library → `MambaInferenceEngine`).
 
-### 🟡 P2 — Missing Functionality (15/15)
-| # | Item | Status |
-|---|------|--------|
-| — | `mamba_on_main_thread` deferred task scaffolding | ✅ |
-| — | `mamba_init` validates model path | ✅ |
-| — | `mamba_start_processing` checks engine | ✅ |
-| — | EditorRenderer/EditorView stubs with TODO docs | ✅ |
-| — | `doUpdateMusicalContextContent` sets `contentDirty_` | ✅ |
-| — | `doUpdateAudioSourceContent` sets `contentDirty_` | ✅ |
-| — | `didEnableAudioSourceSamplesAccess` documented, resets dirty flag | ✅ |
-| — | Training pipeline doc created (`docs/training-pipeline.md` → `docs/training-plan.md`) | ✅ |
-| — | CI enhanced with model shape verify + ARA checks | ✅ |
-| — | Training pipeline files written (11 files: launcher, config, model, dataset, dsp, loss, train loop, export, requirements, .ps1) | ✅ |
-| — | Cond folded into ONNX as 10th input with FiLM (export_mamba_onnx.py, engine, CLAP, tests) | ✅ |
-| — | ONNX manifest schema v2 (cond_dim=8, num_inputs=10) | ✅ |
-| — | C++ engine updated for 10-input contract + removed external gain modulation | ✅ |
-| — | Seq_len=64 export + sub-block processing in engine (fixes ORT timeout) | ✅ |
-| — | All 23 C++ engine tests pass | ✅ |
+**What it does:** Real-time audio denoising / transformation via a trained neural network running inside the DAW.
 
-### 🟢 P3 — Documentation Gaps (7/7)
-| # | Item | Status |
-|---|------|--------|
-| — | ADR-003, ADR-004, ADR-005, ADR-006 created | ✅ |
-| — | README.md created | ✅ |
-| — | `docs/parameter-reference.md` created | ✅ |
-| — | LICENSE (Apache 2.0) | ✅ |
+**How it works:**
+- Audio enters as `[B, seq_len, 1]` float samples
+- ONNX model (d_model=64, n_layers=4, d_state=16, conv_width=4, cond_dim=8) applies Mamba-SSM selective scan with FiLM conditioning
+- Output returns processed audio + updated per-layer conv state + SSM state for next block
 
-### 🔵 P4 — Stale/Outdated Docs (5/5)
-| # | Item | Status |
-|---|------|--------|
-| — | TODO_PROGRESS.md stale refs fixed | ✅ |
-| — | CHANGELOG.md stale refs fixed | ✅ |
-| — | CLAUDE_OPUS_PROMPT.md stale refs fixed | ✅ |
+### Key Numbers
 
-### ⚪ P5 — Testing & CI (3/3)
-| # | Item | Status |
-|---|------|--------|
-| — | 3 test files created (engine: 12, clap: 10, ara: 4) | ✅ |
-| — | CI enhanced — ARA verify, model shape verify, stripped check | ✅ |
-| — | ARA library verification step in CI | ✅ |
+| Dimension | Value |
+|-----------|-------|
+| `d_model` | 64 |
+| `n_layers` | 4 |
+| `d_state` | 16 |
+| `conv_width` | 4 |
+| `dt_rank` | 16 |
+| `cond_dim` | 8 |
+| ONNX inputs | 10 (audio_chunk + 4×conv + 4×ssm + cond) |
+| ONNX outputs | 3 (processed_audio + new_conv_state + new_ssm_state) |
+| Sub-block size | 64 samples |
+| Reported latency | 4 samples (conv_width) |
+| Total params | ~171K (STFT-based `STFTMambaModel`) |
+| Checkpoints | 248 files, best.pt = step 49,200 |
+
+### Build System
+
+- **CMake 3.14+, C++17**
+- Three dependencies via `FetchContent` (no manual install):
+  - CLAP SDK (`29ffcc27`)
+  - ARA SDK (`1ca0b0aa`)
+  - ONNX Runtime v1.17.1
+- Outputs: `build/plugins/MambaSuiteClap.clap` + `MambaSuiteARA.so`
+- Cross-platform: Linux (GCC/Clang), macOS (Clang, universal), Windows (MSVC)
+- WSL Ubuntu build verified
 
 ---
 
-## Quick Stats
+## 2. PRD Obligations
 
-| Category | Completed | Remaining |
-|----------|-----------|-----------|
-| 🔴 P0 — Critical Bugs | 4 / 5 | 1 |
-| 🟠 P1 — Functional Gaps | 10 / 11 | 1 |
-| 🟡 P2 — Correctness & Debt | 12 / 12 | 0 |
-| 🟢 P3 — Training Pipeline | 10 / 10 | 0 |
-| 🔵 P4 — Test Coverage | 9 / 11 | 2 |
-| 🟣 P5 — Next Actions | 1 / 12 | 11 |
-| Previous sessions | 34 / 34 | 0 |
-| **Total** | **81 / 95** | **14** |
+The **Product Requirements Document** defines what CLARA must do as a product. Each obligation must be verified.
+
+### PRD-1: Real-Time Audio Processing
+- [ ] Audio input-to-output latency ≤ 10ms at 48kHz (currently: 4 samples = 0.083ms — far below threshold)
+- [ ] No audio dropouts, clicks, or artifacts during normal operation
+- [ ] `processBlock()` completes within one audio buffer period (≤ 256 samples @ 48kHz)
+- [ ] Zero heap allocations on the audio thread (enforced via code review)
+- [ ] **Verification:** Load plugin in Bitwig/REAPER, run 30min stress test at 48kHz/256 samples, monitor for dropouts
+
+### PRD-2: CLAP Plugin Compliance
+- [ ] All required CLAP vtable callbacks implemented (`init`, `destroy`, `get_extension`, `activate`, `deactivate`, `process`, `params_*`)
+- [ ] Extension `CLAP_EXT_PARAMS` registered with 3 params: bypass (stepped), wet/dry, intensity
+- [ ] Extension `CLAP_EXT_AUDIO_PORTS` registered with stereo I/O
+- [ ] Extension `CLAP_EXT_STATE` for preset save/restore
+- [ ] Extension `CLAP_EXT_LATENCY` reporting 4 samples
+- [ ] Extension `CLAP_EXT_RENDER` (realtime-only)
+- [ ] Extension `CLAP_EXT_TAIL` (0 samples)
+- [ ] Extension `CLAP_EXT_STATE_CONTEXT` (project-preserved SSM state)
+- [ ] **Verification:** `clap-validator` passes all required categories (audio-ports, params, state, latency)
+
+### PRD-3: ARA2 Library Compliance
+- [ ] `ARAGetFactory()` exported with `visibility("default")`
+- [ ] `MambaDocumentController` with archive save/restore (magic `0x4D424152` + version)
+- [ ] `MambaPlaybackRenderer` constructs `MambaInferenceEngine`; catches init exceptions
+- [ ] `doGetContentTypes()` / `doGetContentGrades()` implemented
+- [ ] `willEnable` / `didEnable` semantics correct
+- [ ] `doUpdateMusicalContextContent()` — real musical context extraction (tempo/key/chord)
+- [ ] **Verification:** Load in Studio One / REAPER with ARA, load/archive/save cycle works
+
+### PRD-4: Click-Free Bypass
+- [ ] Bypass engages/disengages with 50ms linear crossfade (no audible pop)
+- [ ] Crossfade ramp step accumulated once per sample, outside channel loop (no stereo drift)
+- [ ] **Verification:** Inject 1kHz sine, toggle bypass via host, check waveform scope for transient — should be clean
+
+### PRD-5: Trained Model Quality
+- [ ] ONNX model produces non-noise output (variance > 1e-6 with random weights; much higher with trained)
+- [ ] `best.pt` at step 49,200 shows measurable loss improvement over step 0
+- [ ] Phase 2 (contrastive noise training) implemented and executed
+- [ ] Exported ONNX produces audible difference from untrained model in DAW
+- [ ] **Verification:** Load trained `.onnx` vs random `.onnx` in plugin, compare output on known audio signal
+
+### PRD-6: Cross-Platform Deployment
+- [ ] Linux: builds and installs cleanly, RPATH `$ORIGIN` set
+- [ ] macOS: universal binary (x86_64 + arm64), `@loader_path` RPATH, code signed (or notarized)
+- [ ] Windows: MSVC build, `.dll` deployed adjacent to plugin, UTF-8 paths handled
+- [ ] **Verification:** CI matrix: Linux + macOS + Windows builds pass; plugin loads in Bitwig (Linux), REAPER (Windows), Bitwig/Logic (macOS)
+
+### PRD-7: GUI (Deferred)
+- [ ] `CLAP_EXT_GUI` implemented with parameter visualization
+- [ ] ARA `EditorRenderer` / `EditorView` populated
+- [ ] **Blocked on:** Training complete + JUCE/pugl integration plan
+
+### PRD-8: Conditioning System
+- [ ] 8-dim conditioning vector passed as 10th ONNX input (FiLM per layer)
+- [ ] Double-buffered atomic swap for RT-safe updates from non-RT thread
+- [ ] `deltaWeights` + `bWeights` loaded from config, pre-computed as `combinedWeights_`
+- [ ] ARA host bridge: real musical context (tempo/key) → `setConditioning()` → plugin
+- [ ] **Verification:** `test_conditioning_with_model()` proves non-zero cond changes output
+
+---
+
+## 3. ARD Obligations
+
+**Architecture Decision Records** define the implementation contract. Every ADRs compliance item must hold.
+
+### ADR-001: Shared ONNX Runtime Inference Engine
+- [ ] 10-input / 3-output ONNX I/O contract never changes without updating `export_mamba_onnx.py` + engine in lockstep
+- [ ] `processBlock()` uses 64-sample sub-blocks with state carry-over
+- [ ] All buffers sized in `init()`, no heap allocation in RT path
+- [ ] `Ort::Value` tensors created via `thread_local std::vector` + `reserve()`, not `std::array`
+- [ ] ORT session: `IntraOpNumThreads=1`, `ORT_ENABLE_ALL` graph optimization
+- [ ] `Ort::Exception` caught in both `init()` and `processBlock()`, never propagates across C boundary
+- [ ] `libonnxruntime.so.1.17.1` deployed adjacent to plugin via `$ORIGIN` RPATH
+
+### ADR-002: Deferred Atomic State Reset
+- [ ] `resetRequested_` is `std::atomic<bool>`, set with `release` ordering, checked/cleared with `acq_rel` exchange
+- [ ] Zeroing happens on audio thread, safe from any caller
+- [ ] No mutex, no SPSC queue, no double-buffered state — just one atomic flag
+
+### ADR-003: Click-Free Bypass via 50ms Linear Crossfade
+- [ ] Step = `1.0 / (0.05 * sample_rate)`, computed once at `activate()`
+- [ ] Step accumulated outside channel loop (same `bypassVal` for all channels per sample)
+- [ ] 50ms duration regardless of sample rate (step adapts to sample rate)
+
+### ADR-004: CLAP + ARA Dual-Target Build
+- [ ] `MambaCore` static library, linked into both plugin targets
+- [ ] ARA PlaybackRenderer does NOT share engine instance with CLAP (separate instances allowed)
+- [ ] Cross-platform install paths: Linux `/usr/local/lib/clap`, macOS `/Library/Audio/Plug-Ins/CLAP/`, Windows `C:/Program Files/Common Files/CLAP/`
+
+### ADR-005: thread_local + reserve() for Ort::Value
+- [ ] `inputTensors_` and `outputTensors_` are `thread_local std::vector<Ort::Value>`
+- [ ] Both `reserve(kNumInputs)` / `reserve(kNumOutputs)` called before use
+- [ ] `Ort::Value` never stored as class member or `std::array`
+
+### ADR-006: dladdr Model Path Resolution
+- [ ] `mambaResolveModulePath()` uses `dladdr` on Unix, `GetModuleFileNameW` on Windows
+- [ ] Model path resolved relative to plugin binary location → `models/mamba_rt.onnx`
+- [ ] Cached in `static` local to avoid repeated syscalls
+
+### ADR-007: Cross-Platform Portability
+- [ ] `Platform.hpp` with `MAMBA_EXPORT`, platform guards for all platform-specific code
+- [ ] `CMakePresets.json` with Linux/macOS/Windows presets
+- [ ] CI matrix: Linux + macOS + Windows build + test
+- [ ] `HSA_OVERRIDE_GFX_VERSION=11.0.0` for AMD ROCm (Strix Point / 860M)
+
+### ADR-008: Conditioning Vector (8-dim FiLM + External Gain)
+- [ ] `COND_DIM = 8`, `setConditioning()` uses double-buffered atomic pointer swap
+- [ ] FiLM: cond passed as 10th ONNX input, `CondFiLM` per layer modulates SSM features
+- [ ] External gain: `condScale = 1.0 + sum(cond[d] * combinedWeights_[d])` applied post-ONNX
+- [ ] `loadCondWeights()` called from `init()`, computes `combinedWeights_` once
+
+### ADR-009: 64-Sample Sub-Block Processing
+- [ ] `kSubBlockSize = 64`, each ONNX inference call gets exactly 64 samples (zero-padded if needed)
+- [ ] Partial final block handled: `memset` padding for trailing samples
+- [ ] Conv state prepended from rolling buffer, SSM state carried from previous block
+
+### ADR-010: Dual-Path Conditioning
+- [ ] Path A: ONNX input 9 (cond) → FiLM per layer → modulates SSM features
+- [ ] Path B: `combinedWeights_` scalar gain applied post-ONNX inference
+- [ ] Both read same `condFrame` snapshot (no TOCTOU within a block)
+
+---
+
+## 4. Training Pipeline
+
+### 4.1 Checkpoint Status
+
+| Checkpoint | Step | Status |
+|-----------|------|--------|
+| `best.pt` | 49,200 | **Use this** — best validation loss |
+| `checkpoint_049800.pt` | 49,800 | Final regular checkpoint |
+| `interrupt_045825.pt` | 45,825 | Interrupted run |
+| `final.pt` | 49,200 | Final, from completed run |
+
+Training ran at ~3.5 step/s on AMD 860M ROCm. Steps 0 → 49,200 completed.
+
+### 4.2 Training Script Architecture
+
+**`train_clara_now.py`** (canonical script — USE THIS):
+- STFT-based Mamba (matches mamba3 proven architecture)
+- `STFTMambaModel`: audio → STFT → proj → Mamba×4 → decode → ISTFT → audio
+- `chunk_size=64` for SSM scan (numerically stable, matches ONNX export)
+- `d_model=64, d_state=16, n_layers=4, conv_width=3, dt_rank=16`
+- Loss: STFT magnitude L1 + Mel-L1 + SI-SDR (ramped in after step 5,000)
+- AMP: **OFF BY DEFAULT** (bfloat16 NaN on 860M ROCm)
+
+**`export_mamba_onnx.py`** (ONNX export):
+- Uses `MambaRTModel` (the sequential export model, not `STFTMambaModel`)
+- Different architecture from training model — **separate export model class**
+- 10 inputs (audio_chunk + 4×conv + 4×ssm + cond) → 3 outputs (processed_audio + stacked conv + stacked ssm)
+- seq_len=256 default for export
+
+**`train_clara_model.py`**:
+- `MambaRTModelParallel` — parallel scan for training
+- `MambaRTModelSequential` — step-by-step for ONNX export
+- `make_zero_states()` — creates conv/ssm initial states
+
+### 4.3 Resume + Continue Training
+
+```bash
+# Resume from best.pt, continue to step 50,000 (identity phase complete)
+python train_clara_now.py \
+  --data /path/to/musdb18hq/train \
+  --resume checkpoints_clara/best.pt \
+  --steps 50000 \
+  --batch 2 \
+  --grad-accum 8 \
+  --no-amp \
+  --clip-seconds 0.5 \
+  --log-every 25 \
+  --ckpt-every 200
+```
+
+**Flags to add to `train_clara_now.py`:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--cache` | off | RAM pre-cache entire dataset (~20GB for 500 files) |
+| `--cache-chunked` | off | NEW: Chunked RAM caching — preload in segments to avoid OOM |
+| `--num-workers` | 2 | DataLoader workers (forced 0 on Windows) — set to 4 for Linux ROCm |
+| `--steps` | 50,000 | Total steps |
+
+**Linux ROCm recommended command:**
+```bash
+export HSA_OVERRIDE_GFX_VERSION=11.0.0
+export HSA_ENABLE_SDMA=0
+python train_clara_now.py \
+  --data /path/to/musdb18hq/train \
+  --resume checkpoints_clara/best.pt \
+  --steps 50000 \
+  --batch 2 \
+  --grad-accum 8 \
+  --num-workers 4 \
+  --cache \
+  --cache-chunked \
+  --no-amp \
+  --clip-seconds 0.5
+```
+
+### 4.4 Chunked RAM Caching Implementation
+
+The `--cache` flag pre-loads all files into RAM before training. For large datasets this can OOM. The new `--cache-chunked` flag should:
+
+1. Load files in chunks of N files (e.g., N=50)
+2. Keep only the current chunk in RAM, release previous chunk
+3. Pre-fetch next chunk in background thread during training epoch
+4. Alternatively: use `memory-mapped files` (`np.memmap` or `torch.utils.data.TensorMmapDataset`)
+
+**Implementation approach:**
+```python
+class ChunkedRamCache:
+    """Loads dataset in chunks, keeps chunk_count chunks in RAM."""
+
+    def __init__(self, root, chunk_size=50, num_chunks=2):
+        # chunk_size: files per chunk
+        # num_chunks: chunks to keep in RAM (1=current, 1=next)
+        self.files = sorted(Path(root).rglob("*.wav"))
+        self.chunk_size = chunk_size
+        self.num_chunks = num_chunks
+        self.cache = {}  # chunk_idx -> {filepath: tensor}
+        self._load_chunk(0)
+
+    def _load_chunk(self, idx):
+        if idx in self.cache:
+            return
+        start = idx * self.chunk_size
+        end = min(start + self.chunk_size, len(self.files))
+        self.cache[idx] = {}
+        for f in self.files[start:end]:
+            self.cache[idx][str(f)] = self._load_file(f)
+
+    def get(self, filepath):
+        for cache in self.cache.values():
+            if filepath in cache:
+                return cache[filepath]
+        return self._load_file(Path(filepath))  # fallback
+```
+
+### 4.5 Phase 2: Contrastive Noise Training
+
+The Phase 1 identity autoencoder (step 0-49,200) learned to reconstruct clean audio. Phase 2 applies **contrastive learning against a noise dataset**:
+
+**Goal:** Train CLARA to output clean audio when given noisy input — denoising.
+
+**Architecture for Phase 2:**
+- `train_clara_model.py` → `MambaRTModelParallel` / `MambaRTModelSequential` already support this
+- Dataset: (clean, noisy) pairs from MUSDB18-HQ synthetic noise augmentation
+- Loss: SI-SDR(clean_pred, clean_target) — scale-invariant to match Phase 1
+
+**Synthetic noise augmentation (no extra dataset needed):**
+```python
+def add_noise(audio, snr_db_range=(-10, 20)):
+    """Add white/pink noise at random SNR."""
+    noise = torch.randn_like(audio) * noise_std
+    # Mix at target SNR
+    return clean + noise
+```
+
+**Training command for Phase 2:**
+```bash
+python train_clara_now.py \
+  --data /path/to/musdb18hq/train \
+  --resume checkpoints_clara/best.pt \
+  --steps 50000 \
+  --batch 2 \
+  --grad-accum 8 \
+  --num-workers 4 \
+  --cache \
+  --cache-chunked \
+  --no-amp \
+  --phase contrastive \
+  --noise-augment
+```
+
+**OR**: Continue from best.pt with the existing identity loss + noise-augmented batches mixed in.
+
+### 4.6 ONNX Export After Training
+
+```bash
+# Export best checkpoint to ONNX
+python export_mamba_onnx.py \
+  --checkpoint checkpoints_clara/best.pt \
+  --output models/mamba_rt_trained.onnx \
+  --seq-len 256
+
+# Verify output
+python -c "
+import onnxruntime as ort
+import numpy as np
+sess = ort.InferenceSession('models/mamba_rt_trained.onnx')
+# Run inference, check output variance
+"
+```
+
+---
+
+## 5. Verification Plan
+
+### 5.1 PRD Verification Tests
+
+| Test | Method | Pass Criteria |
+|------|--------|---------------|
+| V1: RT safety | `rg "malloc\|free\|new\|delete\|mutex\.lock" src/` | Zero real-time-unsafe calls found |
+| V2: Latency | Impulse response test in REAPER | First non-zero output within 4 samples of input |
+| V3: Bypass click-free | Inject 1kHz sine, toggle bypass | No visible transient on scope |
+| V4: CLAP validator | `clap-validator` CTest target | Pass required categories (audio-ports, params, state, latency) |
+| V5: ONNX output variance | Random input, compare trained vs random weights | Trained model output variance >> random model variance |
+| V6: Loss improvement | Load best.pt, run verify script | Loss curve shows decreasing trend |
+| V7: State continuity | ONNX inference on 2 consecutive chunks | Second chunk output differs from first (state is being used) |
+| V8: ARA archive round-trip | Save/archive/load in REAPER | All 3 params (bypass, wetDry, intensity) restored correctly |
+| V9: Conditioning effect | Run with zero cond vs non-zero cond | Output differs measurably |
+| V10: Cross-platform build | CI Linux + macOS + Windows | All 3 build + pass tests |
+
+### 5.2 Existing Test Infrastructure
+
+| Test File | Coverage | Status |
+|-----------|----------|--------|
+| `tests/test_engine.cpp` | 23 tests: construct/destroy, init, processBlock (256/64/0/512), reset, stereo, conditioning, partial block, state carry-over | ✅ All pass |
+| `tests/test_clap_plugin.cpp` | 10 tests: SPSC, param flush, bypass, state save/load | ✅ Pass |
+| `tests/test_ara_controller.cpp` | 4 tests: model path resolution, init | ✅ Pass |
+| `verify_training_pipeline.py` | 56 checks: config, model forward/backward, optimizer, ONNX export, losses, DSP, dataset | ✅ All PASS |
+
+### 5.3 Missing Verification Tests
+
+| Test | File | Priority | Description |
+|------|------|----------|-------------|
+| T1: Latency impulse | `tests/test_latency.cpp` | P0 | Inject impulse, measure first output sample delay at 48kHz |
+| T2: ONNX trained vs random | `tests/test_onnx_quality.cpp` | P0 | Prove trained checkpoint output ≠ random output |
+| T3: State continuity ONNX | `tests/test_state_continuity.cpp` | P0 | Process 2 ONNX chunks consecutively, verify state carried |
+| T4: CLAP validator CI | `.github/workflows/ci.yml` | P1 | Full validator run in CI (not continue-on-error) |
+| T5: Conditioning with non-zero | `tests/test_conditioning_nonzero.cpp` | P1 | Verify non-zero cond produces different output than zero cond |
+| T6: Bypass crossfade timing | `tests/test_bypass.cpp` | P1 | Verify 50ms crossfade math at 48kHz, 96kHz |
+| T7: ARA archive versioning | `tests/test_ara_archive.cpp` | P1 | Save old archive format, load in new version — graceful handle |
+| T8: Chunked cache stability | `tests/test_chunked_cache.cpp` | P2 | RAM cache with 2+ chunks, no OOM, no file descriptor leaks |
+| T9: ROCm GPU warmup | `tests/test_gpu_warmup.cpp` | P2 | First 3 forward passes on GPU don't produce NaN |
+| T10: Stereo correlation | `tests/test_stereo.cpp` | P2 | Left/right channels don't drift during bypass crossfade |
+
+---
+
+## 6. C++ Source File Inventory
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/core/MambaInferenceEngine.hpp` | 109 | Class interface, Config struct, Ort forward-declares |
+| `src/core/MambaInferenceEngine.cpp` | 318 | init, processBlock (64-sample sub-block), conditioning, manifest |
+| `src/core/ConditioningFrame.h` | ~100 | Double-buffered conditioning frame with atomic seq counter |
+| `src/core/ConditioningGenerator.hpp` | ~80 | ARA → cond encoding (tempo/key/chord → 8-dim vector) |
+| `src/core/Platform.hpp` | ~100 | Cross-platform: MAMBA_EXPORT, dladdr, GetModuleFileName, UTF-8 |
+| `src/core/SPSCQueue.hpp` | ~150 | Lock-free single-producer single-consumer queue |
+| `src/clap/MambaClapPlugin.hpp` | ~200 | CLAP plugin class, DeferredTask enum, voice state |
+| `src/clap/MambaClapPlugin.cpp` | ~500 | Full CLAP implementation: process, params, bypass crossfade |
+| `src/ara/MambaAraController.hpp` | ~200 | ARA DocumentController + PlaybackRenderer declarations |
+| `src/ara/MambaAraController.cpp` | ~400 | Full ARA implementation: archive, enable/disable, content |
+
+**Total: ~2157 lines C++**
+
+---
+
+## 7. Python File Inventory
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `train_clara_now.py` | 803 | **Canonical training script** — STFT Mamba, chunked scan |
+| `train_clara_model.py` | ~400 | `MambaRTModelParallel` + `MambaRTModelSequential` + `make_zero_states` |
+| `train_clara_export.py` | ~200 | ONNX export from checkpoint |
+| `export_mamba_onnx.py` | 754 | Standalone ONNX export (separate export model class) |
+| `train_clara_config.py` | ~150 | `ClaraTrainingConfig` dataclass with phase presets |
+| `train_clara_dataset.py` | ~250 | `ClaraAudioDataset` with MUSDB/MAESTRO/DNS loading, RAM cache |
+| `train_clara_dsp.py` | ~200 | `apply_saturation`, `RMSCompressor`, `add_noise`, TRANSFORM_REGISTRY |
+| `train_clara_loss.py` | ~200 | `MultiResolutionSTFTLoss`, `SI_SDRLoss`, `ClaraLoss` |
+| `verify_training_pipeline.py` | 413 | 56-check end-to-end verification |
+| `__train_laptop_ref.py` | ~800 | Reference mamba3 training script (do not modify) |
+
+**Total: ~4170 lines Python**
+
+---
+
+## 8. Full Prioritized Task List
+
+### 🔴 P0 — Critical (Must do before first user-facing release)
+
+| # | Task | Details | Status |
+|---|------|---------|--------|
+| T-1 | **Add `--cache-chunked` flag** | Chunked RAM caching to avoid OOM. Load N files, keep M chunks, prefetch next. See Section 4.4. | ⬜ Pending |
+| T-2 | **Add `--num-workers` flag to `train_clara_now.py`** | Set to 4 for Linux ROCm. Auto-force 0 on Windows. | ⬜ Pending |
+| T-3 | **Verify `best.pt` is valid checkpoint** | Run: `python -c "import torch; ckpt=torch.load('checkpoints_clara/best.pt', weights_only=False); print(ckpt.keys(), ckpt.get('step'))"` | ⬜ Pending |
+| T-4 | **Resume training from `best.pt` to step 50,000** | Run identity phase to completion (step 49,200→50,000 is only 800 steps) | ⬜ Pending |
+| T-5 | **Export `best.pt` → ONNX** | `python export_mamba_onnx.py --checkpoint checkpoints_clara/best.pt --output models/mamba_rt_trained.onnx` | ⬜ Pending |
+| T-6 | **Verify trained ONNX output quality** | Compare variance/cosine similarity: trained vs random. Pass criteria: cosine sim < 0.95 for different audio inputs | ⬜ Pending |
+| T-7 | **Copy trained ONNX to `models/mamba_rt.onnx`** | Backup existing, replace with trained version, update manifest | ⬜ Pending |
+| T-8 | **Build plugin with trained ONNX** | `cmake --build build --config Release`, verify no link errors | ⬜ Pending |
+| T-9 | **Run existing test suite** | `ctest --test-dir build --output-on-failure` — all must pass | ⬜ Pending |
+| T-10 | **Run `verify_training_pipeline.py`** | All 56 checks must PASS | ⬜ Pending |
+
+### 🟠 P1 — High Priority (Before shipping)
+
+| # | Task | Details | Status |
+|---|------|---------|--------|
+| T-11 | **Implement Phase 2 contrastive noise training** | Continue from best.pt, add noise augmentation, SI-SDR loss (see Section 4.5) | ⬜ Pending |
+| T-12 | **Write `test_onnx_quality.cpp`** | Load trained ONNX vs random ONNX, prove trained produces meaningfully different output | ⬜ Pending |
+| T-13 | **Write `test_state_continuity.cpp`** | Process 2 ONNX chunks, prove state carries (2nd chunk output differs from 1st with same input) | ⬜ Pending |
+| T-14 | **Write `test_latency.cpp`** | Impulse response at 48kHz, prove 4-sample latency | ⬜ Pending |
+| T-15 | **Run `clap-validator` in CI properly** | Currently `continue-on-error: true` — fix so failures block merge | ⬜ Pending |
+| T-16 | **Fix clap-validator failures** | Root cause: model path resolution when validator runs from wrong CWD | ⬜ Pending |
+| T-17 | **Verify conditioning effect** | Run engine with zero cond vs non-zero cond, measure output difference | ⬜ Pending |
+| T-18 | **Test ARA archive versioning** | Save archive with v1 format, verify graceful handling on load | ⬜ Pending |
+| T-19 | **GPU warmup test** | First 3 `processBlock()` calls on GPU produce finite (non-NaN) output | ⬜ Pending |
+| T-20 | **Verify ROCm environment** | `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"` — must show 860M | ⬜ Pending |
+
+### 🟡 P2 — Important (Before beta)
+
+| # | Task | Details | Status |
+|---|------|---------|--------|
+| T-21 | **Implement real ARA musical context extraction** | `doUpdateMusicalContextContent()` → extract tempo/key → `setConditioning()` | ⬜ Pending |
+| T-22 | **Populate EditorRenderer / EditorView stubs** | Currently empty shells — implement ARA visual editor interface | ⬜ Pending |
+| T-23 | **Fix Windows CI** | MSVC build, symbol export verification, .dll deployment | ⬜ Pending |
+| T-24 | **Fix macOS CI** | Universal binary, code signing, `clap-validator` on macOS | ⬜ Pending |
+| T-25 | **Upgrade ONNX Runtime 1.17.1 → 1.21.0** | 4 versions behind, security + perf fixes available | ⬜ Pending |
+| T-26 | **Write `test_stereo.cpp`** | Verify left/right bypass crossfade doesn't drift | ⬜ Pending |
+| T-27 | **Write `test_chunked_cache.cpp`** | RAM cache stability test with multiple chunks, file descriptor check | ⬜ Pending |
+| T-28 | **Implement `--cache-chunked` prefetch thread** | Background thread loads next chunk while current is being consumed | ⬜ Pending |
+
+### 🟢 P3 — Polish (Before production release)
+
+| # | Task | Details | Status |
+|---|------|---------|---------|
+| T-29 | **Implement GUI (`CLAP_EXT_GUI`)** | JUCE or pugl-based parameter visualization | ⬜ Pending |
+| T-30 | **Implement ARA EditorRenderer view** | Show analysis waveform / conditioning visualization | ⬜ Pending |
+| T-31 | **CPack packaging** | `.deb` for Linux, `.pkg` for macOS, installer for Windows | ⬜ Pending |
+| T-32 | **Code coverage** | `gcov`/`lcov` step in CI | ⬜ Pending |
+| T-33 | **Sanitizer builds** | ASan/UBSan/TSan in CI (separate build config) | ⬜ Pending |
+| T-34 | **ONNX Runtime CPU provider tuning** | `OrtThreadingHints` for performance | ⬜ Pending |
+| T-35 | **INT8 quantization** | `onnxruntime.perdoder` for ~2× speedup on CPU | ⬜ Pending |
+
+### 🔵 P4 — Future (Post-v1)
+
+| # | Task | Status |
+|---|------|--------|
+| T-36 | Phase 3 compression training | ⬜ Pending |
+| T-37 | Phase 4 denoising (DNS Challenge dataset) | ⬜ Pending |
+| T-38 | Multi-effect training (EQ, transient, de-essing) | ⬜ Pending |
+| T-39 | CUDA/TensorRT execution provider | ⬜ Pending |
+| T-40 | ARA ContentAnalyzer class for audio analysis | ⬜ Pending |
+
+---
+
+## 9. Immediate Next Actions (Tonight)
+
+```
+1. Verify best.pt:          python -c "import torch; print(torch.load('checkpoints_clara/best.pt', weights_only=False).get('step'))"
+2. Add --cache-chunked flag to train_clara_now.py
+3. Add --num-workers flag to train_clara_now.py
+4. Resume training:         python train_clara_now.py --data /path/to/musdb18hq/train --resume checkpoints_clara/best.pt --steps 50000 --batch 2 --grad-accum 8 --num-workers 4 --cache --cache-chunked --no-amp --clip-seconds 0.5
+5. Export ONNX:              python export_mamba_onnx.py --checkpoint checkpoints_clara/best.pt --output models/mamba_rt_trained.onnx
+6. Run verify script:       python verify_training_pipeline.py
+7. Build plugin:            cmake --build build --config Release
+8. Run C++ tests:           ctest --test-dir build --output-on-failure
+```
+
+---
+
+## 10. File Locations
+
+| Resource | Path |
+|----------|------|
+| Project | `/home/sgm/Github Repo's/clara/` |
+| Training script | `train_clara_now.py` |
+| ONNX export | `export_mamba_onnx.py` |
+| Training model | `train_clara_model.py` (MambaRTModelParallel/Sequential) |
+| Checkpoints | `checkpoints_clara/` (248 files, best.pt at step 49,200) |
+| ONNX models | `models/` (multiple variants: mamba_rt.onnx, mamba_rt_1x1_complete.onnx, etc.) |
+| C++ source | `src/core/MambaInferenceEngine.{hpp,cpp}`, `src/clap/`, `src/ara/` |
+| Tests | `tests/` (test_engine.cpp, test_clap_plugin.cpp, test_ara_controller.cpp) |
+| ADRs | `ADR-00*.md` (10 ADRs) |
+| Build | `CMakeLists.txt`, `CMakePresets.json` |
+| GitHub | `https://github.com/SGM-Studios/clara` |
+| MUSDB18-HQ | `C:/dev/mamba3/mamba3/datasets/musdb18hq/train/` (Windows) |
+| Canonical Python (ROCm) | `C:/dev/mamba3/mamba3/venv/Scripts/python.exe` (Windows) |
+
+---
+
+*Last updated: 2026-06-12*
