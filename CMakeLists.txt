@@ -115,9 +115,10 @@ set_target_properties(MambaCore PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-# --- Mamba-3 Core (Phase 3: custom C++ engine, no ONNX) ---
+# --- Mamba-3 Core (Phase 3-4: custom C++ engine, no ONNX) ---
 add_library(Mamba3Core STATIC
     src/core/SsmBlock.cpp
+    src/core/SsmInferenceCore.cpp
     src/core/WeightLoader.cpp
     src/core/MambaConfig.cpp
 )

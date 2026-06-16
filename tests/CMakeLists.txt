@@ -12,6 +12,39 @@ endif()
 
 find_package(Threads REQUIRED)
 
+# --- Generate Mamba-3 model.bin for tests ---
+# ponytail: runs Python export script once, produces models/model.bin
+# Only runs if the output doesn't exist yet.
+set(MAMBA3_MODEL_BIN "${CMAKE_SOURCE_DIR}/models/model.bin")
+if(NOT EXISTS "${MAMBA3_MODEL_BIN}")
+    find_program(PYTHON3_EXE python3)
+    if(PYTHON3_EXE)
+        execute_process(
+            COMMAND ${PYTHON3_EXE}
+                "${CMAKE_SOURCE_DIR}/scripts/export_mamba_weights.py"
+                --output "${MAMBA3_MODEL_BIN}" --seed 42
+            RESULT_VARIABLE _m3_result
+            OUTPUT_VARIABLE _m3_out
+            ERROR_VARIABLE  _m3_err
+            TIMEOUT 60
+        )
+        if(NOT _m3_result EQUAL 0)
+            message(WARNING "Failed to generate ${MAMBA3_MODEL_BIN}: ${_m3_err}")
+        endif()
+    else()
+        message(WARNING "python3 not found — Mamba-3 tests will SKIP. Install python3 to enable.")
+    endif()
+endif()
+
+# --- Test: Mamba-3 Inference Core ---
+add_executable(test_mamba3 test_mamba3.cpp)
+target_include_directories(test_mamba3 PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_mamba3 PRIVATE Mamba3Core)
+target_compile_definitions(test_mamba3 PRIVATE
+    TEST_MODEL_DIR="${CMAKE_SOURCE_DIR}/models"
+)
+add_test(NAME test_mamba3 COMMAND test_mamba3 "${CMAKE_SOURCE_DIR}/models/model.bin")
+
 # --- Test: MambaInferenceEngine smoke test ---
 add_executable(test_engine
     test_engine.cpp
