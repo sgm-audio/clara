@@ -114,6 +114,20 @@ set_target_properties(MambaCore PROPERTIES
     CXX_VISIBILITY_PRESET hidden
     POSITION_INDEPENDENT_CODE ON
 )
+
+# --- Mamba-3 Core (Phase 3: custom C++ engine, no ONNX) ---
+add_library(Mamba3Core STATIC
+    src/core/SsmBlock.cpp
+    src/core/WeightLoader.cpp
+    src/core/MambaConfig.cpp
+)
+target_include_directories(Mamba3Core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+set_target_properties(Mamba3Core PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    POSITION_INDEPENDENT_CODE ON
+)
 # SPSCQueue.hpp is header-only — included via MambaClapPlugin.hpp, no compilation unit needed
 
 # --- CLAP Plugin ---
