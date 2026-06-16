@@ -9,6 +9,13 @@ if(BUILD_TESTING)
     enable_testing()
 endif()
 
+# ponytail: CMake 4.3.3 + GCC 16 workaround — CMAKE_C_COMPILE_OBJECT not
+# auto-detected for C language when ARA SDK's ARADebug.c triggers C compilation.
+# Remove when CMake >= 4.3.4 or when the C language path is removed.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0" AND NOT DEFINED CMAKE_C_COMPILE_OBJECT)
+    set(CMAKE_C_COMPILE_OBJECT "<CMAKE_C_COMPILER> <DEFINES> <INCLUDES> <FLAGS> -o <OBJECT> -c <SOURCE>")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -27,6 +34,7 @@ else()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Werror=return-type")
     set(CMAKE_CXX_FLAGS_RELEASE "-O3 -ffast-math -DNDEBUG -fno-rtti")
     set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g -DDEBUG")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")  # ponytail: POSITION_INDEPENDENT_CODE doesn't propagate to C for MODULE targets on CMake 4.3
 endif()
 
 if(APPLE)
@@ -116,6 +124,7 @@ set_target_properties(MambaSuiteClap PROPERTIES
     SUFFIX ".clap"
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins
     CXX_VISIBILITY_PRESET hidden
+    POSITION_INDEPENDENT_CODE ON
 )
 if(WIN32)
     # DLL search path: no RPATH needed
@@ -166,6 +175,7 @@ set_target_properties(MambaSuiteARA PROPERTIES
     SUFFIX "${ARA_SUFFIX}"
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins
     CXX_VISIBILITY_PRESET hidden
+    POSITION_INDEPENDENT_CODE ON
 )
 if(WIN32)
     # DLL search path: no RPATH needed
