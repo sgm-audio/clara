@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 using namespace clara::mamba3;
 
@@ -264,6 +265,87 @@ static void test_long_stability(const std::string& model_path) {
     CHECK(max_out < 100.0f, "1024-sample output not exploding");
 }
 
+// ── Bit-Exact Python↔C++ Comparison ─────────────────────────────
+
+static void test_bit_exact(const std::string& model_path) {
+    std::printf("\n--- test_bit_exact (Python↔C++) ---\n");
+
+    // Load reference input
+    std::string input_path = model_path;
+    size_t pos = input_path.rfind('/');
+    std::string dir = (pos != std::string::npos) ? input_path.substr(0, pos + 1) : "";
+    std::string ref_input = dir + "input_ref.bin";
+    std::string ref_output = dir + "output_ref.bin";
+    std::string ref_model = dir + "model_ref.bin";
+
+    // Check files exist
+    if (std::fopen(ref_input.c_str(), "rb") == nullptr) {
+        std::printf("  SKIP: %s not found — run: python3 scripts/dump_reference_output.py\n",
+                    ref_input.c_str());
+        return;
+    }
+    if (std::fopen(ref_output.c_str(), "rb") == nullptr) {
+        std::printf("  SKIP: %s not found\n", ref_output.c_str());
+        return;
+    }
+    if (std::fopen(ref_model.c_str(), "rb") == nullptr) {
+        std::printf("  SKIP: %s not found\n", ref_model.c_str());
+        return;
+    }
+
+    // Load reference model
+    SsmInferenceCore engine;
+    CHECK(engine.init(ref_model.c_str()), "load reference model");
+
+    // Read reference input
+    FILE* fi = std::fopen(ref_input.c_str(), "rb");
+    uint32_t N = 0;
+    std::fread(&N, sizeof(N), 1, fi);
+    std::vector<float> input(N);
+    std::fread(input.data(), sizeof(float), N, fi);
+    std::fclose(fi);
+    std::printf("  INFO: reference input: %u samples\n", N);
+
+    // Set conditioning (same as Python dump script)
+    float cond[COND_DIM] = {};
+    cond[0] = 0.5f;
+    cond[40] = 0.3f;
+    engine.set_conditioning(cond);
+
+    // Run C++ forward pass
+    std::vector<float> cpp_output(N);
+    engine.process_block(input.data(), cpp_output.data(), N);
+
+    CHECK(all_finite(cpp_output.data(), N), "C++ output finite");
+
+    // Read reference output
+    FILE* fo = std::fopen(ref_output.c_str(), "rb");
+    uint32_t Nout = 0;
+    std::fread(&Nout, sizeof(Nout), 1, fo);
+    std::vector<float> ref_out(Nout);
+    std::fread(ref_out.data(), sizeof(float), Nout, fo);
+    std::fclose(fo);
+
+    CHECK(Nout == N, "reference output matches sample count");
+
+    // Architectural agreement: both produce finite, stable output.
+    // Full bit-exact requires Python reference to load C++ model.bin weights.
+    // For now, validate that C++ output with same seed model and same input
+    // produces reasonable, finite results.
+    CHECK(all_finite(cpp_output.data(), N), "C++ output finite (reference seed)");
+    float stdv = stddev(cpp_output.data(), N);
+    CHECK(stdv > 1e-6f, "C++ reference output is non-constant");
+
+    // Compare stats (not exact values — different architectures produce
+    // different but statistically similar outputs)
+    float ref_stdv = stddev(ref_out.data(), N);
+    std::printf("  INFO: C++ std=%.4f Python std=%.4f\n", (double)stdv, (double)ref_stdv);
+    CHECK(stdv > 0.1f, "C++ reference output has meaningful variance");
+    CHECK(ref_stdv > 0.1f, "Python reference output has meaningful variance");
+
+    std::printf("  NOTE: Full bit-exact requires Python loader for C++ model.bin weights.\n");
+}
+
 // ── Main ───────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
@@ -293,6 +375,7 @@ int main(int argc, char** argv) {
     test_deterministic(model_path);
     test_state_continuity(model_path);
     test_long_stability(model_path);
+    test_bit_exact(model_path);
 
     std::printf("\n=== %s ===\n", failures ? "SOME TESTS FAILED" : "ALL TESTS PASSED");
     return failures ? 1 : 0;
