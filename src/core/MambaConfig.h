@@ -75,8 +75,43 @@ constexpr uint32_t WEIGHT_MAGIC    = 0x4D424D41;  // "MBMA"
 constexpr uint32_t WEIGHT_VERSION  = 2;
 constexpr size_t   WEIGHTS_PER_LAYER  = 13;  // Arrays per layer in flat binary
 
-// File header size (magic + version + 7 dims + 4 reserved + weight_data_size)
-constexpr size_t WEIGHT_HEADER_SIZE = 64;  // bytes
+// File header: 8 fields × 8 bytes = 64 bytes
+//   [0] magic(4) + version(4)
+//   [1] d_state
+//   [2] d_model
+//   [3] d_inner
+//   [4] nheads
+//   [5] headdim
+//   [6] mimo_rank
+//   [7] n_layers
+//   [8] cond_dim
+//   [9] in_proj_dim
+//  [10] weight_data_size (total bytes after header)
+//  [11..15] reserved
+
+// Per-layer array element counts (13 arrays, all float32)
+constexpr size_t W_IN_PROJ_ELEMS       = MAX_IN_PROJ_DIM * MAX_D_MODEL;           // 206336
+constexpr size_t W_DT_BIAS_ELEMS       = MAX_NHEADS;                               // 4
+constexpr size_t W_B_BIAS_ELEMS        = MAX_NHEADS * MAX_MIMO_RANK * MAX_D_STATE; // 512
+constexpr size_t W_C_BIAS_ELEMS        = W_B_BIAS_ELEMS;                           // 512
+constexpr size_t W_B_NORM_ELEMS        = MAX_D_STATE;                              // 32
+constexpr size_t W_C_NORM_ELEMS        = MAX_D_STATE;                              // 32
+constexpr size_t W_MIMO_X_ELEMS        = MAX_NHEADS * MAX_MIMO_RANK * MAX_HEADDIM; // 1024
+constexpr size_t W_MIMO_Z_ELEMS        = W_MIMO_X_ELEMS;                            // 1024
+constexpr size_t W_MIMO_O_ELEMS        = W_MIMO_X_ELEMS;                            // 1024
+constexpr size_t W_D_PROJ_ELEMS        = MAX_NHEADS;                               // 4
+constexpr size_t W_OUT_PROJ_ELEMS      = MAX_D_MODEL * MAX_D_INNER;               // 32768
+constexpr size_t W_FILM_PROJ_ELEMS     = 2 * MAX_D_MODEL * COND_DIM;              // 32768
+constexpr size_t W_DT_FILM_PROJ_ELEMS  = 2 * MAX_NHEADS * COND_DIM;               // 1024
+
+constexpr size_t WEIGHT_FLOATS_PER_LAYER = W_IN_PROJ_ELEMS + W_DT_BIAS_ELEMS
+    + W_B_BIAS_ELEMS + W_C_BIAS_ELEMS + W_B_NORM_ELEMS + W_C_NORM_ELEMS
+    + W_MIMO_X_ELEMS + W_MIMO_Z_ELEMS + W_MIMO_O_ELEMS + W_D_PROJ_ELEMS
+    + W_OUT_PROJ_ELEMS + W_FILM_PROJ_ELEMS + W_DT_FILM_PROJ_ELEMS;  // 277064
+
+constexpr size_t WEIGHT_BYTES_PER_LAYER  = WEIGHT_FLOATS_PER_LAYER * sizeof(float);
+constexpr size_t TOTAL_WEIGHT_BYTES      = WEIGHT_BYTES_PER_LAYER * MAX_LAYERS;
+constexpr size_t TOTAL_FILE_SIZE         = 64 + TOTAL_WEIGHT_BYTES;
 
 // ── State Memory ──────────────────────────────────────────────────
 
