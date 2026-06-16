@@ -56,6 +56,16 @@ struct MambaPluginState {
 
     // Conditioning (shared across both channels)
     float condBuffer[COND_DIM] = {};
+
+    // Preset system: precomputed CLAP embeddings for instant recall.
+    // Key = preset name hash, Value = 32-float embedding in cond slots 8-39.
+    // Populated by CLAP text encoder on main thread (Phase 7 infra).
+    // ponytail: map-based store, ~100 presets max = negligible memory.
+    struct PresetEntry {
+        float embedding[32] = {};  // cond slots 8-39
+    };
+    std::vector<PresetEntry> presets;  // indexed by preset ID
+    int activePreset = -1;            // -1 = none active
 };
 
 extern "C" const clap_plugin_descriptor_t mamba_plugin_info;
