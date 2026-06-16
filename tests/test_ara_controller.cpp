@@ -62,7 +62,7 @@ static int test_factory_config_methods()
 
     const char* version = config.getVersion();
     TEST_ASSERT(version != nullptr, "version is not null");
-    TEST_ASSERT(std::strcmp(version, "1.1.0") == 0, "version == '1.1.0'");
+    TEST_ASSERT(std::strcmp(version, "1.2.0") == 0, "version == '1.2.0' (Mamba-3)");
 
     const char* archiveID = config.getDocumentArchiveID();
     TEST_ASSERT(archiveID != nullptr, "documentArchiveID is not null");

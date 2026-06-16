@@ -205,7 +205,7 @@ else()
 endif()
 target_link_libraries(MambaSuiteARA
     PRIVATE
-    MambaCore
+    Mamba3Core
 )
 if(UNIX AND NOT APPLE)
     target_link_libraries(MambaSuiteARA PRIVATE pthread dl)

@@ -104,7 +104,7 @@ target_compile_definitions(test_clap_plugin PRIVATE
 )
 add_test(NAME test_clap_plugin COMMAND test_clap_plugin)
 
-# --- Test: ARA controller ---
+# --- Test: ARA controller (Mamba-3) ---
 add_executable(test_ara_controller
     test_ara_controller.cpp
     ${CMAKE_SOURCE_DIR}/src/ara/MambaAraController.cpp
@@ -113,7 +113,6 @@ add_executable(test_ara_controller
     ${ara_sdk_SOURCE_DIR}/ARA_Library/Utilities/ARAChannelFormat.cpp
     ${ara_sdk_SOURCE_DIR}/ARA_Library/Utilities/ARAPitchInterpretation.cpp
     ${ara_sdk_SOURCE_DIR}/ARA_Library/Dispatch/ARAPlugInDispatch.cpp
-    ${CMAKE_SOURCE_DIR}/src/core/MambaInferenceEngine.cpp
 )
 target_include_directories(test_ara_controller PRIVATE
     ${CMAKE_SOURCE_DIR}/src
@@ -124,9 +123,8 @@ target_include_directories(test_ara_controller PRIVATE
     ${ara_sdk_SOURCE_DIR}/ARA_Library/Dispatch
     ${ara_sdk_SOURCE_DIR}/ARA_Library/Utilities
     ${ara_sdk_SOURCE_DIR}/ARA_API
-    ${ONNXRUNTIME_INCLUDE_DIR}
 )
-target_link_libraries(test_ara_controller PRIVATE ${ONNXRUNTIME_LIB})
+target_link_libraries(test_ara_controller PRIVATE Mamba3Core)
 if(UNIX AND NOT APPLE)
     target_link_libraries(test_ara_controller PRIVATE pthread dl)
 endif()
