@@ -304,7 +304,7 @@ static int test_state_save_load_roundtrip()
     // Verify version word in the stream
     int32_t version;
     std::memcpy(&version, os.buf.data(), sizeof(version));
-    TEST_ASSERT(version == 1, "version is 1");
+    TEST_ASSERT(version == 2, "version is 2 (Mamba-3)");
 
     TEST_PASS("state save/load roundtrip");
     return 0;
@@ -348,7 +348,7 @@ static int test_latency_reporting()
     TEST_ASSERT(latency != nullptr, "latency extension available");
 
     uint32_t samples = latency->get(&plugin);
-    TEST_ASSERT(samples == 4, "latency is 4 samples");
+    TEST_ASSERT(samples == 0, "latency is 0 samples (Mamba-3: no conv1d)");
 
     TEST_PASS("latency reporting");
     return 0;

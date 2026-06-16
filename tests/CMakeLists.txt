@@ -84,20 +84,18 @@ target_compile_definitions(test_latency PRIVATE
 )
 add_test(NAME test_latency COMMAND test_latency)
 
-# --- Test: CLAP plugin ---
+# --- Test: CLAP plugin (Mamba-3) ---
 add_executable(test_clap_plugin
     test_clap_plugin.cpp
     ${CMAKE_SOURCE_DIR}/src/clap/MambaClapPlugin.cpp
-    ${CMAKE_SOURCE_DIR}/src/core/MambaInferenceEngine.cpp
 )
 target_include_directories(test_clap_plugin PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/clap
     ${CMAKE_SOURCE_DIR}/src/core
     ${clap_SOURCE_DIR}/include
-    ${ONNXRUNTIME_INCLUDE_DIR}
 )
-target_link_libraries(test_clap_plugin PRIVATE ${ONNXRUNTIME_LIB})
+target_link_libraries(test_clap_plugin PRIVATE Mamba3Core)
 if(UNIX AND NOT APPLE)
     target_link_libraries(test_clap_plugin PRIVATE pthread dl)
 endif()

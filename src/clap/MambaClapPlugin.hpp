@@ -5,11 +5,12 @@
 #include <clap/ext/state-context.h>
 #include <clap/ext/render.h>
 #include <clap/ext/tail.h>
-#include "../core/MambaInferenceEngine.hpp"
+#include "../core/SsmInferenceCore.h"
 #include "../core/SPSCQueue.hpp"
 #include <atomic>
 #include <vector>
 #include <memory>
+#include <string>
 
 enum ParamId {
     PARAM_BYPASS = 0,
@@ -18,8 +19,12 @@ enum ParamId {
     PARAM_COUNT
 };
 
+using namespace clara::mamba3;
+
 struct MambaPluginState {
-    std::unique_ptr<MambaInferenceEngine> engine;
+    // One engine per channel (stereo). SsmInferenceCore holds SSM state internally.
+    std::unique_ptr<SsmInferenceCore> engineL;
+    std::unique_ptr<SsmInferenceCore> engineR;
     const clap_host_t* host{nullptr};
     std::string modelPath;
 
@@ -44,10 +49,13 @@ struct MambaPluginState {
     // Flag to signal audio thread to go passthrough during model reload
     std::atomic<bool> modelReloadPending{false};
 
-    // Atomic engine pointer for RT-safe access from audio thread.
-    // The unique_ptr owns the engine; the atomic pointer provides lock-free access
-    // without risk of use-after-free during model reload.
-    std::atomic<MambaInferenceEngine*> enginePtr{nullptr};
+    // Atomic engine pointers for RT-safe access from audio thread.
+    // The unique_ptrs own the engines; the atomics provide lock-free access.
+    std::atomic<SsmInferenceCore*> enginePtrL{nullptr};
+    std::atomic<SsmInferenceCore*> enginePtrR{nullptr};
+
+    // Conditioning (shared across both channels)
+    float condBuffer[COND_DIM] = {};
 };
 
 extern "C" const clap_plugin_descriptor_t mamba_plugin_info;

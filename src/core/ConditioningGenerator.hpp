@@ -6,7 +6,7 @@
 
 class ConditioningGenerator {
 public:
-    static constexpr size_t COND_DIM = 8;
+    static constexpr size_t COND_DIM = 128;
 
     // Musical context struct — all fields optional (use -1 or equivalent sentinel for "unknown")
     struct MusicalContext {
@@ -24,13 +24,11 @@ public:
         const size_t n = std::min(dim, COND_DIM);
         std::fill(cond, cond + n, 0.0f);
 
-        // Slot layout for COND_DIM=8:
-        // [0] — tempo (log-normalized: 0.0=slower, 1.0=faster, centered at 120bpm)
-        // [1] — key chroma (normalized pitch class: 0.0=C, 0.0833=C#, ..., 0.9167=B)
-        // [2] — mode (0.0=major, 1.0=minor, 0.5=unknown)
-        // [3] — time signature numerator (0.0=3/4, 0.5=4/4, 1.0=other)
-        // [4] — section (0.0=intro, 0.2=verse, 0.5=chorus, 0.8=bridge, 1.0=outro)
-        // [5-7] — reserved (future: chord type, arrangement position, density)
+        // Slot layout for COND_DIM=128:
+        // [0-7]   — DAW context (tempo, key, mode, time sig, section, 3 reserved)
+        // [8-39]  — CLAP semantic embedding (32 floats, from text + audio encoders)
+        // [40-71] — User knobs (32 floats: intensity, character, envelope, etc.)
+        // [72-127] — Reserved (future: arrangement position, density, genre, etc.)
 
         if (n > 0 && ctx.tempoBpm > 0.0f) {
             // Log-scale: center at 120bpm, range roughly 30-480bpm

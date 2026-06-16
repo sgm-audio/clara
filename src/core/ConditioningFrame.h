@@ -12,7 +12,7 @@
 #endif
 
 struct alignas(16) ConditioningFrame {
-    static constexpr size_t kCondDim = 8;
+    static constexpr size_t kCondDim = 128;
 
     std::array<float, kCondDim> data{};
     std::atomic<uint64_t> seq{0};
@@ -53,7 +53,5 @@ struct alignas(16) ConditioningFrame {
 #pragma warning(pop)
 #endif
 
-static_assert(sizeof(ConditioningFrame) <= 64,
-    "ConditioningFrame must fit in one cache line (64 bytes on x86)");
-static_assert(alignof(ConditioningFrame) >= 16,
-    "ConditioningFrame must be at least 16-byte aligned");
+static_assert(sizeof(ConditioningFrame) <= 576,
+    "ConditioningFrame must be reasonable size");
