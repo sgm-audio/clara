@@ -161,6 +161,10 @@ void SSMBlock::step_norm_rope(const float* B, const float* C,
             // x_even = x[0::2], x_odd = x[1::2]
             // rot_even = x_even * cos - x_odd * sin
             // rot_odd  = x_even * sin + x_odd * cos
+            //
+            // B_bias/C_bias layout: [NHEADS][MIMO_RANK][D_STATE] — same as B_in/C_in
+            const float* B_bias_entry = weights_.B_bias + (h * MAX_MIMO_RANK + r) * MAX_D_STATE;
+            const float* C_bias_entry = weights_.C_bias + (h * MAX_MIMO_RANK + r) * MAX_D_STATE;
             for (size_t a = 0; a < MAX_NUM_ROPE_ANGLES; ++a) {
                 float angle = state_.angle_state[h][a];
                 float cos_a = std::cos(angle);
@@ -169,15 +173,15 @@ void SSMBlock::step_norm_rope(const float* B, const float* C,
                 size_t even = a * 2;
                 size_t odd  = a * 2 + 1;
 
-                // B rotation (with B_norm_weight)
-                float b_e = B_in[even] * weights_.B_norm_weight[even];
-                float b_o = B_in[odd]  * weights_.B_norm_weight[odd];
+                // B rotation (with B_bias + B_norm_weight)
+                float b_e = (B_in[even] + B_bias_entry[even]) * weights_.B_norm_weight[even];
+                float b_o = (B_in[odd]  + B_bias_entry[odd])  * weights_.B_norm_weight[odd];
                 B_out[even] = b_e * cos_a - b_o * sin_a;
                 B_out[odd]  = b_e * sin_a + b_o * cos_a;
 
-                // C rotation (with C_norm_weight)
-                float c_e = C_in[even] * weights_.C_norm_weight[even];
-                float c_o = C_in[odd]  * weights_.C_norm_weight[odd];
+                // C rotation (with C_bias + C_norm_weight)
+                float c_e = (C_in[even] + C_bias_entry[even]) * weights_.C_norm_weight[even];
+                float c_o = (C_in[odd]  + C_bias_entry[odd])  * weights_.C_norm_weight[odd];
                 C_out[even] = c_e * cos_a - c_o * sin_a;
                 C_out[odd]  = c_e * sin_a + c_o * cos_a;
             }
