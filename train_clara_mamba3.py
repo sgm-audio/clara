@@ -581,7 +581,7 @@ def train(args):
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'loss': avg_loss,
-                    'cfg': cfg,
+                    'cfg': cfg.__dict__,
                 }, ckpt_path)
                 print(f"  Saved: {ckpt_path}")
 
@@ -590,7 +590,7 @@ def train(args):
     torch.save({
         'step': step,
         'model_state_dict': model.state_dict(),
-        'cfg': cfg,
+        'cfg': cfg.__dict__,
     }, final_path)
     print(f"\nFinal model saved: {final_path}")
     print(f"Total time: {(time.time() - t0) / 60:.1f} min")
@@ -603,7 +603,12 @@ def train(args):
 def export_weights(checkpoint_path: str, output_path: str):
     """Export trained model to flat binary model.bin (Version 2)."""
     ckpt = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-    cfg = ckpt.get('cfg', Mamba3Config())
+    cfg_raw = ckpt.get('cfg', {})
+    if isinstance(cfg_raw, dict):
+        cfg = Mamba3Config(**{k: v for k, v in cfg_raw.items()
+                              if k in Mamba3Config.__dataclass_fields__})
+    else:
+        cfg = cfg_raw
     state_dict = ckpt['model_state_dict']
 
     weight_data = bytearray()
