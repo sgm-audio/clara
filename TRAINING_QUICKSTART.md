@@ -1,96 +1,63 @@
 # CLARA Training Quick Start — Morning Guide
 
-## Prerequisites Check
-
-Run these to verify everything is ready:
+## One Command Does Everything
 
 ```bash
-# 1. Check distrobox exists
+cd ~/Desktop/Dev/clara
+bash scripts/train_local.sh
+```
+
+That's it. Downloads MUSDB18-HQ (21GB), extracts it, runs training. Add flags to customize:
+
+```bash
+bash scripts/train_local.sh --steps 50000 --batch 2
+```
+
+## Manual Steps (If You Prefer)
+
+### Prerequisites
+
+```bash
+# Check distrobox exists
 distrobox list | grep clara-training
 
-# 2. Check dataset (should be ~41GB)
-ls -lh ~/datasets/musdb18hq/train/ 2>/dev/null || echo "DATASET MISSING"
-
-# 3. Check GPU
+# Check GPU
 rocm-smi --showuse 2>/dev/null || echo "No GPU (will use CPU)"
 ```
 
-## One-Time Setup (Skip if Already Done)
-
-### A. Start Training Environment
+### One-Time Setup (Inside Distrobox)
 
 ```bash
 distrobox enter clara-training
-```
-
-### B. Install Dependencies (Inside Distrobox)
-
-```bash
-sudo apt-get update && sudo apt-get install -y python3 python3-venv python3-pip
+sudo apt-get update && sudo apt-get install -y python3 python3-venv python3-pip aria2
 python3 -m venv ~/clara-training/venv
 source ~/clara-training/venv/bin/activate
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.2.4
 pip install numpy scipy soundfile tqdm
 ```
 
-### C. Copy Dataset to NVMe
+### Download Dataset
 
 ```bash
-# From host (outside distrobox)
-cp -a /run/media/sgm/Linux\ Backup/datasets/musdb18hq/. ~/datasets/musdb18hq/
+mkdir -p ~/datasets
+cd ~/datasets
+aria2c -x 4 -s 4 --continue=true \
+    "https://zenodo.org/record/5061438/files/musdb18hq.tar.gz" \
+    -o musdb18hq.tar.gz
+tar -xzf musdb18hq.tar.gz
 ```
 
-## Training Commands
-
-### Option 1: Quick Smoke Test (5 min)
-
-Tests the entire pipeline with synthetic data:
+### Run Training
 
 ```bash
-distrobox enter clara-training
-source ~/clara-training/venv/bin/activate
+cd ~/Desktop/Dev/clara
 export HSA_OVERRIDE_GFX_VERSION=11.0.0
-cd ~/Github\ Repo\'s/clara
-bash scripts/smoke_test.sh
-```
-
-### Option 2: Full Training (4-8 hours)
-
-```bash
-distrobox enter clara-training
-source ~/clara-training/venv/bin/activate
-export HSA_OVERRIDE_GFX_VERSION=11.0.0
-export HSA_ENABLE_SDMA=0
-export PYTORCH_ALLOC_CONF="garbage_collection_threshold:0.8,max_split_size_mb:256"
-export MIOPEN_FIND_MODE=5
-cd ~/Github\ Repo\'s/clara
-
-# Run training
 python train_clara_mamba3.py \
   --data ~/datasets/musdb18hq/train \
   --device cuda \
   --batch 4 \
-  --grad-accum 4 \
   --steps 100000 \
-  --clip-seconds 0.5 \
-  --ckpt-every 5000 \
-  --val-every 1000 \
-  --log-every 100 \
-  --lr 1e-3 \
-  --weight-decay 1e-5 \
-  --clip-grad-norm 1.0 \
-  --warmup 2000 \
   --cache
-```
-
-### Option 3: Use the Script (Easier)
-
-```bash
-distrobox enter clara-training
-source ~/clara-training/venv/bin/activate
-export HSA_OVERRIDE_GFX_VERSION=11.0.0
-cd ~/Github\ Repo\'s/clara
-bash scripts/run_train.sh
 ```
 
 ## Resume Training
