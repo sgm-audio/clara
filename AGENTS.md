@@ -76,7 +76,7 @@ The **only** training pipeline that produces exportable weights is `train_clara_
 python train_clara_mamba3.py --data ~/datasets/musdb18hq/train --device cuda --steps 100000
 
 # Export to flat binary weights
-python scripts/export_mamba_weights.py --checkpoint checkpoints/final.pt --output models/model.bin
+python train_clara_mamba3.py --export checkpoints/final.pt --output models/model.bin
 ```
 
 Exports `models/model.bin` using the 13-array version 2 weight format. The model has chunked sub-block processing (chunk_size=64) that exactly matches the C++ engine's `kSubBlockSize`. Requires `torch`, `numpy`.
