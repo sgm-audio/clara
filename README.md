@@ -35,13 +35,13 @@ DAW Host
     Reads tempo/key/time signature/section markers
     Writes cond vector slots 0-7 in real-time
 
-Main Thread (non-RT)
-├── CLAP Text Encoder  → 32-float embedding → cond slots 8-39
-├── CLAP Audio Encoder → 32-float embedding → cond slots 8-39
-└── Preset system      → precomputed embeddings → cond slots 8-39
+Main Thread (non-RT) — Phase 2/3 features
+├── CLAP Text Encoder  → 32-float embedding → cond slots 8-39  (planned)
+├── CLAP Audio Encoder → 32-float embedding → cond slots 8-39  (planned)
+└── Preset system      → precomputed embeddings → cond slots 8-39  (planned)
 ```
 
-The inference engine lives in `src/core/` as the `libmamba_core.so` shared library, loaded by both the CLAP and ARA targets. Each plugin loads its own `model.bin` (dedicated weights per task). CLAP text + audio encoders are shared via `libmamba_clap.so`.
+The inference engine lives in `src/core/` as the `Mamba3Core` static library, linked into both the CLAP and ARA targets. Each plugin loads its own `model.bin` (dedicated weights per task). CLAP text + audio encoders and the shared encoder library are Phase 2/3 features not yet implemented.
 
 **Flat binary model contract:** one input file (`model.bin`, version 2) with a 64-byte header followed by 13 float32 arrays per layer. The engine reads weights at init and constructs `SSMBlock` objects with placement-new. Recurrent state is stack-allocated — no heap allocations on the audio thread.
 
@@ -84,8 +84,7 @@ Outputs in `build/plugins/`:
 
 - `Mamba<Effect>.clap` — CLAP audio effect (one per model)
 - `MambaSuiteARA.so` / `MambaSuiteARA.dylib` / `MambaSuiteARA.dll` — ARA2 library
-- `libmamba_core.so` — shared C++ engine
-- `libmamba_clap.so` — shared CLAP text + audio encoders
+- `libMamba3Core.a` — static C++ engine
 - `models/*.bin` — flat binary weights
 
 ## Running
@@ -148,7 +147,7 @@ The only supported training script is `train_clara_mamba3.py`. Older scripts (`t
 ├── .github/workflows/ci.yml          # CI pipeline
 ├── models/                           # Flat binary model files
 ├── src/
-│   ├── core/                         # libmamba_core: SsmInferenceCore, SsmBlock, WeightLoader
+│   ├── core/                         # Mamba3Core: SsmInferenceCore, SsmBlock, WeightLoader
 │   ├── clap/                         # CLAP plugin entry + extensions
 │   ├── ara/                          # ARA document controller + playback renderer
 │   └── common/                       # Conditioning, Platform abstractions
