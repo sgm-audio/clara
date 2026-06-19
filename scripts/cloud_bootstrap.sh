@@ -12,7 +12,7 @@ set -euo pipefail
 #   chmod +x cloud_bootstrap.sh && ./cloud_bootstrap.sh
 # ═══════════════════════════════════════════════════════════════════
 
-REPO_URL="${REPO_URL:-https://github.com/sg-m-2/clara.git}"
+REPO_URL="${REPO_URL:-https://github.com/SGM-Studios/clara.git}"
 DATASET_URL="${DATASET_URL:-https://zenodo.org/records/1118372/files/musdb18hq.zip}"
 DATASET_DIR="${DATASET_DIR:-$HOME/datasets/musdb18hq}"
 VENV_DIR="${VENV_DIR:-$HOME/clara-venv}"

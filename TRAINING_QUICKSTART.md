@@ -4,60 +4,28 @@
 
 ```bash
 cd ~/Desktop/Dev/clara
-bash scripts/train_local.sh
+bash scripts/setup_cloud.sh all
 ```
 
-That's it. Downloads MUSDB18-HQ (21GB), extracts it, runs training. Add flags to customize:
+That's it. Downloads MUSDB18-HQ (21GB), extracts it, precomputes features, runs training. 
+
+## What It Does
+
+1. **system** — Install deps + ROCm PyTorch
+2. **repo** — Clone/pull CLARA repo
+3. **datasets** — Download MUSDB18-HQ via aria2c
+4. **precompute** — Precompute mel + STFT features (eliminates CPU bottleneck)
+5. **train** — Stage 0 identity training (100K steps, --precomputed --cache)
+6. **export** — Export + validate model.bin
+
+## Run Individual Phases
 
 ```bash
-bash scripts/train_local.sh --steps 50000 --batch 2
-```
-
-## Manual Steps (If You Prefer)
-
-### Prerequisites
-
-```bash
-# Check distrobox exists
-distrobox list | grep clara-training
-
-# Check GPU
-rocm-smi --showuse 2>/dev/null || echo "No GPU (will use CPU)"
-```
-
-### One-Time Setup (Inside Distrobox)
-
-```bash
-distrobox enter clara-training
-sudo apt-get update && sudo apt-get install -y python3 python3-venv python3-pip aria2
-python3 -m venv ~/clara-training/venv
-source ~/clara-training/venv/bin/activate
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.2.4
-pip install numpy scipy soundfile tqdm
-```
-
-### Download Dataset
-
-```bash
-mkdir -p ~/datasets
-cd ~/datasets
-aria2c -x 4 -s 4 --continue=true \
-    "https://zenodo.org/record/5061438/files/musdb18hq.tar.gz" \
-    -o musdb18hq.tar.gz
-tar -xzf musdb18hq.tar.gz
-```
-
-### Run Training
-
-```bash
-cd ~/Desktop/Dev/clara
-export HSA_OVERRIDE_GFX_VERSION=11.0.0
-python train_clara_mamba3.py \
-  --data ~/datasets/musdb18hq/train \
-  --device cuda \
-  --batch 4 \
-  --steps 100000 \
-  --cache
+bash scripts/setup_cloud.sh system      # Install deps only
+bash scripts/setup_cloud.sh datasets    # Download dataset only
+bash scripts/setup_cloud.sh precompute  # Precompute features only
+bash scripts/setup_cloud.sh train       # Train only (requires precomputed)
+bash scripts/setup_cloud.sh export      # Export only
 ```
 
 ## Resume Training
