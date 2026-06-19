@@ -73,13 +73,17 @@ ARGS=(
     --device cuda
     --batch 4
     --grad-accum 4
-    --steps 50000
+    --steps 100000
     --clip-seconds 0.5
-    --ckpt-every 500
-    --val-every 500
-    --log-every 25
+    --ckpt-every 5000
+    --val-every 1000
+    --log-every 100
     --num-workers 0
     --cache
+    --lr 1e-3
+    --weight-decay 1e-5
+    --clip-grad-norm 1.0
+    --warmup 2000
 )
 
 if [ -n "${LATEST}" ]; then
@@ -94,7 +98,7 @@ mkdir -p "${CKPT_DIR}"
 LOGFILE="${CKPT_DIR}/train.log"
 
 echo "======================================================================"
-echo " Command: python train_clara_parallel.py ${ARGS[*]}"
+echo " Command: python train_clara_mamba3.py ${ARGS[*]}"
 echo " Log:     ${LOGFILE}"
 echo " Monitor: watch -n 2 rocm-smi --showtemp --showpower --showuse --showmemuse"
 echo "======================================================================"
@@ -102,7 +106,7 @@ echo ""
 
 # ── Launch ────────────────────────────────────────────────────────────────
 echo "=== CLARA Training Start: $(date) ===" | tee -a "${LOGFILE}"
-python "${SCRIPT_DIR}/train_clara_parallel.py" "${ARGS[@]}" 2>&1 | tee -a "${LOGFILE}"
+python "${SCRIPT_DIR}/train_clara_mamba3.py" "${ARGS[@]}" 2>&1 | tee -a "${LOGFILE}"
 EXIT_CODE=$?
 echo "=== CLARA Training End: $(date) (exit=${EXIT_CODE}) ===" | tee -a "${LOGFILE}"
 
