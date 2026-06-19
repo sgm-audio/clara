@@ -29,6 +29,7 @@ checkpoints_clara/
 # ONNX models — trained weights, LOCAL ONLY
 *.onnx
 *.onnx.data
+*.onnx.new
 
 # Noise dataset — PROPRIETARY audio, LOCAL ONLY, NEVER COMMIT
 *noise*/
