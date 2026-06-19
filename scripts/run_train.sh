@@ -2,9 +2,12 @@
 # ==============================================================================
 # CLARA Training Runner — Direct Launch, No Tmux
 # ==============================================================================
-# Usage:
+# Usage (local AMD APU / 860M, gfx1152 → gfx1100 override):
 #   export HSA_OVERRIDE_GFX_VERSION=11.0.0
 #   ./scripts/run_train.sh [DATA_DIR] [extra args]
+#
+# Usage (MI300X, gfx942 — do NOT use gfx1100 override):
+#   HSA_OVERRIDE_GFX_VERSION="" PYTORCH_ROCM_ARCH=gfx942 ./scripts/run_train.sh
 #
 # Launches training directly with automatic checkpoint resume.
 # For GPU monitoring, open a second terminal and run:

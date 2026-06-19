@@ -15,10 +15,10 @@ This file serves as both a todo list and a prompting system for documenting arch
 
 ## ADR-001: Shared ONNX Runtime Inference Engine
 
-**Status:** `[ACCEPTED]`
+**Status:** `[ACCEPTED]` — **Historical / Superseded by Mamba-3**
 **File:** `ADR-001-shared-onnx-inference-engine.md`
 
-**Context:** CLARA needs to run Mamba SSM inference in both CLAP (RT) and ARA2 (offline) contexts via a shared inference core.
+**Context:** CLARA needs to run Mamba SSM inference in both CLAP (RT) and ARA2 (offline) contexts via a shared inference core. This ADR now describes the deprecated Mamba-1 / ONNX Runtime era; the current architecture uses the custom C++ engine documented in `MAMBA3_MIGRATION_PLAN.md`.
 
 **Key decisions documented:**
 - ONNX Runtime v1.17.1 on CPU (not LibTorch, RTNeural, or native C++)

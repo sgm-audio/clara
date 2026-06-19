@@ -69,19 +69,6 @@ if(NOT EXISTS "${MAMBA3_REF_INPUT}" OR NOT EXISTS "${MAMBA3_REF_OUTPUT}" OR NOT 
     endif()
 endif()
 
-# --- Test: MambaInferenceEngine smoke test ---
-# DISABLED: Mamba-1 ONNX Runtime engine has been replaced by Mamba-3 (test_mamba3).
-# These tests always fail because the ONNX model path and runtime are no longer
-# maintained. Remove entirely once ONNX Runtime is purged from CMake.
-# add_executable(test_engine ...)
-# add_test(NAME test_engine COMMAND test_engine)
-
-# --- Test: Latency (timing verification) ---
-# DISABLED: Mamba-1 ONNX era. Mamba-3 reports 0 latency (no conv1d).
-# Verified in test_clap_plugin (latency=0) and test_mamba3 (architecture).
-# add_executable(test_latency ...)
-# add_test(NAME test_latency COMMAND test_latency)
-
 # --- Test: CLAP plugin (Mamba-3) ---
 add_executable(test_clap_plugin
     test_clap_plugin.cpp
@@ -144,13 +131,10 @@ add_test(NAME test_ara_controller COMMAND test_ara_controller)
 
 set(_clap_validator_required_categories "audio-ports;params;state;latency")
 
-# Quick mode skips processing tests because the Mamba SSM runs in CPU-only
-# ONNX Runtime with untrained random weights (the export/training pipeline
-# exists at export_mamba_onnx.py but trained weights are not yet available).
-# A full 21-case validation pass with process()
-# calls takes many minutes per call and is impractical for CI. Quick mode
-# exercises the four required categories at the structural / lifecycle
-# layer (init, descriptor, audio-ports shape, param roundtrip, state
+# Quick mode skips processing tests because a full 21-case validation pass
+# with process() calls takes many minutes per call and is impractical for
+# CI. Quick mode exercises the four required categories at the structural /
+# lifecycle layer (init, descriptor, audio-ports shape, param roundtrip, state
 # save/restore, latency) without invoking the Mamba forward path.
 #
 # Set CLAP_VALIDATOR_FULL=ON to run the full validator suite (slow; for

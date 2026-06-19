@@ -21,11 +21,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
-    # /MD (dynamic CRT): Required because ONNX Runtime's prebuilt onnxruntime.dll
-    # is compiled with /MD. Mixing /MT (static CRT) and /MD in the same process
-    # causes undefined behavior (separate heaps, incompatible object ownership).
-    # Users must install the VC++ Redistributable:
-    #   https://aka.ms/vs/17/release/vc_redist.x64.exe
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4 /FS /EHsc")
     set(CMAKE_CXX_FLAGS_RELEASE "/O2 /fp:fast /DNDEBUG /GR- /MD")
     set(CMAKE_CXX_FLAGS_DEBUG "/Od /Zi /DDEBUG /MDd /FS /EHsc")
@@ -65,57 +60,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(ara_sdk)
 
-# 4. Fetch ONNXRuntime (Precompiled binaries)
-set(ONNXRUNTIME_VERSION 1.17.1)
-if(WIN32)
-    set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip")
-elseif(APPLE)
-    set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-osx-universal2-${ONNXRUNTIME_VERSION}.tgz")
-else()
-    set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz")
-endif()
-FetchContent_Declare(
-    onnxruntime
-    URL ${ONNXRUNTIME_URL}
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-)
-FetchContent_MakeAvailable(onnxruntime)
 
-# ONNXRuntime Setup
-set(ONNXRUNTIME_INCLUDE_DIR ${onnxruntime_SOURCE_DIR}/include)
-set(ONNXRUNTIME_LIB_DIR ${onnxruntime_SOURCE_DIR}/lib)
-find_library(ONNXRUNTIME_LIB onnxruntime PATHS ${ONNXRUNTIME_LIB_DIR} NO_DEFAULT_PATH)
-
-# Define platform-specific runtime library filenames
-if(WIN32)
-    set(ONNXRUNTIME_DLL "${ONNXRUNTIME_LIB_DIR}/onnxruntime.dll")
-elseif(APPLE)
-    set(ONNXRUNTIME_DYLIB "${ONNXRUNTIME_LIB_DIR}/libonnxruntime.dylib")
-else()
-    set(ONNXRUNTIME_SO "${ONNXRUNTIME_LIB_DIR}/libonnxruntime.so.1.17.1")
-endif()
 
 # Common include directories
 set(COMMON_INCLUDES
     ${clap_SOURCE_DIR}/include
     ${ara_sdk_SOURCE_DIR}
     ${ara_sdk_SOURCE_DIR}/ARA_Library/Dispatch
-    ${ONNXRUNTIME_INCLUDE_DIR}
 )
 
-# --- Shared Core (compiled once, linked into both targets) ---
-add_library(MambaCore STATIC src/core/MambaInferenceEngine.cpp)
-target_include_directories(MambaCore PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${ONNXRUNTIME_INCLUDE_DIR}
-)
-target_link_libraries(MambaCore PUBLIC ${ONNXRUNTIME_LIB})
-set_target_properties(MambaCore PROPERTIES
-    CXX_VISIBILITY_PRESET hidden
-    POSITION_INDEPENDENT_CODE ON
-)
-
-# --- Mamba-3 Core (Phase 3-4: custom C++ engine, no ONNX) ---
+# --- Mamba-3 Core (custom C++ engine, flat binary weights) ---
 add_library(Mamba3Core STATIC
     src/core/SsmBlock.cpp
     src/core/SsmInferenceCore.cpp
@@ -221,21 +175,14 @@ target_link_options(MambaSuiteARA PRIVATE $<$<AND:$<PLATFORM_ID:Linux,Darwin>,$<
 # Why this is needed:
 #   With multi-config generators (Visual Studio, Xcode, Ninja Multi-Config),
 #   the plugin binary lands at ${CMAKE_BINARY_DIR}/plugins/<CONFIG>/. The
-#   previous unconditional file(COPY ...) blocks deployed models and ONNX
-#   Runtime to ${CMAKE_BINARY_DIR}/plugins/ only. mambaResolveModulePath()
-#   then computed <binary-dir>/models/mamba_rt.onnx, the file was missing,
-#   mamba_init() returned false, and every clap-validator init()-dependent
-#   test failed.
+#   previous unconditional file(COPY ...) blocks deployed models to
+#   ${CMAKE_BINARY_DIR}/plugins/ only. mambaResolveModulePath() then computed
+#   <binary-dir>/models/model.bin, the file was missing, mamba_init() returned
+#   false, and every clap-validator init()-dependent test failed.
 #
 # POST_BUILD + generator expressions deploy to <TARGET_FILE_DIR>/ for
 # every configuration, so single-config (Ninja, Unix Makefiles) and
 # multi-config (VS, Xcode) generators both get the right layout.
-#
-# Note: the install() rules at the bottom of this file reference
-# ${ONNXRUNTIME_DLL/DYLIB/SO} and ${CMAKE_BINARY_DIR}/plugins/
-# libonnxruntime.{so,dylib}. The variable assignments and the
-# configure_file() calls below preserve those build-tree paths so the
-# install rules continue to work without modification.
 # ---------------------------------------------------------------------------
 
 # Models -> <binary-dir>/models/
@@ -256,80 +203,7 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/models)
     )
 endif()
 
-# ONNX Runtime -> <binary-dir>/
-if(WIN32)
-    set(ONNXRUNTIME_DLL ${ONNXRUNTIME_LIB_DIR}/onnxruntime.dll)
-    if(EXISTS ${ONNXRUNTIME_DLL})
-        add_custom_command(TARGET MambaSuiteClap POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${ONNXRUNTIME_DLL}
-                $<TARGET_FILE_DIR:MambaSuiteClap>/onnxruntime.dll
-            COMMENT "Deploying onnxruntime.dll to $<TARGET_FILE_DIR:MambaSuiteClap>"
-            VERBATIM
-        )
-        add_custom_command(TARGET MambaSuiteARA POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${ONNXRUNTIME_DLL}
-                $<TARGET_FILE_DIR:MambaSuiteARA>/onnxruntime.dll
-            COMMENT "Deploying onnxruntime.dll to $<TARGET_FILE_DIR:MambaSuiteARA>"
-            VERBATIM
-        )
-    endif()
-elseif(APPLE)
-    set(ONNXRUNTIME_DYLIB ${ONNXRUNTIME_LIB_DIR}/libonnxruntime.${ONNXRUNTIME_VERSION}.dylib)
-    if(EXISTS ${ONNXRUNTIME_DYLIB})
-        add_custom_command(TARGET MambaSuiteClap POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${ONNXRUNTIME_DYLIB}
-                $<TARGET_FILE_DIR:MambaSuiteClap>/libonnxruntime.${ONNXRUNTIME_VERSION}.dylib
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${ONNXRUNTIME_DYLIB}
-                $<TARGET_FILE_DIR:MambaSuiteClap>/libonnxruntime.dylib
-            COMMENT "Deploying libonnxruntime.dylib to $<TARGET_FILE_DIR:MambaSuiteClap>"
-            VERBATIM
-        )
-        add_custom_command(TARGET MambaSuiteARA POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${ONNXRUNTIME_DYLIB}
-                $<TARGET_FILE_DIR:MambaSuiteARA>/libonnxruntime.${ONNXRUNTIME_VERSION}.dylib
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${ONNXRUNTIME_DYLIB}
-                $<TARGET_FILE_DIR:MambaSuiteARA>/libonnxruntime.dylib
-            COMMENT "Deploying libonnxruntime.dylib to $<TARGET_FILE_DIR:MambaSuiteARA>"
-            VERBATIM
-        )
-        # Unversioned symlink-named copy in top-level build/plugins/
-        # (used by the install rules at the bottom of this file).
-        configure_file(${ONNXRUNTIME_DYLIB} ${CMAKE_BINARY_DIR}/plugins/libonnxruntime.dylib COPYONLY)
-    endif()
-else()
-    set(ONNXRUNTIME_SO ${ONNXRUNTIME_LIB_DIR}/libonnxruntime.so.${ONNXRUNTIME_VERSION})
-    if(EXISTS ${ONNXRUNTIME_SO})
-        add_custom_command(TARGET MambaSuiteClap POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${ONNXRUNTIME_SO}
-                $<TARGET_FILE_DIR:MambaSuiteClap>/libonnxruntime.so.${ONNXRUNTIME_VERSION}
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${ONNXRUNTIME_SO}
-                $<TARGET_FILE_DIR:MambaSuiteClap>/libonnxruntime.so
-            COMMENT "Deploying libonnxruntime.so to $<TARGET_FILE_DIR:MambaSuiteClap>"
-            VERBATIM
-        )
-        add_custom_command(TARGET MambaSuiteARA POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${ONNXRUNTIME_SO}
-                $<TARGET_FILE_DIR:MambaSuiteARA>/libonnxruntime.so.${ONNXRUNTIME_VERSION}
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${ONNXRUNTIME_SO}
-                $<TARGET_FILE_DIR:MambaSuiteARA>/libonnxruntime.so
-            COMMENT "Deploying libonnxruntime.so to $<TARGET_FILE_DIR:MambaSuiteARA>"
-            VERBATIM
-        )
-        # Unversioned symlink-named copy in top-level build/plugins/
-        # (used by the install rules at the bottom of this file).
-        configure_file(${ONNXRUNTIME_SO} ${CMAKE_BINARY_DIR}/plugins/libonnxruntime.so COPYONLY)
-    endif()
-endif()
+
 
 # ---------------------------------------------------------------------------
 # --- Unit Tests (opt-in: cmake -DBUILD_TESTING=ON) ---
@@ -362,10 +236,9 @@ endif()
 #     Contents/
 #       linux-x86-64/
 #         MambaSuiteClap.clap    (the plugin binary)
-#         libonnxruntime.so
+#         libmamba_core.so
 #         models/
-#           mamba_rt.onnx
-#           mamba_rt.onnx.data
+#           model.bin
 #
 # ARA standalone:
 #   ${CMAKE_INSTALL_PREFIX}/lib/ara/MambaSuiteARA.so
@@ -374,7 +247,7 @@ endif()
 #   ${CMAKE_INSTALL_PREFIX}/lib/clap/MambaSuiteClap.clap
 #
 # An installed plugin directory includes everything needed at runtime
-# (plugin + runtime lib + model). The RUNPATH is $ORIGIN so all
+# (plugin + shared engine + model). The RUNPATH is $ORIGIN so all
 # dependencies resolve relative to the plugin binary location.
 # ---------------------------------------------------------------------------
 
@@ -414,62 +287,18 @@ install(TARGETS MambaSuiteARA
     RUNTIME DESTINATION ${ARA_INSTALL_PREFIX}
 )
 
-# --- Runtime dependencies for CLAP bundle ---
-if(WIN32)
-    install(FILES ${ONNXRUNTIME_DLL}
-        DESTINATION ${CLAP_BUNDLE_DIR}
-        COMPONENT clap
-    )
-elseif(APPLE)
-    install(FILES
-            ${ONNXRUNTIME_DYLIB}
-            ${CMAKE_BINARY_DIR}/plugins/libonnxruntime.dylib
-        DESTINATION ${CLAP_BUNDLE_DIR}
-        COMPONENT clap
-    )
-else()
-    install(FILES
-            ${ONNXRUNTIME_SO}
-            ${CMAKE_BINARY_DIR}/plugins/libonnxruntime.so
-        DESTINATION ${CLAP_BUNDLE_DIR}
-        COMPONENT clap
-    )
-endif()
-
 # --- Models for CLAP bundle ---
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
     DESTINATION ${CLAP_BUNDLE_DIR}/models
     COMPONENT clap
-    FILES_MATCHING PATTERN "*.onnx*"
+    FILES_MATCHING PATTERN "*.bin"
 )
-
-# --- Runtime dependencies for ARA ---
-if(WIN32)
-    install(FILES ${ONNXRUNTIME_DLL}
-        DESTINATION ${ARA_INSTALL_PREFIX}
-        COMPONENT ara
-    )
-elseif(APPLE)
-    install(FILES
-            ${ONNXRUNTIME_DYLIB}
-            ${CMAKE_BINARY_DIR}/plugins/libonnxruntime.dylib
-        DESTINATION ${ARA_INSTALL_PREFIX}
-        COMPONENT ara
-    )
-else()
-    install(FILES
-            ${ONNXRUNTIME_SO}
-            ${CMAKE_BINARY_DIR}/plugins/libonnxruntime.so
-        DESTINATION ${ARA_INSTALL_PREFIX}
-        COMPONENT ara
-    )
-endif()
 
 # --- Models for ARA ---
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
     DESTINATION ${ARA_INSTALL_PREFIX}/models
     COMPONENT ara
-    FILES_MATCHING PATTERN "*.onnx*"
+    FILES_MATCHING PATTERN "*.bin"
 )
 
 # Convenience: `cmake --install . --component clap` for CLAP only

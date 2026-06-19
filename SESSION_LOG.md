@@ -827,3 +827,64 @@ User shared extensive prior conversation showing a different AI agent (DeepSeek 
 2. If VM is destroyed: restore from S3 checkpoints
 3. Write DSP paired-data pipeline for Stage 1 supervised training
 4. $90 auto-kill protects against credit overrun — destroy VM after that
+
+---
+
+## Session 2026-06-19 (Archive Mamba-1 / ONNX Era + Docs Sync)
+
+**Duration:** ~30 min
+**Objective:** Update repo documentation and stale files to match the Mamba-3 architecture; archive Mamba-1 / ONNX-era artifacts; fix stale training-command guidance.
+
+### ✅ Accomplished
+
+- **Created unified archive** — `archive/mamba1-onnx-era/{docs,code,training,scripts,models}` now holds all deprecated Mamba-1 / ONNX Runtime artifacts.
+- **Moved stale files** — docs (`training-plan.md`, `training-pipeline.md`, etc.), code (`MambaInferenceEngine.*`, `test_engine.cpp`, `test_latency.cpp`), training scripts (`train_clara_parallel.py`, `export_mamba_onnx.py`, etc.), helper scripts (`smoke_test.sh`, `setup_clara_env.sh`, etc.), and old ONNX models are archived.
+- **Rewrote `README.md`** — now describes Mamba-3 (custom C++ engine, 757K params, flat binary weights, no ONNX Runtime).
+- **Created `docs/TRAINING.md`** — unified Mamba-3 training reference with Stage 0–3 curriculum.
+- **Cleaned `CMakeLists.txt`** — removed ONNX Runtime FetchContent, `MambaCore` target, ONNX post-build deploy, and ONNX install rules; model install pattern is now `*.bin`.
+- **Cleaned `tests/CMakeLists.txt`** — removed commented-out `test_engine`/`test_latency` blocks and stale ONNX-era validator comment.
+- **Fixed HSA guidance** — `docs/TRAINING.md` and `TRAINING_QUICKSTART.md` now distinguish AMD APU/860M (`HSA_OVERRIDE_GFX_VERSION=11.0.0`) from MI300X (`gfx942`, do NOT set override).
+- **Fixed `scripts/run_train.sh`** — added usage comments for both 860M and MI300X; defaults remain for local 860M.
+- **Fixed `scripts/cloud_bootstrap.sh`** — changed `nvidia-smi` to `rocm-smi` monitor command.
+- **Archived stale prompts/analysis** — `analysis-python-pipeline.md` and `CLAUDE_OPUS_PROMPT.md` moved to archive.
+- **Marked ADRs historical** — `ADR-001` and `ADR-WORKFLOW` now note they describe the superseded ONNX Runtime era.
+- **Build verification** — `cmake -B build -DBUILD_TESTING=ON` and `cmake --build build --parallel` succeed; all 3 CTest tests pass.
+
+### 📁 Files Changed
+
+| File | Action | Summary |
+|------|--------|---------|
+| `README.md` | Modified | Rewritten for Mamba-3 / flat binary weights |
+| `docs/TRAINING.md` | Created | Unified Mamba-3 training reference |
+| `TRAINING_QUICKSTART.md` | Modified | Fixed HSA override troubleshooting |
+| `CMakeLists.txt` | Modified | Removed ONNX Runtime and `MambaCore` |
+| `tests/CMakeLists.txt` | Modified | Removed stale ONNX-era test comments |
+| `scripts/run_train.sh` | Modified | Added MI300X usage note |
+| `scripts/cloud_bootstrap.sh` | Modified | `nvidia-smi` → `rocm-smi` |
+| `archive/mamba1-onnx-era/README.md` | Created | Catalog of archived stale files |
+| `ADR-001-shared-onnx-inference-engine.md` | Modified | Marked historical/superseded |
+| `ADR-WORKFLOW.md` | Modified | Marked ADR-001 as historical |
+| `AGENTS.md` | Modified | Removed stale ONNX/library claims; updated test count, gaps, training status |
+| `archive/mamba1-onnx-era/` | Created | All Mamba-1 / ONNX files moved here |
+
+### 🏗️ Decisions
+
+- **Single archive tree** — consolidated stale files into `archive/mamba1-onnx-era/` rather than scattered `docs/archive/`.
+- **ONNX Runtime fully removed from CMake** — no active source references `Ort::Session`; engine is `SsmInferenceCore` + `Mamba3Core`.
+- **Keep append-only history untouched** — `CHANGELOG.md` and prior `SESSION_LOG.md` entries not modified.
+- **Personal resume/cover-letter docs untouched** — `SGM_Resume_*.md`, `SGM_CoverLetter_*.md` left as-is.
+
+### ⚠️ User Feedback
+
+User explicitly called out that the troubleshooting line claiming `HSA_OVERRIDE_GFX_VERSION=11.0.0` must be set before any Python code was incorrect on MI300X (gfx942 native). Corrected across docs and scripts.
+
+### ⏭️ Next
+
+1. Commit the archive + doc-sync changes (`git add -A` to record moves).
+2. Resume training pipeline work (Phase 8) when ready.
+
+### 🔢 Key Numbers
+
+- Archived files: **40+** (docs, code, scripts, models)
+- Build/test result: **3/3 tests pass**
+- ONNX Runtime dependencies remaining: **0**

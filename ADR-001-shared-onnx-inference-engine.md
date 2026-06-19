@@ -1,7 +1,8 @@
 # ADR-001: Shared ONNX Runtime Inference Engine for Real-Time Mamba SSM
 
-**Status:** Accepted (implemented)
+**Status:** Accepted (implemented) — **Historical / Superseded**
 **Date:** 2026-05-30
+**Note:** This ADR documents the Mamba-1 / ONNX Runtime era. CLARA has since migrated to the Mamba-3 custom C++ engine with flat binary weights. See [`MAMBA3_MIGRATION_PLAN.md`](MAMBA3_MIGRATION_PLAN.md) for the current architecture.
 
 ## Context
 

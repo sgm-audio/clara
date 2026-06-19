@@ -2,7 +2,7 @@
 
 **Migration status (June 2026): Phases 0-6 COMPLETE.** Both CLAP and ARA plugins run on the custom C++ Mamba-3 engine. No ONNX Runtime dependency in plugins. Training pipeline (Phase 8) is the next blocking deliverable.
 
-**Current build:** `cmake -B build -DBUILD_TESTING=ON && cmake --build build --parallel && ctest --test-dir build` — 3/5 tests pass (engine/latency tests are ONNX-era, expected failures).
+**Current build:** `cmake -B build -DBUILD_TESTING=ON && cmake --build build --parallel && ctest --test-dir build` — 3/3 tests pass.
 
 **Migration plan:** `MAMBA3_MIGRATION_PLAN.md` — complete architecture, model config, C++ engine spec, training pipeline, product roadmap, risk register, and phase-by-phase implementation plan.
 
@@ -15,9 +15,9 @@ C++17 audio plugin running a Mamba-3 SSM via custom C++ inference engine (no ONN
 - Mamba-3 with multi-head MIMO R=4 (4 heads × 4 slots = 16 SSM streams per layer)
 - d_model=128, d_state=32, 6 layers, ~757K params
 - Custom C++ engine with flat binary weights (no ONNX, no onnxruntime)
-- CLAP text + audio encoders shipped with plugin (Option C, full quality, no distillation)
-- Precomputed CLAP preset embeddings for instant preset loading
-- CLAP audio analysis on transport stop — plugin "listens" between takes
+- CLAP text + audio encoders shipped with plugin (Option C, full quality, no distillation) — Phase 2/3 feature
+- Precomputed CLAP preset embeddings for instant preset loading — Phase 2/3 feature
+- CLAP audio analysis on transport stop — plugin "listens" between takes — Phase 2/3 feature
 - Dedicated model per task (Saturator, Compressor, Denoiser, etc.) — each its own CLAP plugin
 - Zero-latency (no conv1d), trapezoidal SSM discretization, SiLU z-gating
 - Training on MI300X via AMD AI Developer Cloud ($100 credits, ~50 hours)
@@ -58,14 +58,14 @@ cmake --install . --component ara    # ARA .so only
 Outputs go to `build/plugins/`:
 - `Mamba<Effect>.clap` — CLAP audio effect (one per model)
 - `MambaSuiteARA.so` — ARA2 library
-- `libmamba_core.so` — shared C++ engine (no ONNX Runtime dependency)
-- `libmamba_clap.so` — shared CLAP text + audio encoders (Option C)
+- `libMamba3Core.a` — static C++ engine (no ONNX Runtime dependency)
 - `models/*.bin` — flat binary weights copied from source
 
 Two dependencies via CMake FetchContent (no manual install):
 - CLAP SDK (`29ffcc27`)
 - ARA SDK (`1ca0b0aa`)
-- ONNX Runtime is REMOVED. All inference is custom C++ with flat binary weights.
+
+ONNX Runtime is REMOVED. All inference is custom C++ with flat binary weights.
 
 ## Model Export (V2 — Correct Pipeline)
 
@@ -85,7 +85,7 @@ Exports `models/model.bin` using the 13-array version 2 weight format. The model
 
 ## Architecture
 
-`src/core/SsmInferenceCore` — RT-safe custom C++ Mamba-3 engine. Contains 6 `SSMBlock` layers (stack-allocated), each implementing multi-head MIMO R=4 with trapezoidal SSM, RoPE, FiLM conditioning, and SiLU z-gating. No ONNX Runtime dependency. Uses stack-allocated `alignas(64)` state arrays with `#pragma unroll` for zero heap allocations. Deferred state reset via `resetRequested_` atomic flag. Both CLAP and ARA link it via `libmamba_core` shared library.
+`src/core/SsmInferenceCore` — RT-safe custom C++ Mamba-3 engine. Contains 6 `SSMBlock` layers (stack-allocated), each implementing multi-head MIMO R=4 with trapezoidal SSM, RoPE, FiLM conditioning, and SiLU z-gating. No ONNX Runtime dependency. Uses stack-allocated `alignas(64)` state arrays with `#pragma unroll` for zero heap allocations. Deferred state reset via `resetRequested_` atomic flag. Both CLAP and ARA link the `Mamba3Core` static library.
 
 `src/clap/MambaClapPlugin` — Full CLAP plugin. Registers extensions: params, state, latency (0 samples — no conv1d), audio-ports (stereo). 3 atomics: bypass (stepped), wet/dry, intensity. Click-free bypass via 50ms linear crossfade (per-sample ramp, shared across channels to prevent stereo aliasing). Uses `mambaResolveModulePath()` (Platform.hpp) for model path resolution relative to `.clap` binary. Uses `std::make_unique` + `.release()` for C-ABI lifetime.
 
@@ -101,8 +101,8 @@ Conditioning vector `cond[COND_DIM]` (`COND_DIM=128`): slots 0-7 (DAW context fr
 
 ## C++ Conventions
 
-- C++17, no RTTI in release (`-ffast-math -O3 -DNDEBUG -fno-rtti`); exceptions allowed (ORT C++ API `Ort::Session::Run()` throws `Ort::Exception`)
-- RT-safe: no allocations on audio thread — `thread_local std::vector` with `reserve()` in `processBlock()`; `resetState()` uses deferred atomic clear
+- C++17, no RTTI in release (`-ffast-math -O3 -DNDEBUG -fno-rtti`)
+- RT-safe: no allocations on audio thread — state lives in stack-allocated `alignas(64)` arrays; `resetState()` uses deferred atomic clear
 - `-Wall -Wextra -Werror=return-type` always on
 - Symbols hidden (`CXX_VISIBILITY_PRESET hidden`), `$ORIGIN` RPATH only (no build-tree leak via `BUILD_WITH_INSTALL_RPATH ON`)
 - `init()` returns bool (never throws); callers use `if (!engine->init())` pattern
@@ -111,11 +111,11 @@ Conditioning vector `cond[COND_DIM]` (`COND_DIM=128`): slots 0-7 (DAW context fr
 ## CI/CD
 
 GitHub Actions workflow at `.github/workflows/ci.yml`:
-- Builds Release on `ubuntu-22.04`, `macos-14`, and `windows-2022` with all two FetchContent dependencies
+- Builds Release on `ubuntu-22.04`, `macos-14`, and `windows-2022` with both FetchContent dependencies
 - Verifies symbol exports (`clap_entry`, `ARAGetFactory`), RPATH / install name / DLL search path, model deployment
 - Runs `clap-validator` against built `.clap` (continues on error — validator may fail without GUI)
 - Validates model round-trip via `python3 scripts/validate_export.py`
-- Uploads plugin artifact (`.clap`, `.so`/`.dylib`/`.dll`, `libmamba_core.*`, `models/`)
+- Uploads plugin artifact (`.clap`, `.so`/`.dylib`/`.dll`, `libMamba3Core.*`, `models/`)
 - Test job builds Debug on all three platforms with `BUILD_TESTING=ON` and runs CTest
 
 ## Verification
@@ -133,8 +133,8 @@ See `MAMBA3_MIGRATION_PLAN.md` for the complete phased migration plan. Quick ref
 
 | Gap | Phase | Severity | Status |
 |-----|-------|----------|--------|
-| G1 | P0 | ✅ Done | Training pipeline stub — `train_clara_mamba3.py` needs implementation (Phase 8) |
-| G2 | P0 | ✅ Done | CMake build fixed — CMake 4.3.3 + GCC 16 workarounds in place |
+| G1 | P0 | ✅ Done | `train_clara_mamba3.py` implemented and vectorized; needs cloud training run |
+| G2 | P0 | ✅ Done | CMake build fixed — no ONNX Runtime, `Mamba3Core` static library |
 | G5 | P1 | 🟡 High | No DAW load test — engine works in tests, needs DAW validation |
 | G6 | P2 | 🟡 High | GUI (CLAP_EXT_GUI) — JUCE or pugl needed |
 | G7 | P2 | 🟡 Low | ARA conditioning — `doUpdateMusicalContextContent()` encodes default context to 128-dim cond. Real host reading deferred. |
@@ -144,7 +144,7 @@ See `MAMBA3_MIGRATION_PLAN.md` for the complete phased migration plan. Quick ref
 | G12 | P4 | 🟡 High | macOS/Windows builds — defined in CMake but untested |
 | G13 | P4 | 🟢 Med | Install/packaging — no DEB, distrobox-export, or install script |
 
-**Training pipeline status:** Pipeline does NOT yet exist. Phase 8 will create `train_clara_mamba3.py` — a PyTorch training script matching the 757K-param Mamba-3 architecture from `reference_forward.py`. Needs MUSDB18-HQ dataset (~100K steps, ~4-8 hr on MI300X via AMD AI Developer Cloud).
+**Training pipeline status:** `train_clara_mamba3.py` exists and matches the Mamba-3 architecture. Next step is a cloud training run on MI300X using `scripts/setup_cloud.sh`. Needs MUSDB18-HQ dataset (~100K steps, ~4-8 hr on MI300X via AMD AI Developer Cloud).
 
 ## Session Logging — Mandatory at Session Close
 
@@ -168,4 +168,4 @@ no need to ask "what did we do last time?".
 - Plugins resolve model path via `mambaResolveModulePath()` (Platform.hpp abstraction over `dladdr`/`GetModuleFileName`/`_NSGetExecutablePath`) relative to their own binary; models must be in `models/` subdirectory adjacent to plugin
 - `MAMBA_EXPORT` macro (Platform.hpp) handles symbol visibility across platforms: ELF hidden/visibility(default), DLL export, macOS weak import
 - Flat binary weights (`model.bin`, version 2) loaded via mmap at init — no ONNX Runtime, no model parsing at runtime
-- CLAP text + audio encoders shipped as ONNX models (loaded via Ort::Session on main thread only — never on audio thread)
+- CLAP text + audio encoders are a future Phase 2/3 feature; current conditioning uses a 128-dim `cond` vector with slots reserved for DAW context, semantic embedding, and user knobs

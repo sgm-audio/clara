@@ -74,7 +74,8 @@ ctest --test-dir build --output-on-failure
 
 | Issue | Fix |
 |-------|-----|
-| `CUDA not available` | `export HSA_OVERRIDE_GFX_VERSION=11.0.0` |
+| `CUDA not available` on AMD APU (860M) | `export HSA_OVERRIDE_GFX_VERSION=11.0.0` before Python import |
+| `CUDA not available` on MI300X | Do **NOT** set `HSA_OVERRIDE_GFX_VERSION`; ROCm detects gfx942 natively |
 | OOM (out of memory) | Reduce `--batch 2` or `--clip-seconds 0.25` |
 | Slow training | Add `--cache` (uses ~20GB RAM) |
 | NaN loss | Training is float32 only (no `--amp` on 860M) |
