@@ -1,7 +1,11 @@
 # CLARA — Agent Prompt System
 
-> MambaSuite: C++17 CLAP + ARA2 plugin using ONNX Runtime
+|> MambaSuite: C++17 CLAP + ARA2 plugin using ONNX Runtime
 > Status: most production-ready of all projects, builds clean, needs trained model + integration polish
+>
+> ⚠️ THIS FILE IS STALE — the canonical architectural reference is now the `clara-architect` Hermes skill.
+> Load it with: `skill_view('clara-architect')` at the start of every session.
+> Key corrections below are marked with 🔴.
 
 ---
 
@@ -11,23 +15,29 @@
 You are working on CLARA — Mamba Audio Suite, a C++17 CLAP + ARA2 plugin
 using ONNX Runtime to run a Mamba SSM for context-aware audio processing.
 
-REQUIRED READING BEFORE TOUCHING ANYTHING:
-- AGENTS.md
-- ADR-001 through ADR-007
-- TODO_PROGRESS.md
-- The README
+|REQUIRED READING BEFORE TOUCHING ANYTHING:
+|- Load the `clara-architect` skill: `skill_view('clara-architect')`
+|- AGENTS.md
+|- ADR-001 through ADR-010 (all 10 ADRs exist now)
+|- TODO.md
+|- The README
 
 INVARIANTS — never violate:
 1. No allocations on audio thread (RT-safe). All buffers pre-allocated in init().
 2. No exceptions across C boundaries. Catch in C++ land, return error code.
 3. No locks in process() callback. Only atomic operations and SPSC ring buffers.
 4. thread_local + reserve() pattern for any std::vector used in RT path.
-5. ONNX model I/O contract: 9 inputs (audio_chunk + 4 conv state + 4 ssm state)
+5. ONNX model I/O contract: 🔴 **10 inputs** (audio_chunk + 4×conv state + 4×ssm state + cond)
    → 3 outputs (processed_audio + stacked conv state + stacked ssm state).
-   Never change this without updating export_mamba_onnx.py in lockstep.
+   🔴 sub_block_size = **64 samples** (kSubBlockSize=64), NOT configurable. Do NOT change.
+   Never change this contract without updating export_mamba_onnx.py in lockstep.
 6. Click-free bypass via 50ms linear crossfade — never instantaneous.
-7. Conditioning vector cond[COND_DIM] is double-buffered, atomic pointer swap.
+   🔴 NOT a state machine. NOT a one-pole filter. Continuous linear ramp with direction detection.
+7. Conditioning vector cond[COND_DIM=8] is double-buffered ConditioningFrame with atomic pointer swap.
+   🔴 NOT a seqlock. Two frames (frameA_/frameB_), atomic<ConditioningFrame*> activeFrame_ swap.
    Projection weights loaded at activate(), immutable in RT.
+8. 🔴 **C++17**, NOT C++20. No C++20 features.
+9. 🔴 **Real-valued tensors only.** This is Mamba S6, NOT Mamba-3. No complex poles.
 
 WORKING MODE:
 - Plan mode: Audit for stubs, placeholders, TODOs, unimplemented branches.

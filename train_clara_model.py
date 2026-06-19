@@ -139,10 +139,16 @@ class OutputProjection(nn.Module):
 # ────────────────────────────────────────────────────────────────────────────
 # MambaRTModelParallel — for training, processes all timesteps at once
 #   forward(audio, conv0-3, ssm0-3, cond) -> (out, new_conv, new_ssm)
+#   Can optionally chunk into 64-sample sub-blocks matching C++ engine
 # ────────────────────────────────────────────────────────────────────────────
 
 class MambaRTModelParallel(nn.Module):
-    """Parallel-scan Mamba RT model for training. All timesteps at once."""
+    """Parallel-scan Mamba RT model for training. All timesteps at once.
+
+    When chunk_size > 0, processes audio in fixed-size sub-blocks with
+    state carryover — matching exactly what the C++ inference engine does.
+    This improves gradient stability and enables longer training clips.
+    """
 
     def __init__(self, d_model=64, d_state=16, n_layers=4, conv_width=4, dt_rank=16, cond_dim=8):
         super().__init__()
@@ -158,14 +164,13 @@ class MambaRTModelParallel(nn.Module):
         self.norm = nn.LayerNorm(d_model)
         self.output_proj = OutputProjection(d_model)
 
-    def forward(self, audio_chunk, conv0, conv1, conv2, conv3,
-                ssm0, ssm1, ssm2, ssm3, cond):
+    def _forward_full(self, audio_chunk, convs, ssms, cond):
+        """Process full sequence in one pass (fast for short clips)."""
         x = self.input_proj(audio_chunk, cond)
-        convs = [conv0, conv1, conv2, conv3]
-        ssms = [ssm0, ssm1, ssm2, ssm3]
         new_convs = []
         new_ssms = []
-        for layer, cs, ss in zip(self.layers, convs, ssms):
+        for i, (layer, cs, ss) in enumerate(zip(self.layers, convs, ssms)):
+            # cond passed per-layer for FiLM
             x, nc, ns = layer(x, cs, ss, cond)
             new_convs.append(nc)
             new_ssms.append(ns)
@@ -174,6 +179,69 @@ class MambaRTModelParallel(nn.Module):
         new_conv_state = torch.stack(new_convs, dim=1)
         new_ssm_state = torch.stack(new_ssms, dim=1)
         return output_audio, new_conv_state, new_ssm_state
+
+    def _forward_chunked(self, audio_chunk, convs, ssms, cond, chunk_size=64):
+        """Process in fixed-size chunks matching C++ engine's kSubBlockSize.
+
+        Each chunk of up to chunk_size samples is fed through the full model,
+        and conv/ssm state is carried between chunks. Partial final chunks
+        are zero-padded and valid output is extracted.
+        """
+        B, total_len, _ = audio_chunk.shape
+        device = audio_chunk.device
+
+        # Convert per-layer state tuples to lists for mutation
+        conv_list = list(convs)
+        ssm_list = list(ssms)
+        output_chunks = []
+
+        for offset in range(0, total_len, chunk_size):
+            end = min(offset + chunk_size, total_len)
+            chunk = audio_chunk[:, offset:end, :]  # (B, chunk_len, 1)
+
+            # Zero-pad final chunk if needed
+            pad_len = chunk_size - chunk.shape[1]
+            if pad_len > 0:
+                pad = torch.zeros(B, pad_len, 1, device=device)
+                chunk = torch.cat([chunk, pad], dim=1)
+
+            # Forward through the model
+            x = self.input_proj(chunk, cond)
+            for i, (layer, cs, ss) in enumerate(zip(self.layers, conv_list, ssm_list)):
+                x, nc, ns = layer(x, cs, ss, cond)
+                conv_list[i] = nc
+                ssm_list[i] = ns
+            x = self.norm(x)
+            out_chunk = self.output_proj(x)  # (B, chunk_size, 1)
+
+            # Trim padding
+            if pad_len > 0:
+                out_chunk = out_chunk[:, :chunk.shape[1] - pad_len, :]
+            output_chunks.append(out_chunk)
+
+        output_audio = torch.cat(output_chunks, dim=1)
+        new_conv_state = torch.stack(conv_list, dim=1)
+        new_ssm_state = torch.stack(ssm_list, dim=1)
+        return output_audio, new_conv_state, new_ssm_state
+
+    def forward(self, audio_chunk, conv0, conv1, conv2, conv3,
+                ssm0, ssm1, ssm2, ssm3, cond, chunk_size=0):
+        """Forward pass with optional sub-block chunking.
+
+        Args:
+            audio_chunk: (B, seq_len, 1)
+            conv0..conv3: (B, d_model, conv_width) per-layer conv state
+            ssm0..ssm3: (B, d_model, d_state) per-layer SSM state
+            cond: (B, cond_dim) conditioning vector
+            chunk_size: 0 = process full sequence, 64 = match C++ kSubBlockSize
+        """
+        convs = [conv0, conv1, conv2, conv3]
+        ssms = [ssm0, ssm1, ssm2, ssm3]
+
+        if chunk_size > 0:
+            return self._forward_chunked(audio_chunk, convs, ssms, cond, chunk_size)
+        else:
+            return self._forward_full(audio_chunk, convs, ssms, cond)
 
 
 # ────────────────────────────────────────────────────────────────────────────

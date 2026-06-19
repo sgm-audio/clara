@@ -1,91 +1,174 @@
 #!/usr/bin/env python3
 """
-Dump Mamba-3 reference outputs for C++ bit-exact comparison.
+Dump reference forward pass outputs for Python↔C++ bit-exact validation.
 
-Generates:
-  1. models/model_ref.bin    — seeded weights (matching C++ WeightLoader format)
-  2. models/input_ref.bin    — test input signal (256 samples of sine)
-  3. models/output_ref.bin   — expected output from Python reference
+Generates three files consumed by test_mamba3.cpp's test_bit_exact():
+  - model_ref.bin:   Mamba-3 flat binary weights (Version 2)
+  - input_ref.bin:   Audio samples (float32) with header (uint32 N)
+  - output_ref.bin:  Python model output (float32) with header (uint32 N)
+
+Both Python and C++ run the same weights on the same input with the same
+conditioning vector. CTest compares the outputs sample-by-sample.
 
 Usage:
-    python scripts/dump_reference_output.py --seed 42
-    # Then C++ test loads all three .bin files and compares output
+    python scripts/dump_reference_output.py --output-dir models/
+    mkdir -p /tmp/ref && python scripts/dump_reference_output.py --output-dir /tmp/ref
 """
 
+import argparse
+import os
 import struct
-import numpy as np
+import sys
 from pathlib import Path
 
-# Add repo root to path
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
+import numpy as np
+import torch
 
-from reference_forward import (
-    D_MODEL, D_STATE, D_INNER, NHEADS, HEADDIM, MIMO_RANK,
-    N_LAYERS, COND_DIM, NUM_ROPE_ANGLES, IN_PROJ_DIM,
-    ReferenceMamba3Engine,
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from train_clara_mamba3 import Mamba3Model, Mamba3Config, export_weights
 
 
-def generate_test_data(seed: int = 42, output_dir: str = "models"):
-    """Generate reference model, test input, and expected output."""
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
+# ── Constants (must match C++ test) ─────────────────────────────────
 
-    # 1. Generate model.bin with fixed seed
-    print("Generating reference weights...")
-    import scripts.export_mamba_weights as exporter
-    exporter.export_weights(str(out / "model_ref.bin"), seed=seed)
+SINE_FREQ     = 440.0
+SAMPLE_RATE   = 44100
+NUM_SAMPLES   = 256
+COND_DIM      = 128
 
-    # 2. Generate test input: 256 samples of 440 Hz sine at 44.1 kHz
-    print("Generating test input...")
-    N = 256
-    sr = 44100.0
-    freq = 440.0
-    t = np.arange(N) / sr
-    input_signal = np.sin(2.0 * np.pi * freq * t).astype(np.float32)
 
-    with open(out / "input_ref.bin", "wb") as f:
-        f.write(struct.pack('<I', N))  # sample count
-        f.write(input_signal.tobytes())
+def generate_sine(n_samples: int, freq: float, sr: float) -> torch.Tensor:
+    """Generate a 1kHz sine wave."""
+    t = torch.arange(n_samples, dtype=torch.float32) / sr
+    return (torch.sin(2.0 * np.pi * freq * t) * 0.5).float()
 
-    # 3. Generate conditioning vector
-    cond = np.zeros(COND_DIM, dtype=np.float32)
-    cond[0] = 0.5  # tempo slot: moderate
-    cond[1] = 0.0  # key: C
-    cond[40] = 0.3  # intensity knob
 
-    # 4. Run Python reference forward pass
-    print("Running reference forward pass...")
-    np.random.seed(seed)
-    import torch
-    torch.manual_seed(seed)
+def run_python_model(model: Mamba3Model, audio: torch.Tensor,
+                     cond: torch.Tensor) -> torch.Tensor:
+    """Run the Python model with per-sample stateful processing matching C++.
 
-    engine = ReferenceMamba3Engine(device='cpu')
-    audio_tensor = torch.from_numpy(input_signal.copy())
-    cond_tensor = torch.from_numpy(cond.copy())
+    The C++ engine processes samples one at a time with state carried across
+    calls. We match this by calling model on one sample at a time instead of
+    using the batched forward pass (which resets state per call).
 
-    output_tensor = engine.process_block(audio_tensor, cond_tensor)
-    output_signal = output_tensor.numpy().astype(np.float32)
+    This is the bit-exact gold standard. If pre-sample and batched forward
+    differ, the pre-sample path is the reference (it matches the C++ engine).
+    """
+    B = 1
+    T = audio.shape[0]
+    cfg = model.cfg
+    device = next(model.parameters()).device
 
-    with open(out / "output_ref.bin", "wb") as f:
-        f.write(struct.pack('<I', N))
-        f.write(output_signal.tobytes())
+    # Pad cond to batch dimension
+    cond_b = cond.unsqueeze(0)  # [1, COND_DIM]
 
-    # 5. Print summary
-    print(f"\n=== Reference data generated ===")
-    print(f"  {out / 'model_ref.bin'}:  {Path(out / 'model_ref.bin').stat().st_size:,} bytes")
-    print(f"  {out / 'input_ref.bin'}:  {Path(out / 'input_ref.bin').stat().st_size:,} bytes")
-    print(f"  {out / 'output_ref.bin'}: {Path(out / 'output_ref.bin').stat().st_size:,} bytes")
-    print(f"\n  Input stats:  min={input_signal.min():.4f} max={input_signal.max():.4f}")
-    print(f"  Output stats: min={output_signal.min():.4f} max={output_signal.max():.4f} std={output_signal.std():.4f}")
-    print(f"  Output finite: {np.all(np.isfinite(output_signal))}")
+    # Per-layer state (persistent across samples, matches C++ SSMState)
+    layer_states = []
+    for _ in range(cfg.n_layers):
+        layer_states.append({
+            'ssm_real': torch.zeros(1, cfg.nheads, cfg.headdim, cfg.d_state, device=device),
+            'angle_state': torch.zeros(1, cfg.nheads, cfg.num_rope_angles, device=device),
+        })
+
+    output = torch.zeros(T, device=device)
+
+    for t in range(T):
+        # Embed scalar → D_MODEL (first channel, match C++ x[0] = input[i])
+        x = torch.zeros(1, 1, cfg.d_model, device=device)
+        x[0, 0, 0] = audio[t]
+
+        # Forward through all layers, carrying state (reset_state=False
+        # keeps SSM state across samples, matching C++ engine behavior)
+        layer_idx = 0
+        for layer in model.layers:
+            state = layer_states[layer_idx]
+            x = layer.forward_batch(x, state, cond_b, reset_state=False)
+            layer_idx += 1
+            # LayerNorm (fixed gamma=1, beta=0)
+            mean = x.mean(dim=-1, keepdim=True)
+            var = x.var(dim=-1, keepdim=True, unbiased=False)
+            x = (x - mean) / torch.sqrt(var + 1e-5)
+
+        # First D_MODEL channel → scalar (match C++ output[i] = x[0])
+        output[t] = x[0, 0, 0]
+
+    return output
+
+
+def write_bin(filepath: str, data: torch.Tensor):
+    """Write tensor as binary: uint32 N followed by N float32 samples."""
+    arr = data.detach().cpu().numpy().astype(np.float32).reshape(-1)
+    with open(filepath, 'wb') as f:
+        f.write(struct.pack('<I', len(arr)))
+        f.write(arr.tobytes())
+    print(f"  Wrote {filepath} ({len(arr)} samples, {len(arr)*4:,} bytes)")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Dump reference forward pass for Python↔C++ validation")
+    parser.add_argument('--output-dir', default='models',
+                        help='Output directory for reference files')
+    parser.add_argument('--seed', type=int, default=42,
+                        help='Random seed (must match export in test_mamba3.cpp)')
+    args = parser.parse_args()
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    torch.manual_seed(args.seed)
+
+    # ── Create model with random weights ──
+    print(f"Creating Mamba-3 model (seed={args.seed})...")
+    cfg = Mamba3Config()
+    model = Mamba3Model(cfg)
+    print(f"  Parameters: {model.num_params():,}")
+
+    # ── Checkpoint and export weights ──
+    # Save checkpoint in the format export_weights expects
+    ckpt_path = output_dir / '_reference_checkpoint.pt'
+    torch.save({
+        'step': 0,
+        'model_state_dict': model.state_dict(),
+        'cfg': cfg.__dict__,
+    }, ckpt_path)
+
+    bin_path = output_dir / 'model_ref.bin'
+    export_weights(str(ckpt_path), str(bin_path))
+    os.remove(ckpt_path)
+
+    # ── Generate test audio ──
+    audio = generate_sine(NUM_SAMPLES, freq=SINE_FREQ, sr=SAMPLE_RATE)
+    print(f"  Test audio: {NUM_SAMPLES} samples, {SINE_FREQ}Hz sine")
+
+    # ── Conditioning vector (match C++ test) ──
+    # The test_bit_exact in test_mamba3.cpp sets:
+    #   cond[0] = 0.5f;   // DAW context
+    #   cond[40] = 0.3f;  // user knob
+    cond = torch.zeros(COND_DIM)
+    cond[0] = 0.5
+    cond[40] = 0.3
+    print(f"  Conditioning: cond[0]={cond[0].item()}, cond[40]={cond[40].item()}")
+
+    # ── Run Python forward pass (per-sample, matching C++) ──
+    print("Running Python forward pass (per-sample, stateful)...")
+    model.eval()
+    with torch.no_grad():
+        output = run_python_model(model, audio, cond)
+
+    print(f"  Output: std={output.std().item():.6f}, "
+          f"max_abs={output.abs().max().item():.6f}, "
+          f"finite={torch.isfinite(output).all().item()}")
+
+    # ── Write reference files ──
+    write_bin(str(output_dir / 'input_ref.bin'), audio)
+    write_bin(str(output_dir / 'output_ref.bin'), output)
+
+    print(f"\nDone. Reference files in {output_dir}/")
+    print(f"  model_ref.bin   — flat binary weights")
+    print(f"  input_ref.bin   — {NUM_SAMPLES} audio samples (float32)")
+    print(f"  output_ref.bin  — {NUM_SAMPLES} Python output (float32)")
+    print(f"\nRun C++ test: ctest --test-dir build -R test_mamba3")
 
 
 if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser(description="Dump Mamba-3 reference outputs")
-    parser.add_argument('--seed', type=int, default=42, help='Random seed')
-    parser.add_argument('--output-dir', default='models', help='Output directory')
-    args = parser.parse_args()
-    generate_test_data(args.seed, args.output_dir)
+    main()

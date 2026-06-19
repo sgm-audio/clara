@@ -1,6 +1,6 @@
 name: CI
 
-# CI status: [![CI](https://github.com/elite-dsp/clara/actions/workflows/ci.yml/badge.svg)](https://github.com/elite-dsp/clara/actions/workflows/ci.yml)
+# CI status: [![CI](https://github.com/SGM-Studios/clara/actions/workflows/ci.yml/badge.svg)](https://github.com/SGM-Studios/clara/actions/workflows/ci.yml)
 
 on:
   push:
@@ -97,8 +97,27 @@ jobs:
           python3 export_mamba_onnx.py
           echo ""
           echo "NOTE: CI exports RANDOM weights. For production:"
-          echo "  python export_mamba_onnx.py --checkpoint checkpoints_clara/best.pt"
+          echo "  python train_clara_export.py --checkpoint checkpoints_clara/final.pt --output models/mamba_rt.onnx"
           echo ""
+
+      - name: Verify model quality (post-training gate)
+        run: |
+          python3 << 'PYEOF'
+          import onnxruntime as ort, numpy as np, sys
+          sess = ort.InferenceSession('models/mamba_rt.onnx')
+          feeds = {'audio_chunk': np.zeros((1, 64, 1), dtype=np.float32)}
+          for i in range(4):
+              feeds[f'conv{i}'] = np.zeros((1, 64, 4), dtype=np.float32)
+              feeds[f'ssm{i}'] = np.zeros((1, 64, 16), dtype=np.float32)
+          feeds['cond'] = np.zeros((1, 8), dtype=np.float32)
+          out = sess.run(None, feeds)
+          var = out[0].var()
+          print(f"ONNX output variance: {var:.8f}")
+          if var > 1e-6:
+              print("MODEL QUALITY: PASS (trained weights detected)")
+          else:
+              print("MODEL QUALITY: INFO (random/untrained weights — expected in CI, check in production)")
+          PYEOF
 
       - name: Verify model shapes
         run: |

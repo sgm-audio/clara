@@ -45,6 +45,30 @@ target_compile_definitions(test_mamba3 PRIVATE
 )
 add_test(NAME test_mamba3 COMMAND test_mamba3 "${CMAKE_SOURCE_DIR}/models/model.bin")
 
+# --- Generate Python reference outputs for bit-exact C++ comparison ---
+# Runs once, dumps input_ref.bin + output_ref.bin next to model.bin.
+# test_mamba3.cpp loads these for per-sample Python↔C++ comparison.
+set(MAMBA3_REF_INPUT "${CMAKE_SOURCE_DIR}/models/input_ref.bin")
+set(MAMBA3_REF_OUTPUT "${CMAKE_SOURCE_DIR}/models/output_ref.bin")
+set(MAMBA3_REF_MODEL "${CMAKE_SOURCE_DIR}/models/model_ref.bin")
+if(NOT EXISTS "${MAMBA3_REF_INPUT}" OR NOT EXISTS "${MAMBA3_REF_OUTPUT}" OR NOT EXISTS "${MAMBA3_REF_MODEL}")
+    find_program(PYTHON3_EXE python3)
+    if(PYTHON3_EXE)
+        add_custom_target(generate_reference_outputs ALL
+            COMMAND ${PYTHON3_EXE}
+                "${CMAKE_SOURCE_DIR}/scripts/dump_reference_output.py"
+                --output-dir "${CMAKE_SOURCE_DIR}/models"
+                --seed 42
+            COMMENT "Generating Python↔C++ reference outputs..."
+            BYPRODUCTS
+                "${MAMBA3_REF_INPUT}"
+                "${MAMBA3_REF_OUTPUT}"
+                "${MAMBA3_REF_MODEL}"
+        )
+        add_dependencies(test_mamba3 generate_reference_outputs)
+    endif()
+endif()
+
 # --- Test: MambaInferenceEngine smoke test ---
 # DISABLED: Mamba-1 ONNX Runtime engine has been replaced by Mamba-3 (test_mamba3).
 # These tests always fail because the ONNX model path and runtime are no longer

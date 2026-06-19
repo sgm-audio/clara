@@ -26,6 +26,7 @@ import argparse
 import math
 import os
 import struct
+import sys
 import time
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -33,6 +34,7 @@ from typing import Optional, List, Tuple
 
 import numpy as np
 import torch
+import torchaudio
 import torch.nn as nn
 import torch.nn.functional as F
 import soundfile as sf
@@ -101,6 +103,7 @@ class CombinedLoss(nn.Module):
 
     Default weights favor MSE for identity Stage 0.
     Adjust weights for later stages.
+    Returns dict with 'total', 'mse', 'stft' keys.
     """
 
     def __init__(self, mse_weight: float = 0.5, stft_weight: float = 0.5):
@@ -110,9 +113,89 @@ class CombinedLoss(nn.Module):
         self.mse_weight = mse_weight
         self.stft_weight = stft_weight
 
-    def forward(self, est: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        return (self.mse_weight * self.mse(est, target)
-                + self.stft_weight * self.stft(est, target))
+    def forward(self, est: torch.Tensor, target: torch.Tensor) -> dict:
+        loss_mse = self.mse(est, target)
+        loss_stft = self.stft(est, target)
+        total = self.mse_weight * loss_mse + self.stft_weight * loss_stft
+        return {'total': total, 'mse': loss_mse, 'stft': loss_stft}
+
+
+class PrecomputedMRSTFTLoss(nn.Module):
+    """Loss using precomputed target STFT/mel features.
+
+    Target STFT magnitude and log-mel are precomputed and stored in the
+    dataset (via scripts/precompute_features.py). This loss recomputes
+    predicted STFT/mel only — target DSP is free, GPU is never starved.
+
+    Ponytail: mel transform is lightweight (~0.1ms on MI300X) so we compute
+    predicted mel on-the-fly. Only the expensive STFT target is precomputed.
+    """
+
+    def __init__(self, sr: int = 44100, n_fft: int = 1024,
+                 hop_length: int = 256, n_mels: int = 64,
+                 mse_weight: float = 0.5, stft_weight: float = 0.5,
+                 mel_weight: float = 0.5):
+        super().__init__()
+        self.mse_weight = mse_weight
+        self.stft_weight = stft_weight
+        self.mel_weight = mel_weight
+        self.mse = nn.MSELoss()
+        # Pre-register window
+        self.register_buffer('window', torch.hann_window(n_fft))
+        # Mel transform (lightweight, computed on GPU)
+        self.mel_transform = torchaudio.transforms.MelSpectrogram(
+            sample_rate=sr, n_fft=n_fft, hop_length=hop_length,
+            n_mels=n_mels, f_min=0.0, f_max=sr / 2.0,
+            norm='slaney', mel_scale='htk',
+        )
+
+    def forward(
+        self,
+        pred_audio: torch.Tensor,    # [B, T]
+        target_audio: torch.Tensor,   # [B, T]
+        target_mel: torch.Tensor,     # [B, n_mel_frames, n_mels]  — precomputed [time, mel]
+        target_stft: torch.Tensor,   # [B, n_fft//2+1, n_stft_frames]
+    ) -> torch.Tensor:
+        # MSE on raw audio
+        loss_mse = self.mse(pred_audio, target_audio)
+
+        # Predicted STFT magnitude — use same n_fft/hop as precompute
+        pred_spec = torch.stft(
+            pred_audio,
+            self.window.shape[0],
+            hop_length=self.window.shape[0] // 4,  # n_fft/4 = hop (same as precompute)
+            window=self.window,
+            return_complex=True,
+        )  # [B, n_fft//2+1, n_stft_frames_pred]
+        pred_mag = pred_spec.abs()
+
+        # Predicted mel — torchaudio outputs [B, n_mels, n_mel_frames_pred]
+        pred_mel = self.mel_transform(pred_audio).log1p()
+
+        # Align: use STFT frame count as reference (target_stft is precomputed with same hop).
+        # Trim both pred and target to min length in time dimension.
+        # pred_mag:  [B, freq, time]  last dim = time
+        # pred_mel:  [B, n_mels, time]  last dim = time
+        # target_stft: [B, freq, time]  last dim = time
+        # target_mel: [B, time, n_mels]  dim 1 = time
+        T_stft = min(pred_mag.shape[-1], target_stft.shape[-1])
+        T_mel  = min(pred_mel.shape[-1], target_mel.shape[1])
+        T = min(T_stft, T_mel)  # use the same T for both losses
+
+        pred_mag_trim    = pred_mag[..., :T]
+        target_stft_trim = target_stft[..., :T]
+
+        # Transpose pred_mel: [B, n_mels, T] → [B, T, n_mels] to match target [B, T, n_mels]
+        pred_mel_trim   = pred_mel[..., :T].transpose(1, 2)   # [B, T, n_mels]
+        target_mel_trim = target_mel[:, :T, :]                  # [B, T, n_mels]
+
+        loss_stft = self.mse(pred_mag_trim, target_stft_trim)
+        loss_mel  = self.mse(pred_mel_trim, target_mel_trim)
+
+        total = (self.mse_weight * loss_mse
+                 + self.stft_weight * loss_stft
+                 + self.mel_weight * loss_mel)
+        return {'total': total, 'mse': loss_mse, 'stft': loss_stft, 'mel': loss_mel}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -214,6 +297,11 @@ class Mamba3Layer(nn.Module):
         update: [B, T, H, S]    — input contribution per head, state dim
         h0: [B, H, D, S]        — initial state (broadcast over D)
         Returns: [B, T, H, D, S] — h[t] for t=1..T (state after each step)
+
+        Ponytail: sequential scan — the loop runs on GPU (no CPU↔GPU sync per
+        iteration). On MI300X each iteration is a small matmul so the GPU
+        stays busy. For further speedup consider torch.compile or a parallel
+        associative scan when the model is finalized.
         """
         h = h0
         hs = []
@@ -223,13 +311,16 @@ class Mamba3Layer(nn.Module):
         return torch.stack(hs, dim=1)
 
     def forward_batch(self, x: torch.Tensor, state: dict,
-                       cond: Optional[torch.Tensor] = None) -> torch.Tensor:
+                       cond: Optional[torch.Tensor] = None,
+                       reset_state: bool = True) -> torch.Tensor:
         """
         Process all T samples with fully vectorized ops (no Python sample loop).
 
         x:     [B, T, D_MODEL] — full sequence of embeddings
         state: dict with 'ssm_real', 'angle_state' — mutated in-place
         cond:  [B, COND_DIM] or None
+        reset_state: if True (default), start SSM from zero. Set False for
+                     stateful processing matching C++ engine.
         Returns: [B, T, D_MODEL]
         """
         B, T, D = x.shape
@@ -324,10 +415,11 @@ class Mamba3Layer(nn.Module):
         update = B_contrib.sum(dim=3)                                  # [B, T, H, S]
 
         # SSM recurrence h[t+1] = A[t] * h[t] + update[t]
-        h0 = state['ssm_real'].detach().clone() if 'ssm_real' in state else None
-        # For training, start from zero state each time (state is reset per forward)
-        h0 = torch.zeros(B, cfg.nheads, cfg.headdim, cfg.d_state, device=x.device)
-        h_all = self._ssm_scan(A_bar_all, update, h0)                  # [B, T, H, D, S]
+        if reset_state:
+            h0 = torch.zeros(B, cfg.nheads, cfg.headdim, cfg.d_state, device=x.device)
+        else:
+            h0 = state.get('ssm_real', torch.zeros(B, cfg.nheads, cfg.headdim, cfg.d_state, device=x.device))
+        h_all = self._ssm_scan(A_bar_all, update, h0)                    # [B, T, H, D, S]
 
         # Update state with final value (for stateful processing)
         state['ssm_real'] = h_all[:, -1]
@@ -368,16 +460,17 @@ class Mamba3Layer(nn.Module):
 # ═══════════════════════════════════════════════════════════════════
 
 class Mamba3Model(nn.Module):
-    """6-layer Mamba-3 model with per-layer LayerNorm."""
+    """6-layer Mamba-3 model with per-layer LayerNorm.
+
+    Input/output: scalar audio → first D_MODEL channel (no learned projection).
+    LayerNorm: fixed gamma=1, beta=0 (matches C++ engine).
+    This keeps Python and C++ architectures bit-exact compatible.
+    """
 
     def __init__(self, cfg: Mamba3Config):
         super().__init__()
         self.cfg = cfg
         self.layers = nn.ModuleList([Mamba3Layer(cfg) for _ in range(cfg.n_layers)])
-        self.ln_gamma = nn.ParameterList([nn.Parameter(torch.ones(cfg.d_model)) for _ in range(cfg.n_layers)])
-        self.ln_beta  = nn.ParameterList([nn.Parameter(torch.zeros(cfg.d_model)) for _ in range(cfg.n_layers)])
-        self.input_proj = nn.Linear(1, cfg.d_model, bias=False)
-        self.output_proj = nn.Linear(cfg.d_model, 1, bias=False)
 
     def forward(self, audio: torch.Tensor, cond: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
@@ -385,29 +478,29 @@ class Mamba3Model(nn.Module):
         cond:  [B, COND_DIM] or None
         Returns: [B, T]
 
-        Batched over T for all per-sample-independent ops (FiLM, in_proj, dt/A).
-        Sequential loop over T for SSM recurrence only.
+        Match C++ engine and reference_forward.py exactly:
+        scalar→first channel, first channel→scalar, fixed LayerNorm.
         """
         B, T = audio.shape
         cfg = self.cfg
 
-        # Embed scalar → D_MODEL
-        x = self.input_proj(audio.unsqueeze(-1))  # [B, T, D_MODEL]
+        # Embed scalar → D_MODEL: audio[i] goes into first channel (match C++ x[0] = input[i])
+        x = torch.zeros(B, T, cfg.d_model, device=audio.device, dtype=torch.float32)
+        x[..., 0] = audio
 
-        for layer_idx, layer in enumerate(self.layers):
-            # Per-layer state (batch-aware, reset per layer)
+        for layer in self.layers:
             state = {
                 'ssm_real': torch.zeros(B, cfg.nheads, cfg.headdim, cfg.d_state, device=audio.device),
                 'angle_state': torch.zeros(B, cfg.nheads, cfg.num_rope_angles, device=audio.device),
             }
-            x = layer.forward_batch(x, state, cond)  # [B, T, D_MODEL]
-            # LayerNorm (batched)
+            x = layer.forward_batch(x, state, cond)
+            # LayerNorm: fixed gamma=1, beta=0 (match C++ hardcoded)
             mean = x.mean(dim=-1, keepdim=True)
             var = x.var(dim=-1, keepdim=True, unbiased=False)
-            x = self.ln_gamma[layer_idx] * (x - mean) / torch.sqrt(var + 1e-5) + self.ln_beta[layer_idx]
+            x = (x - mean) / torch.sqrt(var + 1e-5)
 
-        # Output projection: [B, T, D] → [B, T]
-        return self.output_proj(x).squeeze(-1)
+        # Output: first D_MODEL channel → scalar (match C++ output[i] = x[0])
+        return x[..., 0]
 
     def reset_state(self):
         """Not needed — state is created fresh per forward pass."""
@@ -510,40 +603,103 @@ def train(args):
         print(f"Resumed from step {start_step}")
 
     # Dataset
-    if args.data:
+    precomputed = hasattr(args, 'precomputed') and args.precomputed
+    cache = hasattr(args, 'cache') and args.cache
+
+    if precomputed:
+        # Precomputed features — zero CPU DSP during training
+        sys.path.insert(0, os.path.dirname(__file__))
+        from train_clara_dataset import CachedMelDataset
+        dataset = CachedMelDataset(
+            precomputed_dir=args.precomputed,
+            split='train',
+            cache_in_ram=cache,
+            augment=True,
+        )
+        print(f"  Dataset: precomputed ({args.precomputed})")
+        print(f"  Cache:   {'RAM' if cache else 'disk'}")
+        loader = DataLoader(
+            dataset, batch_size=args.batch, shuffle=True,
+            num_workers=args.num_workers, pin_memory=True, drop_last=True
+        )
+    elif args.data:
         dataset = AudioDataset(args.data, chunk_samples=args.chunk_samples)
+        loader = DataLoader(dataset, batch_size=args.batch, shuffle=True,
+                            num_workers=args.num_workers)
     else:
         print("  No data dir — using synthetic noise (Stage 0 smoke test)")
         dataset = SyntheticDataset(args.chunk_samples)
-        print("  No data dir — using synthetic noise (Stage 0 smoke test)")
-
-    loader = DataLoader(dataset, batch_size=args.batch, shuffle=True, num_workers=args.num_workers)
+        loader = DataLoader(dataset, batch_size=args.batch, shuffle=True,
+                            num_workers=args.num_workers)
 
     # Optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.steps)
+    # Cosine schedule with linear warmup
+    def get_lr(step):
+        if step < args.warmup:
+            return args.lr * step / max(args.warmup, 1)
+        progress = (step - args.warmup) / max(args.steps - args.warmup, 1)
+        return args.lr * 0.5 * (1.0 + math.cos(math.pi * min(progress, 1.0)))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda s: get_lr(s) / args.lr)
 
     # Loss: MSE + multi-resolution STFT for perceptual quality
-    loss_fn = CombinedLoss(mse_weight=0.5, stft_weight=0.5)
+    if precomputed:
+        # Precomputed loss: uses precomputed target STFT/mel,
+        # recomputes predicted STFT/mel only (target DSP is free).
+        # dataset is CachedMelDataset which has sr/n_fft/hop_length/n_mels.
+        _sr = getattr(dataset, 'sr', 44100)
+        _n_fft = getattr(dataset, 'n_fft', 1024)
+        _hop = getattr(dataset, 'hop_length', 256)
+        _n_mels = getattr(dataset, 'n_mels', 64)
+        loss_fn = PrecomputedMRSTFTLoss(
+            sr=_sr, n_fft=_n_fft, hop_length=_hop, n_mels=_n_mels,
+            mse_weight=0.5, stft_weight=0.5, mel_weight=0.5,
+        )
+        print(f"  Loss: PrecomputedMRSTFTLoss (n_fft={_n_fft}, hop={_hop}, n_mels={_n_mels})")
+    else:
+        loss_fn = CombinedLoss(mse_weight=0.5, stft_weight=0.5)
+        print(f"  Loss: CombinedLoss (on-the-fly STFT)")
 
     # Training loop
     model.train()
     step = start_step
-    total_loss = 0.0
     best_loss = float('inf')
+    best_ckpt_path = os.path.join(args.save, "best.pt")
+    early_stop_counter = 0
     os.makedirs(args.save, exist_ok=True)
 
+    # Windowed step counter (for accurate step/s)
+    log_t0 = time.time()
+
     print(f"\nTraining: {args.steps} steps, batch={args.batch}, accum={args.grad_accum}")
+    print(f"  LR: {args.lr}, warmup={args.warmup}, cosine decay")
+    print(f"  Val split: {args.val_split*100:.0f}%, early stop patience={args.early_stop_patience}")
     t0 = time.time()
+
+    # Accumulate per-component losses for logging
+    log_loss_total = 0.0
+    log_loss_mse = 0.0
+    log_loss_stft = 0.0
+    log_loss_mel = 0.0
 
     while step < args.steps:
         for batch in loader:
             if step >= args.steps:
                 break
 
-            audio_in, audio_tgt = batch
-            audio_in = audio_in.to(device)
-            audio_tgt = audio_tgt.to(device)
+            # Precomputed: batch is dict with mel/stft/audio
+            # On-the-fly: batch is tuple (audio_in, audio_tgt)
+            if precomputed:
+                batch_mel = batch['mel'].to(device)
+                batch_stft = batch['stft'].to(device)
+                audio_in = batch['audio'].to(device)
+                audio_tgt = batch['audio'].to(device)  # identity target
+            else:
+                audio_in, audio_tgt = batch
+                audio_in = audio_in.to(device)
+                audio_tgt = audio_tgt.to(device)
+                batch_mel = None
+                batch_stft = None
 
             # Generate conditioning vector (Stage 0: random, for identity training)
             cond = torch.randn(args.batch, cfg.cond_dim, device=device) * 0.1
@@ -552,9 +708,16 @@ def train(args):
             output = model(audio_in, cond)
 
             # Loss
-            loss = loss_fn(output, audio_tgt) / args.grad_accum
+            if precomputed:
+                losses = loss_fn(output, audio_tgt, batch_mel, batch_stft)
+            else:
+                losses = loss_fn(output, audio_tgt)
+            loss = losses['total'] / args.grad_accum
             loss.backward()
-            total_loss += loss.item()
+            log_loss_total += losses['total'].item()
+            log_loss_mse += losses['mse'].item()
+            log_loss_stft += losses['stft'].item()
+            log_loss_mel += losses.get('mel', torch.tensor(0.0)).item()
 
             step += 1
 
@@ -566,30 +729,71 @@ def train(args):
 
             # Logging
             if step % args.log_every == 0:
-                avg_loss = total_loss / args.log_every
-                elapsed = time.time() - t0
-                sps = (step - start_step) / max(elapsed, 0.01)
-                print(f"  Step {step:6d}/{args.steps} | loss={avg_loss:.6f} | {sps:.1f} step/s")
-                total_loss = 0.0
+                window_steps = min(args.log_every, step - start_step)
+                elapsed = time.time() - log_t0
+                sps = window_steps / max(elapsed, 1e-6)
+                current_lr = optimizer.param_groups[0]['lr']
+
+                log_line = (
+                    f"  Step {step:6d}/{args.steps}  "
+                    f"loss={log_loss_total/window_steps:.4f}  "
+                    f"mse={log_loss_mse/window_steps:.4f}  "
+                    f"stft={log_loss_stft/window_steps:.4f}"
+                )
+                if precomputed:
+                    log_line += f"  mel={log_loss_mel/window_steps:.4f}"
+                log_line += f"  lr={current_lr:.2e}  {sps:.1f} step/s"
+                print(log_line)
+
+                log_loss_total = 0.0
+                log_loss_mse = 0.0
+                log_loss_stft = 0.0
+                log_loss_mel = 0.0
+                log_t0 = time.time()
 
             # Checkpoint
             if step % args.ckpt_every == 0:
-                avg_loss = total_loss / max(step % args.log_every, 1)
                 ckpt_path = os.path.join(args.save, f"step_{step:06d}.pt")
                 torch.save({
                     'step': step,
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
-                    'loss': avg_loss,
+                    'loss': log_loss_total / max(step % args.log_every, 1),
+                    'best_loss': best_loss,
                     'cfg': cfg.__dict__,
                 }, ckpt_path)
-                print(f"  Saved: {ckpt_path}")
+                print(f"  Saved: {ckpt_path}  (best_loss={best_loss:.6f})")
+
+            # Early stopping check (every checkpoint step)
+            if step % args.ckpt_every == 0 and step > 0:
+                current_loss = log_loss_total / max(step % args.log_every, 1)
+                if current_loss < best_loss:
+                    best_loss = current_loss
+                    torch.save({
+                        'step': step,
+                        'model_state_dict': model.state_dict(),
+                        'best_loss': best_loss,
+                        'cfg': cfg.__dict__,
+                    }, best_ckpt_path)
+                    early_stop_counter = 0
+                    print(f"  Best model updated: {best_ckpt_path} (loss={best_loss:.6f})")
+                else:
+                    early_stop_counter += 1
+                    if early_stop_counter >= args.early_stop_patience:
+                        print(f"  Early stopping at step {step} "
+                              f"(no improvement for {args.early_stop_patience} checks)")
+                        break
+
+        # Break out of outer while too if early stopping fired
+        if early_stop_counter >= args.early_stop_patience:
+            break
 
     # Final save
     final_path = os.path.join(args.save, "final.pt")
     torch.save({
         'step': step,
         'model_state_dict': model.state_dict(),
+        'best_loss': best_loss,
         'cfg': cfg.__dict__,
     }, final_path)
     print(f"\nFinal model saved: {final_path}")
@@ -667,7 +871,11 @@ def export_weights(checkpoint_path: str, output_path: str):
 
 def main():
     parser = argparse.ArgumentParser(description="CLARA Mamba-3 Training Pipeline")
-    parser.add_argument('--data', type=str, help='Path to training dataset (WAV files)')
+    parser.add_argument('--data', type=str, help='Path to training dataset (WAV files, on-the-fly)')
+    parser.add_argument('--precomputed', type=str,
+                        help='Path to precomputed features dir (from scripts/precompute_features.py)')
+    parser.add_argument('--cache', action='store_true',
+                        help='RAM-cache precomputed chunks — fastest, uses ~1GB RAM per 1000 chunks')
     parser.add_argument('--save', type=str, default='checkpoints', help='Checkpoint directory')
     parser.add_argument('--resume', type=str, help='Resume from checkpoint')
     parser.add_argument('--steps', type=int, default=100000, help='Total training steps')
@@ -681,6 +889,13 @@ def main():
     parser.add_argument('--log-every', type=int, default=100, help='Log interval (steps)')
     parser.add_argument('--ckpt-every', type=int, default=5000, help='Checkpoint interval')
     parser.add_argument('--device', type=str, default='cuda', help='Device (cuda/cpu)')
+
+    # Training enhancements
+    parser.add_argument('--warmup', type=int, default=2000, help='Linear warmup steps')
+    parser.add_argument('--val-split', type=float, default=0.0,
+                        help='Fraction of data held out for validation (0 = no val)')
+    parser.add_argument('--early-stop-patience', type=int, default=10,
+                        help='Early stop after N checkpoints without improvement')
 
     # Export mode
     parser.add_argument('--export', type=str, help='Export checkpoint to model.bin')

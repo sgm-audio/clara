@@ -328,22 +328,25 @@ static void test_bit_exact(const std::string& model_path) {
 
     CHECK(Nout == N, "reference output matches sample count");
 
-    // Architectural agreement: both produce finite, stable output.
-    // Full bit-exact requires Python reference to load C++ model.bin weights.
-    // For now, validate that C++ output with same seed model and same input
-    // produces reasonable, finite results.
-    CHECK(all_finite(cpp_output.data(), N), "C++ output finite (reference seed)");
-    float stdv = stddev(cpp_output.data(), N);
-    CHECK(stdv > 1e-6f, "C++ reference output is non-constant");
+    // Per-sample comparison with tolerance
+    float max_diff = 0.0f;
+    int max_diff_idx = 0;
+    for (size_t i = 0; i < N; ++i) {
+        float diff = std::fabs(cpp_output[i] - ref_out[i]);
+        if (diff > max_diff) {
+            max_diff = diff;
+            max_diff_idx = (int)i;
+        }
+    }
 
-    // Compare stats (not exact values — different architectures produce
-    // different but statistically similar outputs)
-    float ref_stdv = stddev(ref_out.data(), N);
-    std::printf("  INFO: C++ std=%.4f Python std=%.4f\n", (double)stdv, (double)ref_stdv);
-    CHECK(stdv > 0.1f, "C++ reference output has meaningful variance");
-    CHECK(ref_stdv > 0.1f, "Python reference output has meaningful variance");
+    std::printf("  INFO: max sample diff = %.8f at index %d\n",
+                (double)max_diff, max_diff_idx);
+    std::printf("  INFO: C++ std=%.6f Python std=%.6f\n",
+                (double)stddev(cpp_output.data(), N),
+                (double)stddev(ref_out.data(), N));
 
-    std::printf("  NOTE: Full bit-exact requires Python loader for C++ model.bin weights.\n");
+    CHECK(max_diff < 0.05f, "Python↔C++ max sample diff < 0.05 (architecture correct)");
+    CHECK(stddev(cpp_output.data(), N) > 1e-4f, "C++ output has non-trivial variance");
 }
 
 // ── Main ───────────────────────────────────────────────────────────
