@@ -119,41 +119,47 @@ See [`docs/TRAINING.md`](docs/TRAINING.md) for the complete training pipeline an
 
 ```bash
 # Stage 0: identity pretraining
-python train_clara_mamba3.py --data ~/datasets/musdb18hq/train --device cuda --steps 100000
+python python/training/train_mamba3.py --data ~/datasets/musdb18hq/train --device cuda --steps 100000
 
 # Export to flat binary weights
-python train_clara_mamba3.py --export checkpoints/final.pt --output models/model.bin
+python python/training/train_mamba3.py --export checkpoints/final.pt --output models/model.bin
 ```
 
-The only supported training script is `train_clara_mamba3.py`. Older scripts (`train_clara_parallel.py`, `train_clara_export.py`, `export_mamba_onnx.py`, `train_clara_now.py`) produce incompatible architectures and should not be used.
+The only supported training script is `python/training/train_mamba3.py`. Older scripts (`train_clara_parallel.py`, `train_clara_export.py`, `export_mamba_onnx.py`, `train_clara_now.py`) produce incompatible architectures and should not be used.
 
 ## Project Structure
 
 ```
 ├── CMakeLists.txt                    # Build system (FetchContent, dual-target)
 ├── AGENTS.md                         # Build/architecture reference
-├── MAMBA3_MIGRATION_PLAN.md          # Complete architecture & migration plan
-├── MI300X_TRAINING_PLAN.md           # Cloud training launch reference
-├── TRAINING_QUICKSTART.md            # One-command quick start
-├── train_clara_mamba3.py             # Mamba-3 training script
-├── reference_forward.py              # PyTorch bit-exact gold standard
+├── docs/
+│   ├── adr/                          # Architectural Decision Records (ADR-001..010)
+│   ├── MAMBA3_MIGRATION_PLAN.md      # Complete architecture & migration plan
+│   ├── TRAINING.md                   # Unified Mamba-3 training reference
+│   ├── TRAINING_QUICKSTART.md        # One-command quick start
+│   └── ...
+├── python/
+│   ├── reference_forward.py          # PyTorch bit-exact gold standard
+│   ├── training/
+│   │   ├── train_mamba3.py     # Mamba-3 training script
+│   │   ├── dataset.py    # StemDataset + DataLoader
+│   │   └── loss.py       # MR-STFT + Mel-L1 + SI-SDR losses
+│   └── tools/
+│       ├── export_mamba_weights.py   # Flat binary weight export
+│       ├── validate_export.py        # Python↔C++ round-trip validation
+│       └── ...
 ├── scripts/
-│   ├── export_mamba_weights.py       # Flat binary weight export
-│   ├── validate_export.py            # Python↔C++ round-trip validation
-│   ├── precompute_features.py        # Mel/STFT precomputation
-│   └── setup_cloud.sh                # MI300X one-launch setup
-├── ADR-*.md                          # Architectural Decision Records
+│   ├── run_train.sh                  # Training launcher (ROCm)
+│   ├── run_test.sh                   # Smoke test launcher
+│   └── setup_local.sh                # Local ROCm env setup
 ├── LICENSE                           # Apache 2.0
 ├── .github/workflows/ci.yml          # CI pipeline
 ├── models/                           # Flat binary model files
 ├── src/
 │   ├── core/                         # Mamba3Core: SsmInferenceCore, SsmBlock, WeightLoader
 │   ├── clap/                         # CLAP plugin entry + extensions
-│   ├── ara/                          # ARA document controller + playback renderer
-│   └── common/                       # Conditioning, Platform abstractions
+│   └── ara/                          # ARA document controller + playback renderer
 ├── tests/                            # CTest suite
-├── docs/
-│   └── TRAINING.md                   # Unified Mamba-3 training reference
 └── archive/mamba1-onnx-era/          # Deprecated Mamba-1 / ONNX code, docs, models
 ```
 
@@ -199,7 +205,7 @@ GitHub Actions workflow (`.github/workflows/ci.yml`):
 - Builds Release on `ubuntu-22.04`, `macos-14`, and `windows-2022` with all FetchContent dependencies
 - Verifies symbol exports (`clap_entry`, `ARAGetFactory`), RPATH / install name / DLL search path, model deployment
 - Runs `clap-validator` against the built `.clap` (continues on error; may fail without GUI)
-- Validates model round-trip via `python3 scripts/validate_export.py`
+- Validates model round-trip via `python3 python/tools/validate_export.py`
 - Uploads plugin artifact (`.clap`, `.so`/`.dylib`/`.dll`, `libmamba_core.*`, `models/`)
 - Debug build with `BUILD_TESTING=ON` runs CTest on all three platforms
 
@@ -209,7 +215,7 @@ Apache 2.0. See `LICENSE`.
 
 ## Status
 
-Current phase: **Mamba-3 engine complete, training pipeline ready.** All core CLAP and ARA scaffolding is implemented and builds. See [`MAMBA3_MIGRATION_PLAN.md`](MAMBA3_MIGRATION_PLAN.md) for the full roadmap and [`docs/TRAINING.md`](docs/TRAINING.md) for the training stages.
+Current phase: **Mamba-3 engine complete, training pipeline ready.** All core CLAP and ARA scaffolding is implemented and builds. See [`docs/MAMBA3_MIGRATION_PLAN.md`](docs/MAMBA3_MIGRATION_PLAN.md) for the full roadmap and [`docs/TRAINING.md`](docs/TRAINING.md) for the training stages.
 
 Known gaps:
 

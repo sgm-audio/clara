@@ -16,7 +16,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VENV="${HOME}/clara-training/venv"
+VENV="${SCRIPT_DIR}/venv_rocm"
 DEFAULT_DATA_DIR="/home/sgm/datasets/musdb18hq/train"
 CKPT_DIR="${SCRIPT_DIR}/checkpoints_clara"
 
@@ -24,7 +24,7 @@ CKPT_DIR="${SCRIPT_DIR}/checkpoints_clara"
 export HSA_OVERRIDE_GFX_VERSION="${HSA_OVERRIDE_GFX_VERSION:-11.0.0}"
 export PYTORCH_ROCM_ARCH="${PYTORCH_ROCM_ARCH:-gfx1100}"
 export HSA_ENABLE_SDMA=0
-export PYTORCH_ALLOC_CONF="garbage_collection_threshold:0.8,max_split_size_mb:256"
+export PYTORCH_HIP_ALLOC_CONF="garbage_collection_threshold:0.8,max_split_size_mb:256"
 export MIOPEN_FIND_MODE=5
 
 # ── Parse args ───────────────────────────────────────────────────────────
@@ -74,13 +74,15 @@ fi
 ARGS=(
     --data "${DATA_DIR}"
     --device cuda
-    --batch 4
+    --batch 2
     --grad-accum 4
     --steps 100000
-    --clip-seconds 0.5
-    --ckpt-every 5000
+    --chunk-samples 4096
+    --ckpt-every 1000
     --val-every 1000
-    --log-every 100
+    --val-split 0.1
+    --early-stop-patience 10
+    --log-every 10
     --num-workers 0
     --cache
     --lr 1e-3
@@ -101,7 +103,7 @@ mkdir -p "${CKPT_DIR}"
 LOGFILE="${CKPT_DIR}/train.log"
 
 echo "======================================================================"
-echo " Command: python train_clara_mamba3.py ${ARGS[*]}"
+echo " Command: python train_mamba3.py ${ARGS[*]}"
 echo " Log:     ${LOGFILE}"
 echo " Monitor: watch -n 2 rocm-smi --showtemp --showpower --showuse --showmemuse"
 echo "======================================================================"
@@ -109,7 +111,7 @@ echo ""
 
 # ── Launch ────────────────────────────────────────────────────────────────
 echo "=== CLARA Training Start: $(date) ===" | tee -a "${LOGFILE}"
-python "${SCRIPT_DIR}/train_clara_mamba3.py" "${ARGS[@]}" 2>&1 | tee -a "${LOGFILE}"
+python "${SCRIPT_DIR}/python/training/train_mamba3.py" "${ARGS[@]}" 2>&1 | tee -a "${LOGFILE}"
 EXIT_CODE=$?
 echo "=== CLARA Training End: $(date) (exit=${EXIT_CODE}) ===" | tee -a "${LOGFILE}"
 

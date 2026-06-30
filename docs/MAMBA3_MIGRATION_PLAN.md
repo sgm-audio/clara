@@ -154,7 +154,7 @@ Real-world estimate with 3× overhead: ~2.87 µs/sample. At 44.1kHz that's **~12
 | `src/core/MambaInferenceEngine.cpp` | `src/core/SsmInferenceCore.cpp` | Ort::Session → SSMBlock array |
 | `train_clara_export.py` | `scripts/export_mamba_weights.py` | ONNX → flat binary |
 | `export_mamba_onnx.py` | _(deleted)_ | Incompatible architecture |
-| `train_clara_parallel.py` | `train_clara_mamba3.py` | Mamba-1 → Mamba-3 |
+| `train_clara_parallel.py` | `train_mamba3.py` | Mamba-1 → Mamba-3 |
 | `models/*.onnx` | `models/*.bin` | Weight format change |
 | `libonnxruntime.so` | _(not shipped)_ | Dependency eliminated |
 
@@ -591,7 +591,7 @@ Files modified: `MambaAraController.cpp`, `MambaAraPlaybackRenderer.cpp`
 Load CLAP text + audio encoders, preset system, transport-stop analysis
 
 ### Phase 8: Training Pipeline (5-7 days)
-File created: `train_clara_mamba3.py`
+File created: `train_mamba3.py`
 
 ### Phase 9: Testing & Verification (3-5 days)
 Bit-exact Python↔C++, state continuity, stability, extreme values, real-time safety, benchmark
@@ -620,7 +620,7 @@ src/core/ConditionProcessor.cpp
 reference_forward.py
 scripts/export_mamba_weights.py
 scripts/validate_export.py
-train_clara_mamba3.py
+train_mamba3.py
 ```
 
 ### Modified files

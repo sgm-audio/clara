@@ -21,7 +21,7 @@ if(NOT EXISTS "${MAMBA3_MODEL_BIN}")
     if(PYTHON3_EXE)
         execute_process(
             COMMAND ${PYTHON3_EXE}
-                "${CMAKE_SOURCE_DIR}/scripts/export_mamba_weights.py"
+                "${CMAKE_SOURCE_DIR}/python/tools/export_mamba_weights.py"
                 --output "${MAMBA3_MODEL_BIN}" --seed 42
             RESULT_VARIABLE _m3_result
             OUTPUT_VARIABLE _m3_out
@@ -56,7 +56,7 @@ if(NOT EXISTS "${MAMBA3_REF_INPUT}" OR NOT EXISTS "${MAMBA3_REF_OUTPUT}" OR NOT 
     if(PYTHON3_EXE)
         add_custom_target(generate_reference_outputs ALL
             COMMAND ${PYTHON3_EXE}
-                "${CMAKE_SOURCE_DIR}/scripts/dump_reference_output.py"
+                "${CMAKE_SOURCE_DIR}/python/tools/dump_reference_output.py"
                 --output-dir "${CMAKE_SOURCE_DIR}/models"
                 --seed 42
             COMMENT "Generating Python↔C++ reference outputs..."

@@ -1,12 +1,12 @@
 # CLARA Training Guide — Mamba-3
 
 **Architecture:** Mamba-3 SSM with multi-head MIMO R=4  
-**Parameters:** ~757K  
-**Training script:** `train_clara_mamba3.py`  
+**Parameters:** 1,662,384  
+**Training script:** `python/training/train_mamba3.py`  
 **Weight format:** Flat binary `model.bin` (version 2)  
-**Inference engine:** Custom C++ (`libmamba_core.so`), no ONNX Runtime
+**Inference engine:** Custom C++ (`libMamba3Core.a`), no ONNX Runtime
 
-This document is the single source of truth for training CLARA. For cloud-specific launch instructions, see [`MI300X_TRAINING_PLAN.md`](../MI300X_TRAINING_PLAN.md). For a one-command quick start, see [`TRAINING_QUICKSTART.md`](../TRAINING_QUICKSTART.md).
+This document is the single source of truth for training CLARA. For a one-command quick start, see [`TRAINING_QUICKSTART.md`](TRAINING_QUICKSTART.md).
 
 ---
 
@@ -51,10 +51,11 @@ CLARA uses a Mamba-3 Selective State Space Model with multi-head MIMO (Multiple-
 
 | Component | Parameters |
 |-----------|------------|
-| Per-layer weights (×6) | ~123,356 each |
-| 6 layers | ~740,136 |
-| LayerNorm + output channel | ~384 |
-| **Total** | **~757,032** |
+| Per-layer weights (×6) | 277,064 each |
+| 6 layers | 1,662,384 |
+| **Total** | **1,662,384** |
+
+*Note: The migration plan's ~757K claim was stale — the architecture produces 1.66M params due to full B/C projections (nheads×mimo_rank×d_state = 512 each) and film/dt_film layers.*
 
 Each layer exports 13 float32 arrays in the flat binary weight file:
 
@@ -110,7 +111,7 @@ Stage 2: Adversarial Fine-Tuning
 Stage 3: RLHF / Preference Optimization (post-MVP)
 ```
 
-**Only `train_clara_mamba3.py` produces exportable weights.** Older scripts (`train_clara_parallel.py`, `train_clara_export.py`, `export_mamba_onnx.py`, `train_clara_now.py`) implement incompatible Mamba-1 architectures and should not be used.
+**Only `python/training/train_mamba3.py` produces exportable weights.** Older scripts (`train_clara_parallel.py`, `train_clara_export.py`, `export_mamba_onnx.py`, `train_clara_now.py`) implement incompatible Mamba-1 architectures and should not be used.
 
 ---
 
@@ -130,7 +131,7 @@ Stage 0 teaches the model general audio structure before any effect-specific tra
 ### Quick start
 
 ```bash
-python train_clara_mamba3.py \
+python python/training/train_mamba3.py \
   --data ~/datasets/musdb18hq/train \
   --device cuda \
   --steps 100000 \
@@ -147,7 +148,7 @@ python scripts/precompute_features.py \
   --output ~/datasets/musdb18hq/precomputed
 
 # Train using precomputed target features
-python train_clara_mamba3.py \
+python python/training/train_mamba3.py \
   --precomputed ~/datasets/musdb18hq/precomputed \
   --cache \
   --device cuda \
@@ -229,7 +230,7 @@ Training expects mono WAV files at the target sample rate (default 44.1 kHz). Th
 **Fresh Stage 0 (on-the-fly STFT):**
 
 ```bash
-python train_clara_mamba3.py \
+python python/training/train_mamba3.py \
   --data ~/datasets/musdb18hq/train \
   --device cuda \
   --steps 100000 \
@@ -246,7 +247,7 @@ python scripts/precompute_features.py \
   --input ~/datasets/musdb18hq/train \
   --output ~/datasets/musdb18hq/precomputed
 
-python train_clara_mamba3.py \
+python python/training/train_mamba3.py \
   --precomputed ~/datasets/musdb18hq/precomputed \
   --cache \
   --device cuda \
@@ -258,7 +259,7 @@ python train_clara_mamba3.py \
 **Resume from checkpoint:**
 
 ```bash
-python train_clara_mamba3.py \
+python python/training/train_mamba3.py \
   --resume checkpoints_clara/step_050000.pt \
   --precomputed ~/datasets/musdb18hq/precomputed \
   --cache \
@@ -269,7 +270,7 @@ python train_clara_mamba3.py \
 **CPU smoke test:**
 
 ```bash
-python train_clara_mamba3.py \
+python python/training/train_mamba3.py \
   --data ~/datasets/musdb18hq/train \
   --device cpu \
   --steps 10 \
@@ -278,7 +279,7 @@ python train_clara_mamba3.py \
 
 ### Cloud Training (MI300X)
 
-See [`MI300X_TRAINING_PLAN.md`](../MI300X_TRAINING_PLAN.md) for the single-launch setup:
+See `python/training/train_mamba3.py` for training options. For the launch workflow:
 
 ```bash
 # On the cloud VM
@@ -359,7 +360,7 @@ This writes `.npz` files containing:
 ### Training with precomputed data
 
 ```bash
-python train_clara_mamba3.py \
+python python/training/train_mamba3.py \
   --precomputed ~/datasets/musdb18hq/precomputed \
   --cache \
   --device cuda \
@@ -375,7 +376,7 @@ python train_clara_mamba3.py \
 ### Export to flat binary
 
 ```bash
-python train_clara_mamba3.py \
+python python/training/train_mamba3.py \
   --export checkpoints_clara/final.pt \
   --output models/model_trained.bin
 ```
@@ -445,29 +446,33 @@ Followed by the concatenated float32 weight arrays (13 per layer).
 | `cond_dim` | 128 | Conditioning vector size |
 | `in_proj_dim` | 1612 | Fused projection output size |
 
-### Training flags (`train_clara_mamba3.py`)
+### Training flags (`python/training/train_mamba3.py`)
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--data` | None | Path to WAV dataset dir |
-| `--precomputed` | None | Path to precomputed `.npz` directory |
+| `--data` | None | Path to WAV dataset dir (on-the-fly loading) |
+| `--precomputed` | None | Path to precomputed `.npz` directory (faster) |
 | `--cache` | off | RAM-cache precomputed tensors |
+| `--cache-limit` | 16 | Max tracks preloaded into RAM (0=all) |
 | `--save` | `checkpoints` | Checkpoint directory |
-| `--resume` | None | Resume from checkpoint path |
+| `--resume` | None | Resume from checkpoint path (preserves optimizer/scheduler) |
 | `--steps` | 100000 | Total training steps |
 | `--batch` | 4 | Batch size |
 | `--grad-accum` | 4 | Gradient accumulation steps |
 | `--lr` | 1e-3 | Learning rate |
 | `--weight-decay` | 1e-5 | Weight decay |
 | `--clip-grad-norm` | 1.0 | Gradient clipping norm |
-| `--chunk-samples` | 2048 | Audio chunk length in samples |
-| `--num-workers` | 2 | DataLoader workers |
-| `--log-every` | 100 | Log interval (steps) |
-| `--ckpt-every` | 5000 | Checkpoint interval |
+| `--chunk-size` | 64 | SSM sub-block size matching C++ `kSubBlockSize` |
+| `--scan` | `parallel` | SSM scan: `parallel` (fast) or `sequential` (bit-exact C++) |
+| `--clip-seconds` | 0.5 | Audio clip duration in seconds |
+| `--num-workers` | 0 | DataLoader workers (0=safest for iGPU) |
+| `--log-every` | 50 | Log interval (steps) |
+| `--ckpt-every` | 1000 | Checkpoint interval (steps) |
+| `--val-every` | 2000 | Validation interval (steps) |
 | `--device` | cuda | `cuda` or `cpu` |
 | `--warmup` | 2000 | Linear warmup steps |
-| `--val-split` | 0.0 | Fraction held out for validation |
-| `--early-stop-patience` | 10 | Early stop patience (in checkpoint intervals) |
+| `--val-split` | 0.1 | Fraction held out for validation |
+| `--early-stop-patience` | 10 | Stop after N val checks without improvement |
 | `--export` | None | Export checkpoint to `model.bin` |
 | `--output` | `models/model_trained.bin` | Output `.bin` path |
 
@@ -486,18 +491,18 @@ Followed by the concatenated float32 weight arrays (13 per layer).
 |---------|-------|-----|
 | `CUDA not available` on AMD APU (860M) | gfx1152 not in ROCm allowlist | `export HSA_OVERRIDE_GFX_VERSION=11.0.0` before Python import |
 | `CUDA not available` on MI300X | Wrong env override | Do **NOT** set `HSA_OVERRIDE_GFX_VERSION`; ROCm detects gfx942 natively |
-| NaN loss | bfloat16 AMP on 860M ROCm | Default is float32; do not use `--amp` on this hardware |
+| NaN loss | bfloat16 AMP on 860M ROCm | Default is float32 (no AMP flag); switch to CPU if persistent |
 | OOM | Batch/clip too large | Reduce `--batch` or `--chunk-samples` |
 | Slow training | CPU STFT bottleneck | Use `--precomputed` + `--cache` |
 | Hang at warmup | MIOpen compilation deadlock | Already reduced to 1 chunk; kill and retry if persistent |
-| C++ load fails | Wrong weight format | Ensure export used version 2 format from `train_clara_mamba3.py` |
+| C++ load fails | Wrong weight format | Ensure export used version 2 format from `python/training/train_mamba3.py` |
 | Python↔C++ mismatch >0.05 | Architecture divergence | Check that input/output projections and LayerNorm are stripped in Python |
 
 ---
 
 ## See Also
 
-- [`MAMBA3_MIGRATION_PLAN.md`](../MAMBA3_MIGRATION_PLAN.md) — Full architecture, C++ engine spec, product roadmap, risk register
-- [`MI300X_TRAINING_PLAN.md`](../MI300X_TRAINING_PLAN.md) — Cloud training launch reference
-- [`TRAINING_QUICKSTART.md`](../TRAINING_QUICKSTART.md) — One-command quick start
-- [`reference_forward.py`](../reference_forward.py) — PyTorch bit-exact gold standard
+- [`MAMBA3_MIGRATION_PLAN.md`](MAMBA3_MIGRATION_PLAN.md) — Full architecture, C++ engine spec, product roadmap, risk register
+- [`TRAINING_QUICKSTART.md`](TRAINING_QUICKSTART.md) — One-command quick start
+- [`reference_forward.py`](../python/reference_forward.py) — PyTorch bit-exact gold standard
+- [`MAMBA3_DRIVE_AUDIT.md`](MAMBA3_DRIVE_AUDIT.md) — mamba3 external drive audit

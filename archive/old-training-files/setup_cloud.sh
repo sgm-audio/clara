@@ -290,6 +290,7 @@ phase_train() {
         --batch "$BATCH_SIZE" \
         --grad-accum "$GRAD_ACCUM" \
         --steps "$TRAIN_STEPS" \
+        --clip-seconds "$CHUNK_SECONDS" \
         --lr 1e-3 --weight-decay 1e-5 --clip-grad-norm 1.0 \
         --num-workers 4 --log-every 100 --ckpt-every 5000 \
         --warmup 2000 \

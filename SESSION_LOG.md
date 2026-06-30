@@ -31,7 +31,7 @@ Last entry is most recent.
 ### 📝 Files Modified
 - `train_clara_launcher.py` — hoisted `_phase_num`, changed num_workers=4, added `--clip-seconds`, `--num-workers` CLI flags
 - `train_clara.py` — added `--clip-seconds` CLI arg parsing
-- `train_clara_loss.py` — added CPU fallback for ROCm hipFFT compatibility
+- `loss.py` — added CPU fallback for ROCm hipFFT compatibility
 - `verify_training_pipeline.py` — fixed noise param count check, dataset constructor signature
 - `TODO.md` — updated N2 and P1 #16 with clip_seconds guidance, updated stats
 - `.agent_context/session_state.md` — detailed reference
@@ -264,7 +264,7 @@ python train_clara_launcher.py --phase identity --clip-seconds 0.5
 
 ### ✅ Accomplished
 - Audited existing datasets — **MUSDB18-HQ** (23.5 GB, 100 train + 8 test tracks) already fully downloaded with CREPE/pitch extraction at `C:\Dev\mamba3\mamba3\datasets\musdb18hq\`
-- Reviewed `train_clara_dataset.py`, `train_clara_config.py`, `train_clara.py`, `docs/training-pipeline.md` — confirmed 3-dataset training strategy
+- Reviewed `dataset.py`, `train_clara_config.py`, `train_clara.py`, `docs/training-pipeline.md` — confirmed 3-dataset training strategy
 - Installed **aria2 v1.37.0** via winget for fast multi-connection resumable downloads (exe at `C:\Users\scott\AppData\Local\Microsoft\WinGet\Packages\aria2.aria2_Microsoft.Winget.Source_8wekyb3d8bbwe\aria2-1.37.0-win-64bit-build1\aria2c.exe`)
 - Started **MAESTRO v3.0.0** download (~54 GB .zip) as background process (PID 4036) with `--continue=true --split=16 --max-connection-per-server=16`
 - Killed download at user request (laptop restart) — partial file preserved for resume
@@ -477,7 +477,7 @@ cmake --build build --parallel && ctest --test-dir build --output-on-failure
 - ARA analysis pipeline fully blocked by missing ContentReader/ContentAccessController
 
 ### 👣 Next Steps
-1. **Write 4 missing training pipeline files** — `train_clara_config.py`, `train_clara_loss.py`, `train_clara_dsp.py`, `train_clara_dataset.py`
+1. **Write 4 missing training pipeline files** — `train_clara_config.py`, `loss.py`, `train_clara_dsp.py`, `dataset.py`
 2. **Add macOS CI** — `build-macos`/`test-macos` jobs on `macos-14` runner
 3. **Fix test gaps** — Add tests for `mamba_process()`, `mamba_activate()`, ARA archive roundtrip
 4. **Implement `doGetContentTypes()`** — Unlocks ARA conditioning path (CLARA-09)
@@ -608,14 +608,14 @@ Agent initially hallucinated an entirely different project (Electron file organi
 
 - **Reconstructed full training history from SESSION_LOG.md** — 7 prior sessions spanning June 4-13, 2026, covering:
   - Mamba-1 pipeline (76K params, ONNX export, `train_clara_parallel.py`) — multiple ROCm fixes (HSA_OVERRIDE, persistent_workers, MIOpen deadlock, chunked scan NaN stability)
-  - Mamba-3 migration (757K params, custom C++ engine, `train_clara_mamba3.py`) — Phases 0-6 complete, Phase 7-8 committed
+  - Mamba-3 migration (757K params, custom C++ engine, `train_mamba3.py`) — Phases 0-6 complete, Phase 7-8 committed
   - Dataset analysis (MUSDB18-HQ confirmed good, FMA needs filtering, COORS/Suno rejected for Phase 1)
 - **Confirmed training never completed** — `checkpoints_clara/train.log` (299 lines) shows 213 lines of failed commands, 2 launches that hung at "GPU warmup...", zero training steps logged
 - **Confirmed all checkpoints lost** — `find` across all mounted drives finds zero `.pt` files. Only `train.log` survives
 - **Located model artifacts:** `models/model.bin` (6.4 MB, today's date), `model_trained.bin`, `model_ref.bin` — these are Mamba-3 flat binary weights from the export/reference pipeline, NOT from real training
 - **Identified current state from git/working tree:**
   - Phases 0-6 (C++ engine, CLAP, ARA) are DONE and committed
-  - `train_clara_mamba3.py` (534 lines) is committed — Mamba-3 training script
+  - `train_mamba3.py` (534 lines) is committed — Mamba-3 training script
   - 4 files modified but uncommitted: `ci.yml`, `01_CLARA_AGENT_PROMPTS.md`, `SESSION_LOG.md`, `train_clara_model.py`
   - Many untracked new files: `CLARA_SHIPPING_PLAN.md`, `MAMBA3_MIGRATION_PLAN.md`, `Train_commands.mmd`, `train_clara_parallel.py`, scripts, resume docs
 
@@ -658,14 +658,14 @@ User shared extensive prior conversation showing a different AI agent (DeepSeek 
 ### 🧱 Blockers
 
 1. **No trained weights** — All checkpoints lost. Must retrain from scratch
-2. **Training pipeline unverified** — `train_clara_mamba3.py` exists but never completed a run
+2. **Training pipeline unverified** — `train_mamba3.py` exists but never completed a run
 3. **MI300X throughput completely unknown** — User's experience: DataLoader I/O bottleneck, not GPU. Real-world step rates on cloud GPUs were WORSE than local 860M
 4. **Cloud budget constraint** — $100 AMD AI Developer Cloud credits. Each failed run costs $1.99/hr. Need to maximize probability of success per session
 5. **One-shot constraint** — Cloud instance has no persistent storage. Dataset must be downloaded per-session (~23 min for MUSDB18-HQ). If instance dies, data lost
 
 ### 👣 Next Steps (User to Decide)
 
-1. **Verify `train_clara_mamba3.py` runs locally** — CPU-only smoke test (10 steps) to confirm no syntax errors, NaN, or shape mismatches
+1. **Verify `train_mamba3.py` runs locally** — CPU-only smoke test (10 steps) to confirm no syntax errors, NaN, or shape mismatches
 2. **Fix C++ bit-exact issues** identified in previous sessions (RMSNorm, D-skip, o-coupling) before training — otherwise trained weights won't load in engine
 3. **Write cloud bootstrap script** — handles git clone, aria2c download, venv setup, tmux training launch
 4. **Single cloud session goal:** Get ONE working `model.bin` — even if only 10K steps. Progress checkpoint saved to GitHub before instance termination
@@ -692,7 +692,7 @@ User shared extensive prior conversation showing a different AI agent (DeepSeek 
 
 ### ⚡ Critical Discovery
 
-`train_clara_mamba3.py` had **6 blocking bugs** preventing any training. The per-sample Python loop (B2) made training impossibly slow on CPU—5 steps timed out after >120s. B_bias and C_bias were dead parameters (defined but never used in forward pass) causing gradient failures. CombinedLoss used `torch.stft` without padding handling.
+`train_mamba3.py` had **6 blocking bugs** preventing any training. The per-sample Python loop (B2) made training impossibly slow on CPU—5 steps timed out after >120s. B_bias and C_bias were dead parameters (defined but never used in forward pass) causing gradient failures. CombinedLoss used `torch.stft` without padding handling.
 
 ### ✅ Fixed This Session
 
@@ -710,7 +710,7 @@ User shared extensive prior conversation showing a different AI agent (DeepSeek 
 
 | File | Action | Summary |
 |------|--------|---------|
-| `train_clara_mamba3.py` | **Modified** | Vectorized SSM (forward_batch), associative scan (_ssm_scan), CombinedLoss, cond in training loop, B_bias/C_bias usage, STFT padding fix |
+| `train_mamba3.py` | **Modified** | Vectorized SSM (forward_batch), associative scan (_ssm_scan), CombinedLoss, cond in training loop, B_bias/C_bias usage, STFT padding fix |
 | `src/core/SsmBlock.cpp` | **Modified** | Added B_bias/C_bias to step_norm_rope rotation |
 | `TODO.md` | **Modified** | All B items marked ✅, updated verification checklist, next action: cloud launch |
 | `scripts/cloud_bootstrap.sh` | **Created** | Single-script MI300X provisioning: clone, dataset, venv, tmux training |
@@ -763,9 +763,9 @@ User shared extensive prior conversation showing a different AI agent (DeepSeek 
 
 **Precomputed Data Pipeline**
 - `scripts/precompute_features.py` — Parallel one-time preprocessing: WAV → mel/STFT → `.npz` chunks
-- `train_clara_dataset.py` — `CachedMelDataset` with RAM cache storing **pinned torch tensors** (not numpy)
+- `dataset.py` — `CachedMelDataset` with RAM cache storing **pinned torch tensors** (not numpy)
 - `PrecomputedMRSTFTLoss` — Uses precomputed target features, only recomputes predicted STFT/mel
-- `train_clara_mamba3.py` — Added `--precomputed` and `--cache` flags
+- `train_mamba3.py` — Added `--precomputed` and `--cache` flags
 - DataLoader uses `pin_memory=True` for async GPU transfer
 
 **Bug Fix: State Reset in Training**
@@ -798,8 +798,8 @@ User shared extensive prior conversation showing a different AI agent (DeepSeek 
 
 | File | Action | Summary |
 |------|--------|---------|
-| `train_clara_mamba3.py` | **Modified** | Stripped I/O proj + LayerNorm, added `reset_state`, `PrecomputedMRSTFTLoss` returns dict, warmup scheduler, early stopping, per-component logging |
-| `train_clara_dataset.py` | **Created** | `CachedMelDataset` with pinned tensor RAM cache, fallback `AudioDataset`, `PrecomputedLoss` |
+| `train_mamba3.py` | **Modified** | Stripped I/O proj + LayerNorm, added `reset_state`, `PrecomputedMRSTFTLoss` returns dict, warmup scheduler, early stopping, per-component logging |
+| `dataset.py` | **Created** | `CachedMelDataset` with pinned tensor RAM cache, fallback `AudioDataset`, `PrecomputedLoss` |
 | `scripts/precompute_features.py` | **Created** | Parallel feature precomputation (mel + STFT + audio) |
 | `scripts/dump_reference_output.py` | **Created** | Python↔C++ reference dumper |
 | `scripts/setup_cloud.sh` | **Created** | Single-launch cloud setup + train + cost monitor |
@@ -900,9 +900,9 @@ User explicitly called out that the troubleshooting line claiming `HSA_OVERRIDE_
 
 | Check | Result |
 |-------|--------|
-| `train_clara_mamba3.py` syntax | ✅ `py_compile` OK |
-| `train_clara_mamba3.py` imports | ✅ `Mamba3Model`, `CombinedLoss` load |
-| `train_clara_dataset.py` imports | ✅ `AudioDataset`, `CachedMelDataset` load |
+| `train_mamba3.py` syntax | ✅ `py_compile` OK |
+| `train_mamba3.py` imports | ✅ `Mamba3Model`, `CombinedLoss` load |
+| `dataset.py` imports | ✅ `AudioDataset`, `CachedMelDataset` load |
 | `scripts/export_mamba_weights.py` imports | ✅ OK |
 | `scripts/precompute_features.py` imports | ✅ OK |
 | `scripts/validate_export.py` imports | ✅ OK |
@@ -910,7 +910,7 @@ User explicitly called out that the troubleshooting line claiming `HSA_OVERRIDE_
 | System Python deps (torch, numpy, soundfile, librosa, torchaudio, scipy, tqdm) | ✅ All available |
 | MUSDB18-HQ at default local path | ❌ Not present locally (expected; cloud downloads it) |
 | CPU smoke test (5 steps, synthetic data) | ✅ Runs, loss decreases, saves `final.pt` |
-| Export smoke checkpoint → `.bin` | ✅ `train_clara_mamba3.py --export` produces valid `model.bin` |
+| Export smoke checkpoint → `.bin` | ✅ `train_mamba3.py --export` produces valid `model.bin` |
 | `scripts/validate_export.py` on exported `.bin` | ✅ Header, arrays, file size all valid |
 | C++ engine loads smoke-trained `.bin` | ✅ `test_mamba3 /tmp/model_smoke.bin` — all tests pass except bit-exact (no ref files) |
 | `setup_cloud.sh` syntax | ✅ `bash -n` OK |
@@ -923,7 +923,7 @@ User explicitly called out that the troubleshooting line claiming `HSA_OVERRIDE_
 
 | File | Issue | Fix |
 |------|-------|-----|
-| `AGENTS.md` | Export command used wrong script/flag (`scripts/export_mamba_weights.py --checkpoint ...`) | Changed to `train_clara_mamba3.py --export checkpoints/final.pt --output models/model.bin` |
+| `AGENTS.md` | Export command used wrong script/flag (`scripts/export_mamba_weights.py --checkpoint ...`) | Changed to `train_mamba3.py --export checkpoints/final.pt --output models/model.bin` |
 | `README.md` | Still claimed `libmamba_core.so` and `libmamba_clap.so` outputs | Updated to `libMamba3Core.a`; encoders marked as Phase 2/3 planned |
 
 ### 📁 Commits
@@ -949,10 +949,10 @@ User explicitly called out that the troubleshooting line claiming `HSA_OVERRIDE_
 
 ```bash
 # Local CPU smoke test
-python3 train_clara_mamba3.py --device cpu --steps 5 --batch 2 --grad-accum 1 --chunk-samples 512 --num-workers 0 --log-every 1 --warmup 0
+python3 train_mamba3.py --device cpu --steps 5 --batch 2 --grad-accum 1 --chunk-samples 512 --num-workers 0 --log-every 1 --warmup 0
 
 # Export checkpoint to .bin
-python3 train_clara_mamba3.py --export checkpoints/final.pt --output /tmp/model_smoke.bin
+python3 train_mamba3.py --export checkpoints/final.pt --output /tmp/model_smoke.bin
 
 # Validate .bin
 python3 scripts/validate_export.py /tmp/model_smoke.bin
@@ -971,3 +971,362 @@ bash scripts/setup_cloud.sh all
 - C++ tests with smoke model: **7/7 passed, 1 skipped (bit-exact ref)**
 - Full CTest with repo model: **3/3 passed**
 - Commits: **2**
+
+---
+
+## Session 2026-06-21
+
+**Duration:** ~30 min
+**Objective:** Document all findings from mamba3 external drive audit into root-level files.
+
+### ✅ Accomplished
+
+- **Created `MAMBA3_DRIVE_AUDIT.md`** — Full audit of findings from `/run/media/sgm/01DCA22D5C1C2A50/mamba3/`:
+  - 6 training-loop improvements: all already present in Clara's `train_mamba3.py`
+  - Adoptable improvements: SI-SDR ramping (Phase 2), CREPE extraction (ported), StemDataset (Phase 2)
+  - What was NOT transferred: incompatible model architecture (3.9M vs 1.6M params, chunk_size 128 vs 64)
+  - Files created from audit: `scripts/test_model.py`, `scripts/run_test.sh`, `scripts/setup_local.sh`
+
+- **Created `ARCHITECTURE_COMPARISON.md`** — Clara Mamba-3 vs mamba3 drive PerTrackProcessor:
+  - Dimension comparison: Clara d_model=128, d_state=32, chunk_size=64; mamba3 drive d_model=256, d_state=64, chunk_size=128
+  - Signal domain: Clara = time-domain (no STFT); mamba3 drive = spectral-domain (STFT+iSTFT)
+  - Weight format: incompatible (different array shapes, different header)
+  - Conclusion: different models, no architecture port in scope
+
+- **Created `PHASE2_ROADMAP.md`** — Phase 2 conditioning work items:
+  - 2.1 CREPE extraction infrastructure (scripts created)
+  - 2.2 StemDataset class (planned)
+  - 2.3 f0 conditioning integration (design)
+  - 2.4 SI-SDR ramping loss (design, adoption confirmed)
+  - 2.5 MIMO slot specialization (emergent)
+  - 2.6 CLAP text/audio encoders (Phase 2/3)
+  - Dependency graph and risk register
+
+- **Updated `AGENTS.md`** — Added Audit & Documentation Files table and New Scripts table
+
+- **Updated `SESSION_LOG.md`** — This entry
+
+### 📁 Files Created
+- `MAMBA3_DRIVE_AUDIT.md` — Complete audit of mamba3 external drive findings
+- `ARCHITECTURE_COMPARISON.md` — Clara vs mamba3 drive architecture comparison
+- `PHASE2_ROADMAP.md` — Phase 2 conditioning work items and dependency graph
+
+### 📝 Files Modified
+- `AGENTS.md` — Added audit docs table and new scripts table
+- `SESSION_LOG.md` — This entry
+
+### 🔢 Key Numbers
+- Mamba3 drive improvements already in Clara: **6/6**
+- Architecture differences identified: **9 dimension mismatches**
+- Phase 2 work items documented: **6 items**
+- Files created: **3 documentation files**
+- Files modified: **2 (AGENTS.md, SESSION_LOG.md)**
+
+---
+
+## Session 2026-06-20
+
+**Objective:** Adapt `train_mamba3.py` to run on Kaggle Notebooks with P100/T4x2 GPU accelerators.
+
+### ✅ Accomplished
+- Created `scripts/train_clara_mamba3_kaggle.py` — standalone Kaggle adaptation.
+  - Replaced RAM-preloading `AudioDataset` with lazy seek-based loading (`sf.read(start=..., frames=...)` / `torchaudio.load(frame_offset=..., num_frames=...)`).
+  - Wrapped `soundfile` import in `try/except` with `HAVE_SF` flag and `torchaudio` fallback.
+  - Added Kaggle auto-detection (`IS_KAGGLE = os.path.exists('/kaggle')`).
+  - Updated defaults for Kaggle: `--data /kaggle/input/musdb18hq/train`, `--save /kaggle/working/checkpoints`, `--output /kaggle/working/models/model_trained.bin`, `--num-workers 4`.
+  - Added `_ensure_deps()` helper to auto-install `soundfile` inside Kaggle kernels.
+  - Added Kaggle-specific prints (dataset path, checkpoint path, GPU memory, OOM note, final download list).
+  - Refactored `parse_args()` to module level so the notebook can import it.
+  - Added synthetic-data fallback when `--data` points to a directory with no WAV files.
+- Created `scripts/clara_kaggle.ipynb` — 5-cell notebook: description → install deps → train → export → download instructions.
+- Preserved `Mamba3Model`, loss functions, training loop, and `export_weights()` unchanged.
+- Verified end-to-end:
+  - `python scripts/train_clara_mamba3_kaggle.py --help` ✅
+  - `python scripts/train_clara_mamba3_kaggle.py --data /tmp --steps 10 --device cpu` ✅ falls back to synthetic, saves checkpoint
+  - `python scripts/train_clara_mamba3_kaggle.py --export checkpoints/final.pt --output /tmp/model_test.bin` ✅
+  - `python scripts/validate_export.py /tmp/model_test.bin` ✅ header/dimensions/arrays valid
+
+### 📁 Files Created
+- `scripts/train_clara_mamba3_kaggle.py`
+- `scripts/clara_kaggle.ipynb`
+
+### 📝 Files Modified
+- None (original `train_mamba3.py` left untouched).
+
+### ⚠️ Notes
+- Model reports **1,662,384 params** (same as original script); prompt mentions ~757K but architecture is unchanged.
+- Kaggle T4x2 uses single-GPU by default; multi-GPU `DataParallel` is a future optimization.
+- The notebook requires `train_clara_mamba3_kaggle.py` to be uploaded to `/kaggle/working/`.
+- **Follow-up fix:** `parse_args()` now strips the `-f <kernel-json>` argument that Kaggle/Colab/Jupyter kernels inject into `sys.argv`, so the script can also be `%run` or pasted into a notebook cell without crashing.
+
+### 💾 Verified Commands
+
+```bash
+# Help / defaults
+python scripts/train_clara_mamba3_kaggle.py --help
+
+# CPU smoke test (synthetic fallback)
+python scripts/train_clara_mamba3_kaggle.py --data /tmp --steps 10 --device cpu --num-workers 0
+
+# Export trained checkpoint
+python scripts/train_clara_mamba3_kaggle.py --export checkpoints/final.pt --output models/model_trained.bin
+
+# Validate exported binary
+python scripts/validate_export.py models/model_trained.bin
+```
+
+---
+
+## Session 2026-06-21 (Training Config Upgrade)
+
+**Duration:** ~45 min
+**Objective:** Audit and fix training configuration to match C++ engine; update docs; verify end-to-end.
+
+### ✅ Accomplished
+
+**Audit — found 5 issues:**
+1. `--clip-seconds` default was 4.0 (176K samples/chunk) → changed to 0.5 (22K, matches C++ engine sub-block philosophy)
+2. `--no-amp` flag was dead code (no AMP implementation in training loop) → removed entirely
+3. `PrecomputedMRSTFTLoss.forward()` used `window.shape[0] // 4` for hop length instead of the `hop_length` parameter — brittle, fixed
+4. `CachedMelDataset` augmentation scaled log-mel by gain (wrong — mel is log-scale) and flipped STFT sign (wrong — magnitude is phase-invariant) → fixed
+5. `docs/TRAINING.md` param count claimed ~757K (stale) → updated to 1,662,384; config table missing flags → updated with actual argparse flags
+
+**Files modified:**
+| File | Change |
+|------|--------|
+| `train_mamba3.py` | `--clip-seconds` default 4.0→0.5; removed dead `--no-amp` flag; `PrecomputedMRSTFTLoss` uses `self.hop_length` instead of window math |
+| `dataset.py` | `CachedMelDataset` augmentation: don't scale mel (log-scale), don't flip STFT (magnitude invariant) |
+| `scripts/setup_cloud.sh` | Added explicit `--clip-seconds "$CHUNK_SECONDS"` to training command |
+| `docs/TRAINING.md` | Param count 757K→1,662,384; config table fully rewritten with actual flags; removed stale `--amp` troubleshooting |
+
+### 📊 Verification
+
+| Check | Result |
+|-------|--------|
+| CPU smoke test (5 steps, new defaults) | ✅ phases transition, finite loss |
+| Export → validate .bin | ✅ Header + arrays valid, 6,649,600 bytes |
+| C++ engine load + run | ✅ All 3 CTest tests pass |
+| Training phase transitions (1→2→3) | ✅ Correct |
+
+### 💾 Verified Commands
+
+```bash
+# CPU smoke test (new defaults)
+python3 train_mamba3.py --device cpu --steps 5 --batch 2 --clip-seconds 0.012 --num-workers 0 --log-every 1 --warmup 0
+
+# Export
+python3 train_mamba3.py --export checkpoints/final.pt --output /tmp/model_smoke.bin
+
+# Validate
+python3 scripts/validate_export.py /tmp/model_smoke.bin
+
+# C++ roundtrip
+cmake --build build --parallel && ctest --test-dir build --output-on-failure
+
+# Full Stage 0 (MI300X cloud)
+bash scripts/setup_cloud.sh all
+```
+
+### 🔢 Key Numbers
+- Model params: **1,662,384** (corrected from stale 757K)
+- All C++ tests: **3/3 pass**
+- `--clip-seconds` default: **0.5** (was 4.0)
+- `--chunk-size`: **64** (matches C++ `kSubBlockSize`)
+- `--num-workers`: **0** default, **4** for MI300X
+- Training phases: **3** (MR-STFT only → +MSE → +SI-SDR)
+
+---
+
+## Session 2026-06-22
+
+**Duration:** ~1 hour
+**Objective:** Bootstrap fixes for local AMD GPU training — port extract_crepe.py, add --grad-accum to train_mamba3.py, fix bootstrap_local.sh, verify smoke test.
+
+### ✅ Accomplished
+
+**1. Ported `scripts/extract_crepe.py` (new file)**
+- From `/run/media/sgm/01DCA22D5C1C2A50/mamba3/extract_crepe.py`
+- Precomputes 360-D CREPE pitch probabilities for every stem
+- Saves `<stem>.crepe.npy` + `<stem>.pitched.npy` alongside each WAV
+- Resamples 100Hz→86Hz to match STFT hop=512
+- Usage: `python scripts/extract_crepe.py --data ~/datasets/musdb18hq/train --device cuda`
+- StemDataset gracefully degrades to zeros if CREPE missing (training still works without it)
+
+**2. Added `--grad-accum` to `train_mamba3.py`**
+- `parser.add_argument('--grad-accum', type=int, default=1)`
+- Training loop: `loss_scaled = loss / accum`, `optimizer.step()` every N batches
+- Effective batch = `--batch` × `--grad-accum`
+- Default=1 (conservative for 16GB UMA)
+
+**3. Added `--precomputed` passthrough to `train_mamba3.py`**
+- `parser.add_argument('--precomputed', type=str, default=None)`
+- StemDataset loads `.crepe.npy` automatically — no precomputed pipeline needed
+- Flag kept as no-op passthrough for backward compat
+
+**4. Fixed `scripts/bootstrap_local.sh`**
+- extract_crepe.py call: `--input` → `--data`, removed invalid `--workers`/`--batch-size`
+- Added `PYTHONPATH="${SCRIPT_DIR}"` to smoke test invocation (test_model.py imports train_clara_mamba3)
+- ROCm env: switched to `HSA_OVERRIDE_GFX_VERSION=11.0.0` / `PYTORCH_ROCM_ARCH=gfx1100` (user confirmed this works)
+- Bootstrap workflow: step_rocm → step_dataset → step_crepe → step_precompute → step_smoke → step_train
+
+**5. Smoke test: 5/5 PASS (CPU mode)**
+```
+PYTHONPATH=. python3 scripts/test_model.py --device cpu
+```
+- Model: 4.26M params, d_model=128, d_state=32, nheads=4, n_layers=6, R=8
+- Forward: 48ms, no NaN/Inf
+- Backward: finite loss, 111 nonzero grads
+
+### 🔴 BLOCKER: ROCm PyTorch not installed
+
+**Situation:**
+- System: **Bazzite 44** (rpm-ostree/Fedora-based, atomic)
+- ROCm 7.1.1: ✅ installed via rpm-ostree layered packages (`rocm-hip`, `rocm-opencl`, `rocm-runtime`, `rocm-clinfo`)
+- PyTorch: ❌ **NVIDIA CUDA build** (`2.12.0+cu130`) via pip — wrong GPU stack
+- `torch.cuda.is_available()` → False
+
+**Root cause:**
+- ROCm PyTorch wheels (`download.pytorch.org/whl/rocm6.2`) only support **Python 3.8–3.12**
+- System has Python 3.14.5 (pip torch), Python 3.13.14 (externally-managed PEP 668)
+- `python3.12` install via `rpm-ostree install python3.12` fails with clang dependency conflicts
+- Python 3.13 venv: same "no torch for Python 3.13" error
+
+**Known working options (not yet tried):**
+1. **Mamba/Conda env** with Python 3.12 + ROCm PyTorch: `micromamba create -n rocm python=3.12 pytorch::pytorch rocm::torch`
+2. **Build PyTorch from source** for ROCm 7.1: `USE_ROCM=1 ROCM_HOME=/opt/rocm/ python3.13 setup.py install` (~1-2hr)
+3. **Docker/容器 with AMD ROCm image**: `podman run --device=/dev/dri/card1 rocm/pytorch:rocm6.2.3_ubuntu22.04_python3.10`
+4. **MROCP Python 3.12** layered via rpm-ostree with deps (blocked by clang conflict)
+
+**Bazzite-specific context:**
+- `rpm-ostree` is the atomic OSTree package manager — changes require reboot via "pending" deployment
+- `sudo dnf` works in limited cases (not reliable per user)
+- `pip3 install --user` works for user-space packages
+- `apt-get` and standard `dnf` are unreliable
+- AMD GPU: `03:00.0 Display controller: Krackan [Radeon 840M/860M]` — gfx1152 (RDNA3.5)
+- gfx1152 spoofed as gfx1100 for ROCm compatibility
+
+### Scripts Ready (GPU training blocked by PyTorch only)
+| File | Status |
+|------|--------|
+| `train_mamba3.py` | ✅ --grad-accum, --precomputed, --amp, gfx1100 env |
+| `scripts/bootstrap_local.sh` | ✅ Fixed CLI args, PYTHONPATH, ROCm env |
+| `scripts/extract_crepe.py` | ✅ Ported from mamba3 drive |
+| `scripts/test_model.py` | ✅ 5/5 pass on CPU |
+
+### ROCm Env Vars (already correct in scripts)
+```
+HSA_OVERRIDE_GFX_VERSION=11.0.0   # gfx1152 → gfx1100 spoof
+PYTORCH_ROCM_ARCH=gfx1100          # compile for gfx1100
+HSA_ENABLE_SDMA=0                   # APU shared RAM stability
+PYTORCH_ALLOC_CONF=garbage_collection_threshold:0.8,max_split_size_mb:256
+MIOPEN_FIND_MODE=5                 # exhaustive MIOpen kernel search
+```
+
+### Next Steps (in priority order)
+1. **Install ROCm PyTorch** — try mamba/micromamba with Python 3.12, OR build from source, OR use AMD ROCm container
+2. **Verify GPU access** — `python3 -c "import torch; torch.cuda.is_available()"` → True
+3. **Run CREPE extraction** — `bash scripts/bootstrap_local.sh --crepe-only` (optional, StemDataset works without it)
+4. **Full training** — `bash scripts/bootstrap_local.sh --train` (after PyTorch fixed)
+
+---
+
+## Session 2026-06-23
+
+**Duration:** ~1.5 hours
+**Objective:** Get ROCm PyTorch working in distrobox, write comprehensive training context file.
+
+### ✅ Accomplished
+
+**1. Diagnosed ROCm/PyTorch blocker**
+- Bazzite host: NVIDIA CUDA PyTorch (`2.12.0+cu130`) installed at `~/.local/lib/python3.14/site-packages/`
+- ROCm 7.1.1 libs present on host (rpm-ostree), but PyTorch wrong build
+- Solution: use distrobox `clara-training` with its own Python 3.12 + ROCm PyTorch
+
+**2. Discovered correct Python env**
+- `~/micromamba/envs/rocm_torch/` — Python 3.12 venv managed by micromamba
+- Activate: `eval "$(micromamba shell hook --shell bash)" && micromamba activate rocm_torch`
+- Install ROCm torch: `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2`
+
+**3. Confirmed gfx1100 works, gfx1103 does NOT**
+- gfx1152 (Radeon 860M) must spoof as `gfx1100` (gfx11 FL worst-case)
+- `gfx1103` was previously tried and failed; `gfx1100` confirmed working by user
+
+**4. Wrote comprehensive context file**
+- `TRAINING_SETUP_CONTEXT.md` — single file with ALL context: OS, GPU, ROCm env vars,
+  Python env setup, model architecture, CLI flags, dataset, bootstrap workflow,
+  VRAM optimizations, weight format, known issues, and complete minimal training command.
+- Also saved to agentmemory with full details
+
+### 🔴 BLOCKER: PyTorch install not complete
+User ran `micromamba activate rocm_torch` and started the install interactively.
+Session ended before verification. Next session must:
+1. Verify `torch.cuda.is_available() = True` in `rocm_torch` env
+2. Run `PYTHONPATH=. python3 scripts/test_model.py --device cuda` → 5/5 pass
+3. Run `bash scripts/bootstrap_local.sh --train`
+
+### Files Modified
+- `TRAINING_SETUP_CONTEXT.md` — NEW (comprehensive context file)
+- `SESSION_LOG.md` — appended this entry
+- `AGENTS.md` — unchanged (session logging section already existed)
+
+---
+
+## Session 2026-06-23 (continued)
+
+**Duration:** ~30 min
+**Objective:** Get GPU training working in distrobox.
+
+### ✅ Accomplished
+
+**GPU training is WORKING in distrobox `clara-training`**
+
+**Verified environment:**
+- PyTorch: `2.5.1+rocm6.2` ✅
+- GPU: AMD Radeon Graphics (gfx1152) — 15.2 GB VRAM ✅
+- SGEMM: PASS ✅
+- Smoke test: **5/5 PASS** ✅
+
+**Key discovery — extra env vars needed:**
+`HSA_OVERRIDE_GFX_VERSION=11.0.0` alone was NOT enough. Required ALL of:
+```
+HSA_OVERRIDE_GFX_VERSION=11.0.0   # gfx1152 → gfx1100 spoof
+HIP_VISIBLE_DEVICES=0               # enumerate GPU 0 (NEW — critical)
+ROC_VISIBLE_DEVICES=0               # AMD ROCm device visibility (NEW — critical)
+HSA_ENABLE_SDMA=0                   # APU shared RAM stability
+PYTORCH_ALLOC_CONF=garbage_collection_threshold:0.8,max_split_size_mb=256
+MIOPEN_FIND_MODE=5                  # exhaustive MIOpen kernel search
+```
+
+**Full working test command:**
+```bash
+eval "$(micromamba shell hook --shell bash)"
+micromamba activate rocm_torch
+cd /var/home/sgm/Desktop/Dev/clara
+
+HSA_OVERRIDE_GFX_VERSION=11.0.0 \
+HIP_VISIBLE_DEVICES=0 \
+ROC_VISIBLE_DEVICES=0 \
+HSA_ENABLE_SDMA=0 \
+PYTHONPATH=. \
+python3 scripts/test_model.py --device cuda
+# → 5/5 passed, 35 MB VRAM peak
+```
+
+**Smoke test results (GPU):**
+- Forward pass: 1.3s (GPU with bf16 AMP)
+- VRAM peak: 35 MB (tiny batch, no real training yet)
+- All 5 sections: PASS
+
+### Files Modified
+- `train_mamba3.py` — added `HIP_VISIBLE_DEVICES=0` and `ROC_VISIBLE_DEVICES=0` env defaults
+- `scripts/bootstrap_local.sh` — added `HIP_VISIBLE_DEVICES`/`ROC_VISIBLE_DEVICES` exports, fixed smoke test to use GPU mode with all env vars, fixed step_train CMD array structure
+- `TRAINING_SETUP_CONTEXT.md` — updated with correct env vars and micromamba activation
+
+### Ready to Train
+```bash
+eval "$(micromamba shell hook --shell bash)"
+micromamba activate rocm_torch
+cd /var/home/sgm/Desktop/Dev/clara
+
+bash scripts/bootstrap_local.sh --train
+```

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CLARA Mamba-3 Training Pipeline — train_clara_mamba3.py
+CLARA Mamba-3 Training Pipeline — train_mamba3_kaggle.py
 
 Phase 8: Trains the 757K-param Mamba-3 model for real-time audio processing.
 Matches reference_forward.py architecture bit-for-bit.
@@ -13,13 +13,13 @@ Stage 1 (per-effect): Supervised training for saturation/compression/denoising.
 
 Usage:
     # Stage 0: identity pretraining
-    python train_clara_mamba3.py --data ~/datasets/musdb18hq/train --device cuda --steps 100000
+    python train_mamba3.py --data ~/datasets/musdb18hq/train --device cuda --steps 100000
 
     # Export weights after training
-    python train_clara_mamba3.py --export checkpoints/final.pt --output models/model_trained.bin
+    python train_mamba3.py --export checkpoints/final.pt --output models/model_trained.bin
 
     # Resume from checkpoint
-    python train_clara_mamba3.py --resume checkpoints/step_050000.pt --steps 100000
+    python train_mamba3.py --resume checkpoints/step_050000.pt --steps 100000
 """
 
 import argparse
@@ -37,8 +37,52 @@ import torch
 import torchaudio
 import torch.nn as nn
 import torch.nn.functional as F
-import soundfile as sf
+try:
+    import soundfile as sf
+    HAVE_SF = True
+except (ImportError, OSError):
+    HAVE_SF = False
+
 from torch.utils.data import Dataset, DataLoader
+
+# Kaggle auto-detection
+IS_KAGGLE = os.path.exists('/kaggle')
+
+# ── PyTorch compatibility fix (P100 = sm_60, needs torch ≤ 2.3.0) ──
+if IS_KAGGLE:
+    import subprocess, sys
+    try:
+        import torch
+        if torch.cuda.is_available():
+            cap = torch.cuda.get_device_capability(0)
+            if cap[0] < 7:
+                print(f"GPU sm_{cap[0]}{cap[1]} — downgrading PyTorch for compatibility...")
+                subprocess.check_call([
+                    sys.executable, '-m', 'pip', 'install',
+                    'torch==2.3.0', 'torchaudio==2.3.0',
+                    '--index-url', 'https://download.pytorch.org/whl/cu118',
+                    '-q'
+                ])
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+    except ImportError:
+        pass
+
+
+def _ensure_deps():
+    """Install soundfile on Kaggle if it is missing. torchaudio is always present."""
+    missing = []
+    if not HAVE_SF:
+        missing.append('soundfile')
+    try:
+        import torchaudio
+    except ImportError:
+        missing.append('torchaudio')
+    if missing and os.environ.get('KAGGLE_KERNEL_RUN_TYPE'):
+        import subprocess
+        subprocess.run([sys.executable, '-m', 'pip', 'install', '-q'] + missing, check=False)
+
+
+_ensure_deps()
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -515,7 +559,7 @@ class Mamba3Model(nn.Module):
 # ═══════════════════════════════════════════════════════════════════
 
 class AudioDataset(Dataset):
-    """Loads WAV files, returns random chunks for identity training."""
+    """Lazy-loading WAV dataset: seeks random chunks, no RAM cache."""
 
     def __init__(self, root: str, chunk_samples: int = 2048, sr: int = 44100):
         self.root = Path(root)
@@ -525,40 +569,75 @@ class AudioDataset(Dataset):
         if not self.files:
             raise FileNotFoundError(f"No .wav files found in {root}")
         print(f"  Found {len(self.files)} audio files")
-        # Pre-load all audio into RAM for fast access
-        self._cache = []
-        print(f"  Pre-loading {len(self.files)} files into RAM...")
-        for f in self.files:
-            try:
-                audio, file_sr = sf.read(str(f))
-                audio = torch.from_numpy(audio.T).float()  # [channels, samples]
-                if audio.dim() == 1:
-                    audio = audio.unsqueeze(0)
-                if file_sr != sr:
-                    # ponytail: reject mismatched SR files, user's data is all 44.1k
-                    print(f"  WARNING: {f.name} is {file_sr}Hz (expected {sr}Hz), skipping")
-                    continue
-                self._cache.append(audio.mean(dim=0))  # mono
-            except Exception as e:
-                print(f"  WARNING: skipping {f.name}: {e}")
-        self.files = [f for f, a in zip(self.files, self._cache) if a.numel() > 0]
-        self._cache = [a for a in self._cache if a.numel() > 0]
-        print(f"  Loaded {len(self._cache)} files, "
-              f"{sum(a.numel() for a in self._cache) / sr / 3600:.1f} hours of audio")
+        # ponytail: scan filenames only; seek per chunk on NVMe, fits P100 13GB RAM
 
     def __len__(self):
         return len(self.files) * 10  # 10 chunks per file per epoch
 
+    def _file_info(self, path: Path):
+        """Return (frames, samplerate) without loading audio."""
+        if HAVE_SF:
+            import soundfile as sf
+            info = sf.info(str(path))
+            return info.frames, info.samplerate
+        else:
+            info = torchaudio.info(str(path))
+            return info.num_frames, info.sample_rate
+
+    def _read_chunk(self, path: Path, start: int, frames: int):
+        """Seek-read a chunk and return mono 1-D tensor or None on failure."""
+        try:
+            if HAVE_SF:
+                import soundfile as sf
+                audio, file_sr = sf.read(str(path), start=start, frames=frames,
+                                          dtype='float32', always_2d=True)
+                audio = torch.from_numpy(audio.T).float()  # [channels, frames]
+            else:
+                audio, file_sr = torchaudio.load(str(path), frame_offset=start,
+                                                 num_frames=frames)  # [channels, frames]
+            if audio.dim() == 1:
+                audio = audio.unsqueeze(0)
+            if file_sr != self.sr:
+                print(f"  WARNING: {path.name} is {file_sr}Hz (expected {self.sr}Hz), skipping")
+                return None
+            return audio.mean(dim=0)  # mono
+        except Exception as e:
+            print(f"  WARNING: skipping {path.name}: {e}")
+            return None
+
     def __getitem__(self, idx):
-        file_idx = idx % len(self._cache)
-        audio = self._cache[file_idx]
+        file_idx = idx % len(self.files)
+        path = self.files[file_idx]
         T = self.chunk_samples
-        if audio.numel() < T:
-            # pad if too short
+
+        try:
+            n_frames, file_sr = self._file_info(path)
+        except Exception as e:
+            print(f"  WARNING: cannot read info for {path.name}: {e}")
+            return torch.zeros(T), torch.zeros(T)
+
+        if file_sr != self.sr:
+            print(f"  WARNING: {path.name} is {file_sr}Hz (expected {self.sr}Hz), skipping")
+            return torch.zeros(T), torch.zeros(T)
+
+        if n_frames < T:
+            # File shorter than chunk: load whole file and tile
+            audio = self._read_chunk(path, 0, n_frames)
+            if audio is None or audio.numel() == 0:
+                return torch.zeros(T), torch.zeros(T)
             repeats = T // audio.numel() + 1
             audio = audio.repeat(repeats)
-        start = torch.randint(0, max(1, audio.numel() - T), (1,)).item()
-        chunk = audio[start:start + T]
+            start = int(torch.randint(0, max(1, audio.numel() - T), (1,)).item())
+            chunk = audio[start:start + T]
+        else:
+            start = int(torch.randint(0, n_frames - T, (1,)).item())
+            chunk = self._read_chunk(path, start, T)
+            if chunk is None:
+                return torch.zeros(T), torch.zeros(T)
+            if chunk.numel() < T:
+                repeats = T // chunk.numel() + 1
+                chunk = chunk.repeat(repeats)[:T]
+
         # Normalize to prevent clipping
         peak = chunk.abs().max()
         if peak > 0:
@@ -587,6 +666,25 @@ def train(args):
     if device.type == 'cuda':
         print(f"  GPU: {torch.cuda.get_device_name(0)}")
 
+    if IS_KAGGLE:
+        print("Kaggle session detected")
+        if args.data:
+            data_dir = Path(args.data)
+            if data_dir.exists():
+                n_files = len(sorted(data_dir.rglob("*.wav")))
+                print(f"Dataset path: {data_dir} ({n_files} WAV files found)")
+            else:
+                print(f"WARNING: dataset path does not exist: {data_dir}")
+        print(f"Saving checkpoints to: {args.save}")
+        if device.type == 'cuda':
+            try:
+                vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+                print(f"GPU memory: {vram_gb:.1f} GB")
+                if vram_gb < 20:
+                    print("NOTE: If OOM occurs, reduce --batch or --grad-accum.")
+            except Exception:
+                pass
+
     cfg = Mamba3Config()
     model = Mamba3Model(cfg).to(device)
     print(f"Model: {model.num_params():,} params")
@@ -608,8 +706,8 @@ def train(args):
 
     if precomputed:
         # Precomputed features — zero CPU DSP during training
-        sys.path.insert(0, os.path.dirname(__file__))
-        from train_clara_dataset import CachedMelDataset
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'training'))
+        from dataset import CachedMelDataset
         dataset = CachedMelDataset(
             precomputed_dir=args.precomputed,
             split='train',
@@ -623,9 +721,16 @@ def train(args):
             num_workers=args.num_workers, pin_memory=True, drop_last=True
         )
     elif args.data:
-        dataset = AudioDataset(args.data, chunk_samples=args.chunk_samples)
-        loader = DataLoader(dataset, batch_size=args.batch, shuffle=True,
-                            num_workers=args.num_workers)
+        try:
+            dataset = AudioDataset(args.data, chunk_samples=args.chunk_samples)
+            loader = DataLoader(dataset, batch_size=args.batch, shuffle=True,
+                                num_workers=args.num_workers)
+        except FileNotFoundError as e:
+            print(f"  WARNING: {e}")
+            print("  Falling back to synthetic noise (Stage 0 smoke test)")
+            dataset = SyntheticDataset(args.chunk_samples)
+            loader = DataLoader(dataset, batch_size=args.batch, shuffle=True,
+                                num_workers=args.num_workers)
     else:
         print("  No data dir — using synthetic noise (Stage 0 smoke test)")
         dataset = SyntheticDataset(args.chunk_samples)
@@ -798,6 +903,11 @@ def train(args):
     }, final_path)
     print(f"\nFinal model saved: {final_path}")
     print(f"Total time: {(time.time() - t0) / 60:.1f} min")
+    if IS_KAGGLE:
+        print("\nDownload from Kaggle's Output tab (/kaggle/working):")
+        for p in [final_path, best_ckpt_path]:
+            if os.path.exists(p):
+                print(f"  - {p}  ({os.path.getsize(p):,} bytes)")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -863,20 +973,33 @@ def export_weights(checkpoint_path: str, output_path: str):
 
     print(f"Exported: {output_path} ({len(weight_data) + 64:,} bytes)")
     print(f"  Layers: {cfg.n_layers}, params: ~{len(weight_data)//4:,} floats")
+    if IS_KAGGLE:
+        print(f"Model export -> {output_path} — download from Kaggle's Output tab")
 
 
 # ═══════════════════════════════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════════════════════════════
 
-def main():
+def parse_args(argv=None):
+    # Kaggle/Colab/Jupyter kernels inject '-f <kernel-json>' into sys.argv.
+    # Strip it so the script can be %run or pasted into a notebook cell.
+    if argv is None:
+        argv = sys.argv[1:]
+        if len(argv) >= 2 and argv[-2] == '-f':
+            argv = argv[:-2]
+
     parser = argparse.ArgumentParser(description="CLARA Mamba-3 Training Pipeline")
-    parser.add_argument('--data', type=str, help='Path to training dataset (WAV files, on-the-fly)')
+    parser.add_argument('--data', type=str,
+                        default='/kaggle/input/datasets/ayu055/musdb18hq/musdb18hq/train' if IS_KAGGLE else None,
+                        help='Path to training dataset (WAV files, on-the-fly)')
     parser.add_argument('--precomputed', type=str,
                         help='Path to precomputed features dir (from scripts/precompute_features.py)')
     parser.add_argument('--cache', action='store_true',
                         help='RAM-cache precomputed chunks — fastest, uses ~1GB RAM per 1000 chunks')
-    parser.add_argument('--save', type=str, default='checkpoints', help='Checkpoint directory')
+    parser.add_argument('--save', type=str,
+                        default='/kaggle/working/checkpoints' if IS_KAGGLE else 'checkpoints',
+                        help='Checkpoint directory')
     parser.add_argument('--resume', type=str, help='Resume from checkpoint')
     parser.add_argument('--steps', type=int, default=100000, help='Total training steps')
     parser.add_argument('--batch', type=int, default=4, help='Batch size')
@@ -885,7 +1008,7 @@ def main():
     parser.add_argument('--weight-decay', type=float, default=1e-5, help='Weight decay')
     parser.add_argument('--clip-grad-norm', type=float, default=1.0, help='Gradient clipping')
     parser.add_argument('--chunk-samples', type=int, default=2048, help='Audio chunk length in samples')
-    parser.add_argument('--num-workers', type=int, default=2, help='DataLoader workers')
+    parser.add_argument('--num-workers', type=int, default=4, help='DataLoader workers')
     parser.add_argument('--log-every', type=int, default=100, help='Log interval (steps)')
     parser.add_argument('--ckpt-every', type=int, default=5000, help='Checkpoint interval')
     parser.add_argument('--device', type=str, default='cuda', help='Device (cuda/cpu)')
@@ -899,10 +1022,15 @@ def main():
 
     # Export mode
     parser.add_argument('--export', type=str, help='Export checkpoint to model.bin')
-    parser.add_argument('--output', type=str, default='models/model_trained.bin', help='Output .bin path')
+    parser.add_argument('--output', type=str,
+                        default='/kaggle/working/models/model_trained.bin' if IS_KAGGLE else 'models/model_trained.bin',
+                        help='Output .bin path')
 
-    args = parser.parse_args()
+    return parser.parse_args(argv)
 
+
+def main():
+    args = parse_args()
     if args.export:
         export_weights(args.export, args.output)
     else:

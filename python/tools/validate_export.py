@@ -19,7 +19,7 @@ from typing import List, Tuple
 
 # ── Expected constants (must match export script) ──────────────────
 EXPECTED_MAGIC    = 0x4D424D41
-EXPECTED_VERSION  = 2
+EXPECTED_VERSION  = 3
 
 HEADER_FORMAT = '<12I'  # 12 uint32 values (magic, version, 10 dims = 48 bytes)
 HEADER_SIZE   = 64      # padded to 64 bytes
@@ -60,14 +60,14 @@ def validate_header(header: dict) -> List[str]:
     if header['version'] != EXPECTED_VERSION:
         errors.append(f"Bad version: {header['version']} != {EXPECTED_VERSION}")
 
-    # Dimension checks (from MambaConfig.h)
+    # Dimension checks — v3 (R=8 complex pole format)
     checks = {
         'd_state':   32,
         'd_model':   128,
         'd_inner':   256,
         'nheads':    4,
         'headdim':   64,
-        'mimo_rank': 4,
+        'mimo_rank': 8,   # R=8 (was 4 in v2)
         'n_layers':  6,
         'cond_dim':  128,
     }
@@ -97,26 +97,39 @@ def read_weights(filepath: Path, header: dict) -> List[List[np.ndarray]]:
     cond_dim = header['cond_dim']
     in_proj_dim = header['in_proj_dim']
 
-    # Per-layer array sizes (must match export)
+    # Per-layer array sizes (v3 — 18 arrays per layer, R=8)
+    b_proj_out = d_state * 2   # N*2
     sizes = [
         in_proj_dim * d_model,                                    # 0: in_proj_w
         nheads,                                                    # 1: dt_bias
-        nheads * mimo_rank * d_state,                              # 2: B_bias
-        nheads * mimo_rank * d_state,                              # 3: C_bias
-        d_state,                                                   # 4: B_norm_weight
-        d_state,                                                   # 5: C_norm_weight
-        nheads * mimo_rank * headdim,                              # 6: mimo_x
-        nheads * mimo_rank * headdim,                              # 7: mimo_z
-        nheads * mimo_rank * headdim,                              # 8: mimo_o
-        nheads,                                                    # 9: D_proj
-        d_model * d_inner,                                         # 10: out_proj_w
-        2 * d_model * cond_dim,                                    # 11: film_proj_w
-        2 * nheads * cond_dim,                                     # 12: dt_film_proj_w
+        b_proj_out * mimo_rank,                                    # 2: B_proj.weight [N*2, R]
+        b_proj_out,                                                # 3: B_proj.bias [N*2]
+        headdim * b_proj_out,                                      # 4: C_proj.weight [head_dim, N*2]
+        nheads * mimo_rank * headdim,                              # 5: mimo_x
+        nheads * mimo_rank * headdim,                              # 6: mimo_z
+        nheads * mimo_rank * headdim,                              # 7: mimo_o
+        nheads,                                                    # 8: D_proj
+        d_model * d_inner,                                         # 9: out_proj.weight
+        2 * d_model * cond_dim,                                    # 10: film_proj.weight
+        2 * d_model,                                               # 11: film_proj.bias
+        2 * nheads * cond_dim,                                     # 12: dt_film_proj.weight
+        2 * nheads,                                                # 13: dt_film_proj.bias
+        nheads,                                                    # 14: log_a_real
+        nheads,                                                    # 15: a_imag
+        d_model,                                                   # 16: norm.weight
+        d_model,                                                   # 17: norm.bias
     ]
 
     layers = []
     with open(filepath, 'rb') as f:
         f.seek(HEADER_SIZE)
+
+        # Skip R8 extractor weights (prepended before layer weights in v3)
+        if header['version'] == 3:
+            r8_bytes = header['weight_data_size'] - sum(sizes) * n_layers * 4
+            if r8_bytes > 0:
+                f.seek(r8_bytes, 1)  # relative seek
+
         for li in range(n_layers):
             arrays = []
             for si, size in enumerate(sizes):

@@ -4,14 +4,14 @@
 
 **Current build:** `cmake -B build -DBUILD_TESTING=ON && cmake --build build --parallel && ctest --test-dir build` — 3/3 tests pass.
 
-**Migration plan:** `MAMBA3_MIGRATION_PLAN.md` — complete architecture, model config, C++ engine spec, training pipeline, product roadmap, risk register, and phase-by-phase implementation plan.
+**Migration plan:** `docs/MAMBA3_MIGRATION_PLAN.md` — complete architecture, model config, C++ engine spec, training pipeline, product roadmap, risk register, and phase-by-phase implementation plan.
 
 **Canonical architecture:** Load the `clara-architect` skill (`skill_view('clara-architect')`) — replaces all stale prompts.
 **Training launch:** Load the `clara-training-launch` skill (`skill_view('clara-training-launch')`) for ROCm + tmux training workflow.
 
 C++17 audio plugin running a Mamba-3 SSM via custom C++ inference engine (no ONNX Runtime). Supports Linux (stable), macOS and Windows (in progress). Produces dedicated CLAP plugins (one per effect model) sharing a common ARA2 library and inference core.
 
-**Key architecture decisions (from MAMBA3_MIGRATION_PLAN.md):**
+**Key architecture decisions (from docs/MAMBA3_MIGRATION_PLAN.md):**
 - Mamba-3 with multi-head MIMO R=4 (4 heads × 4 slots = 16 SSM streams per layer)
 - d_model=128, d_state=32, 6 layers, ~757K params
 - Custom C++ engine with flat binary weights (no ONNX, no onnxruntime)
@@ -24,7 +24,7 @@ C++17 audio plugin running a Mamba-3 SSM via custom C++ inference engine (no ONN
 - Python reference forward pass written BEFORE any C++ (prevents Python↔C++ divergence)
 - Multi-stage training: SSL pretraining → supervised per-effect → adversarial → RLHF (later)
 
-See `ADR-001` through `ADR-010` in `ADR-*.md` for architectural decisions and `ADR-WORKFLOW.md` for the ADR drafting backlog and system prompts.
+See `ADR-001` through `ADR-010` in `docs/adr/` for architectural decisions and `docs/adr/ADR-WORKFLOW.md` for the ADR drafting backlog and system prompts.
 
 ## Build
 
@@ -69,14 +69,14 @@ ONNX Runtime is REMOVED. All inference is custom C++ with flat binary weights.
 
 ## Model Export (V2 — Correct Pipeline)
 
-The **only** training pipeline that produces exportable weights is `train_clara_mamba3.py` which trains `Mamba3Model` (757K params, time-domain, Mamba-3 multi-head MIMO R=4). **Do NOT use older Mamba-1 scripts** — they produce incompatible architectures.
+The **only** training pipeline that produces exportable weights is `python/training/train_mamba3.py` which trains `Mamba3Model` (757K params, time-domain, Mamba-3 multi-head MIMO R=4). **Do NOT use older Mamba-1 scripts** — they produce incompatible architectures.
 
 ```bash
 # Train (with chunked 64-sample sub-blocks matching C++ engine)
-python train_clara_mamba3.py --data ~/datasets/musdb18hq/train --device cuda --steps 100000
+python python/training/train_mamba3.py --data ~/datasets/musdb18hq/train --device cuda --steps 100000
 
 # Export to flat binary weights
-python train_clara_mamba3.py --export checkpoints/final.pt --output models/model.bin
+python python/training/train_mamba3.py --export checkpoints/final.pt --output models/model.bin
 ```
 
 Exports `models/model.bin` using the 13-array version 2 weight format. The model has chunked sub-block processing (chunk_size=64) that exactly matches the C++ engine's `kSubBlockSize`. Requires `torch`, `numpy`.
@@ -114,7 +114,7 @@ GitHub Actions workflow at `.github/workflows/ci.yml`:
 - Builds Release on `ubuntu-22.04`, `macos-14`, and `windows-2022` with both FetchContent dependencies
 - Verifies symbol exports (`clap_entry`, `ARAGetFactory`), RPATH / install name / DLL search path, model deployment
 - Runs `clap-validator` against built `.clap` (continues on error — validator may fail without GUI)
-- Validates model round-trip via `python3 scripts/validate_export.py`
+- Validates model round-trip via `python3 python/tools/validate_export.py`
 - Uploads plugin artifact (`.clap`, `.so`/`.dylib`/`.dll`, `libMamba3Core.*`, `models/`)
 - Test job builds Debug on all three platforms with `BUILD_TESTING=ON` and runs CTest
 
@@ -129,22 +129,38 @@ Tests cover: construct/destroy lifecycle, `init()` with model path, `processBloc
 
 ## Known Gaps
 
-See `MAMBA3_MIGRATION_PLAN.md` for the complete phased migration plan. Quick reference (updated 2026-06-16):
+See `docs/MAMBA3_MIGRATION_PLAN.md` for the complete phased migration plan. Quick reference (updated 2026-06-16):
 
 | Gap | Phase | Severity | Status |
 |-----|-------|----------|--------|
-| G1 | P0 | ✅ Done | `train_clara_mamba3.py` implemented and vectorized; needs cloud training run |
+| G1 | P0 | ✅ Done | `python/training/train_mamba3.py` implemented and vectorized; needs cloud training run |
 | G2 | P0 | ✅ Done | CMake build fixed — no ONNX Runtime, `Mamba3Core` static library |
 | G5 | P1 | 🟡 High | No DAW load test — engine works in tests, needs DAW validation |
 | G6 | P2 | 🟡 High | GUI (CLAP_EXT_GUI) — JUCE or pugl needed |
 | G7 | P2 | 🟡 Low | ARA conditioning — `doUpdateMusicalContextContent()` encodes default context to 128-dim cond. Real host reading deferred. |
 | G8 | P2 | 🟡 Low | ARA analysis — `contentDirty_` flag set, SPSC AnalysisQueueDrain stub ready |
-| G9 | P3 | 🔴 Blocking | **Training pipeline** — needs `train_clara_mamba3.py` + Phase 2-5 per-effect training |
+| G9 | P3 | 🔴 Blocking | **Training pipeline** — needs `python/training/train_mamba3.py` + Phase 2-5 per-effect training |
 | G10 | P4 | 🟢 Med | ONNX manifest enforcement — will be removed (ONNX is dead) |
 | G12 | P4 | 🟡 High | macOS/Windows builds — defined in CMake but untested |
 | G13 | P4 | 🟢 Med | Install/packaging — no DEB, distrobox-export, or install script |
 
-**Training pipeline status:** `train_clara_mamba3.py` exists and matches the Mamba-3 architecture. Next step is a cloud training run on MI300X using `scripts/setup_cloud.sh`. Needs MUSDB18-HQ dataset (~100K steps, ~4-8 hr on MI300X via AMD AI Developer Cloud).
+**Training pipeline status:** `python/training/train_mamba3.py` exists and matches the Mamba-3 architecture. Next step is a cloud training run on MI300X. Needs MUSDB18-HQ dataset (~100K steps, ~4-8 hr on MI300X via AMD AI Developer Cloud).
+
+## Audit & Documentation Files
+
+| File | Purpose |
+|------|---------|
+| `docs/MAMBA3_DRIVE_AUDIT.md` | Full audit of findings from mamba3 external drive — what was transferred, what wasn't, and why |
+| `docs/ARCHITECTURE_COMPARISON.md` | Clara Mamba-3 vs mamba3 drive PerTrackProcessor — architecture, dimensions, weight format, compatibility |
+| `docs/PHASE2_ROADMAP.md` | Phase 2 conditioning work items — f0, SI-SDR, StemDataset, CLAP encoders, dependency graph |
+
+## New Scripts (Phase 1)
+
+| Script | Purpose |
+|--------|---------|
+| `python/tools/test_model.py` | 7-section smoke test: ROCm env, model build, forward, bf16 AMP, backward, memory, chunked equivalence |
+| `scripts/run_test.sh` | Smoke test launcher with ROCm env config (activates `venv_rocm`, sets `HSA_OVERRIDE_GFX_VERSION`) |
+| `scripts/setup_local.sh` | Local Ubuntu environment setup — creates `venv_rocm`, installs ROCm PyTorch + deps |
 
 ## Session Logging — Mandatory at Session Close
 

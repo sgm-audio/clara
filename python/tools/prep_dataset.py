@@ -157,7 +157,7 @@ def main() -> None:
         print(f"Errors: {errors}")
     print(f"Output directory: {out}")
     print(f"\nTrain command:")
-    print(f"  python train_clara_parallel.py --data {out} --cache")
+    print(f"  python train_mamba3.py --data {out} --device cuda")
 
 
 if __name__ == '__main__':

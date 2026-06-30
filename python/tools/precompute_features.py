@@ -314,7 +314,7 @@ def main():
           f"for all chunks ({total_chunks} total)")
     print(f"  Or ~{mb_per_chunk * 10:.0f} MB per file (~10 chunks/file)")
     print(f"\nPrecomputed features at: {args.output}")
-    print(f"Use with: python train_clara_mamba3.py --precomputed {args.output} --cache")
+    print(f"Use with: python train_mamba3.py --precomputed {args.output} --cache")
 
 
 def write_metadata(output_dir, train_out, test_out, train_files, test_files,

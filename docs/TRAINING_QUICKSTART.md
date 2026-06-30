@@ -1,6 +1,6 @@
 # CLARA Training Quick Start — Morning Guide
 
-## One Command Does Everything
+## One Command Does Everything (Cloud)
 
 ```bash
 cd ~/Desktop/Dev/clara
@@ -18,6 +18,21 @@ That's it. Downloads MUSDB18-HQ (21GB), extracts it, precomputes features, runs 
 5. **train** — Stage 0 identity training (100K steps, --precomputed --cache)
 6. **export** — Export + validate model.bin
 
+## Local Setup (Ubuntu / ROCm)
+
+For local training on an AMD APU (860M) or GPU:
+
+```bash
+# 1. Set up environment (once)
+bash scripts/setup_local.sh
+
+# 2. Verify the training stack BEFORE long runs
+bash scripts/run_test.sh
+
+# 3. Start training (auto-resumes from checkpoint if exists)
+bash scripts/run_train.sh /path/to/musdb18hq/train
+```
+
 ## Run Individual Phases
 
 ```bash
@@ -33,7 +48,7 @@ bash scripts/setup_cloud.sh export      # Export only
 If interrupted, resume from checkpoint:
 
 ```bash
-python train_clara_mamba3.py \
+python train_mamba3.py \
   --resume checkpoints_clara/checkpoint_050000.pt \
   --steps 100000 \
   --data ~/datasets/musdb18hq/train \
@@ -57,7 +72,7 @@ tail -f checkpoints_clara/train.log
 ### Export Weights
 
 ```bash
-python train_clara_mamba3.py \
+python train_mamba3.py \
   --export checkpoints_clara/final.pt \
   --output models/model_trained.bin
 ```
