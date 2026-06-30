@@ -143,7 +143,7 @@ For fastest training with the precomputed feature pipeline:
 
 ```bash
 # One-time preprocessing
-python scripts/precompute_features.py \
+python python/tools/precompute_features.py \
   --input ~/datasets/musdb18hq/train \
   --output ~/datasets/musdb18hq/precomputed
 
@@ -243,7 +243,7 @@ python python/training/train_mamba3.py \
 **With precomputed features (faster):**
 
 ```bash
-python scripts/precompute_features.py \
+python python/tools/precompute_features.py \
   --input ~/datasets/musdb18hq/train \
   --output ~/datasets/musdb18hq/precomputed
 
@@ -325,7 +325,7 @@ loss = 0.5 * MSE(pred, target)
        + 0.5 * MSE(log_mel(pred), target_mel)
 ```
 
-Target STFT magnitude and log-mel spectrogram are precomputed once by `scripts/precompute_features.py`, so target-side DSP consumes zero GPU time during training.
+Target STFT magnitude and log-mel spectrogram are precomputed once by `python/tools/precompute_features.py`, so target-side DSP consumes zero GPU time during training.
 
 ### Optional: SI-SDR
 
@@ -340,7 +340,7 @@ The precomputed pipeline removes the CPU STFT/mel bottleneck from the training l
 ### One-time preprocessing
 
 ```bash
-python scripts/precompute_features.py \
+python python/tools/precompute_features.py \
   --input ~/datasets/musdb18hq/train \
   --output ~/datasets/musdb18hq/precomputed \
   --sr 44100 \
@@ -384,8 +384,15 @@ python python/training/train_mamba3.py \
 Or use the dedicated export script:
 
 ```bash
-python scripts/export_mamba_weights.py \
-  --checkpoint checkpoints_clara/final.pt \
+python python/tools/export_mamba_weights.py \
+  --output models/model.bin
+```
+
+Or export directly from the training script:
+
+```bash
+python python/training/train_mamba3.py \
+  --export checkpoints/final.pt \
   --output models/model.bin
 ```
 

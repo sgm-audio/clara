@@ -16,7 +16,7 @@ to support R=8 complex-pole SSM before this can be used.
 This script validates the Python training pipeline export is working correctly.
 
 Usage:
-    python scripts/dump_reference_output.py --output-dir models/
+    python python/tools/dump_reference_output.py --output-dir models/
 """
 
 import argparse

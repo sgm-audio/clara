@@ -157,8 +157,8 @@ step_crepe() {
     info "This runs once, saves .crepe.npy + .pitched.npy next to each .wav"
     info "(~10-30 min for full MUSDB18-HQ, depending on CPU)"
 
-    if [ ! -f "${SCRIPT_DIR}/scripts/extract_crepe.py" ]; then
-        warn "scripts/extract_crepe.py not found — skipping CREPE extraction"
+    if [ ! -f "${SCRIPT_DIR}/python/tools/extract_crepe.py" ]; then
+        warn "python/tools/extract_crepe.py not found — skipping CREPE extraction"
         warn "  (StemDataset will use zeros for f0 conditioning — graceful degradation)"
         return 0
     fi
@@ -172,7 +172,7 @@ step_crepe() {
 
     HSA_OVERRIDE_GFX_VERSION=11.0.0 HIP_VISIBLE_DEVICES=0 ROC_VISIBLE_DEVICES=0 \
         HSA_ENABLE_SDMA=0 \
-        "${VENV_DIR}/bin/python3" "${SCRIPT_DIR}/scripts/extract_crepe.py" \
+        "${VENV_DIR}/bin/python3" "${SCRIPT_DIR}/python/tools/extract_crepe.py" \
         --data "${DATA_DIR}" \
         --device cuda \
         --model full \
@@ -196,7 +196,7 @@ step_precompute() {
     if [ ! -f "${PRECOMP_DIR}/metadata.json" ]; then
         HSA_OVERRIDE_GFX_VERSION=11.0.0 HIP_VISIBLE_DEVICES=0 ROC_VISIBLE_DEVICES=0 \
             HSA_ENABLE_SDMA=0 \
-            "${VENV_DIR}/bin/python3" "${SCRIPT_DIR}/scripts/precompute_features.py" \
+            "${VENV_DIR}/bin/python3" "${SCRIPT_DIR}/python/tools/precompute_features.py" \
             --input "${DATA_DIR}" \
             --output "${PRECOMP_DIR}" \
             --chunk-seconds 0.5 \

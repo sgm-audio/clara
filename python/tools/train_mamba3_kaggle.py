@@ -168,7 +168,7 @@ class PrecomputedMRSTFTLoss(nn.Module):
     """Loss using precomputed target STFT/mel features.
 
     Target STFT magnitude and log-mel are precomputed and stored in the
-    dataset (via scripts/precompute_features.py). This loss recomputes
+    dataset (via python/tools/precompute_features.py). This loss recomputes
     predicted STFT/mel only — target DSP is free, GPU is never starved.
 
     Ponytail: mel transform is lightweight (~0.1ms on MI300X) so we compute
@@ -994,7 +994,7 @@ def parse_args(argv=None):
                         default='/kaggle/input/datasets/ayu055/musdb18hq/musdb18hq/train' if IS_KAGGLE else None,
                         help='Path to training dataset (WAV files, on-the-fly)')
     parser.add_argument('--precomputed', type=str,
-                        help='Path to precomputed features dir (from scripts/precompute_features.py)')
+                        help='Path to precomputed features dir (from python/tools/precompute_features.py)')
     parser.add_argument('--cache', action='store_true',
                         help='RAM-cache precomputed chunks — fastest, uses ~1GB RAM per 1000 chunks')
     parser.add_argument('--save', type=str,

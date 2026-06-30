@@ -7,8 +7,8 @@ round-trips all arrays, and optionally compares against
 reference_forward.py random weights with the same seed.
 
 Usage:
-    python scripts/validate_export.py models/model.bin
-    python scripts/validate_export.py models/model.bin --seed 42
+    python python/tools/validate_export.py models/model.bin
+    python python/tools/validate_export.py models/model.bin --seed 42
 """
 
 import struct

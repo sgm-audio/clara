@@ -10,8 +10,8 @@ Format matches src/core/MambaConfig.h constants:
   Per layer: 13 float32 arrays in order
 
 Usage:
-    python scripts/export_mamba_weights.py --output models/model.bin
-    python scripts/export_mamba_weights.py --output models/model.bin --seed 42
+    python python/tools/export_mamba_weights.py --output models/model.bin
+    python python/tools/export_mamba_weights.py --output models/model.bin --seed 42
 """
 
 import struct

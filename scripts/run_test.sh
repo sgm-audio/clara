@@ -3,7 +3,7 @@
 # CLARA Smoke Test Launcher — Native Ubuntu / ROCm
 # ==============================================================================
 # Activates the local virtual environment, configures AMD ROCm variables,
-# and runs scripts/test_model.py to verify the training stack before a long run.
+# and runs python/tools/test_model.py to verify the training stack before a long run.
 # ==============================================================================
 
 set -euo pipefail

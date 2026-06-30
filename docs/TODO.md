@@ -83,7 +83,7 @@ PerTrackProcessor (R=8, spectral) is fundamentally different from the current C+
 
 ### L2. CREPE f0 extraction + wiring
 
-**File:** `scripts/extract_crepe.py`
+**File:** `python/tools/extract_crepe.py`
 **Status:** Ported from mamba3 drive, hop=256 for Clara's frame rate
 **Needs:** Wiring into PerTrackProcessor conditioning slots
 

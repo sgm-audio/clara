@@ -198,11 +198,11 @@ Conservative for 16GB UMA: `batch=2, accum=4` → effective=8
 - Bounded FIFO track cache (`cache_limit=16`)
 
 **CREPE pre-extraction is OPTIONAL** — StemDataset degrades to zeros for f0 if missing.
-`scripts/extract_crepe.py` extracts it offline (~30-60min for full dataset).
+`python/tools/extract_crepe.py` extracts it offline (~30-60min for full dataset).
 
 ### CREPE Extraction (optional but recommended)
 ```bash
-python scripts/extract_crepe.py --data ~/datasets/musdb18hq/train --device cuda --model full
+python python/tools/extract_crepe.py --data ~/datasets/musdb18hq/train --device cuda --model full
 # --model tiny for faster (lower accuracy)
 ```
 Saves alongside each WAV:
@@ -210,7 +210,7 @@ Saves alongside each WAV:
 - `<stem>.pitched.npy` — float32, 1.0=pitched, 0.0=unpitched (drums)
 
 ### CachedMelDataset (alternative, not used by default)
-- Uses precomputed `.npz` chunks from `scripts/precompute_features.py`
+- Uses precomputed `.npz` chunks from `python/tools/precompute_features.py`
 - Faster DataLoader, different from StemDataset
 - **NOT used by `train_mamba3.py`** — only `StemDataset`
 
@@ -252,8 +252,8 @@ python3 train_mamba3.py \
 
 ```bash
 cd /var/home/sgm/Desktop/Dev/clara
-PYTHONPATH=. python3 scripts/test_model.py --device cpu    # CPU smoke
-PYTHONPATH=. python3 scripts/test_model.py --device cuda    # GPU smoke (after ROCm torch)
+python3 python/tools/test_model.py --device cpu    # CPU smoke
+python3 python/tools/test_model.py --device cuda    # GPU smoke (after ROCm torch)
 ```
 
 Expected output: **5/5 sections pass**
@@ -309,14 +309,14 @@ Per-layer Mamba weights (18 arrays/layer):
 
 | File | Purpose |
 |------|---------|
-| `train_mamba3.py` | Main training script (PerTrackProcessor R=8) |
-| `loss.py` | MR-STFT + Mel-L1 + SI-SDR + NT-Xent losses |
-| `dataset.py` | StemDataset, CachedMelDataset, make_dataloaders |
+| `python/training/train_mamba3.py` | Main training script (PerTrackProcessor R=8) |
+| `python/training/loss.py` | MR-STFT + Mel-L1 + SI-SDR + NT-Xent losses |
+| `python/training/dataset.py` | StemDataset, CachedMelDataset, make_dataloaders |
 | `scripts/bootstrap_local.sh` | Full setup + training launcher |
-| `scripts/extract_crepe.py` | CREPE pitch extraction |
-| `scripts/test_model.py` | Smoke test |
-| `scripts/precompute_features.py` | STFT/mel chunk precomputation |
-| `scripts/validate_export.py` | Binary weight format validator |
+| `python/tools/extract_crepe.py` | CREPE pitch extraction |
+| `python/tools/test_model.py` | Smoke test |
+| `python/tools/precompute_features.py` | STFT/mel chunk precomputation |
+| `python/tools/validate_export.py` | Binary weight format validator |
 | `src/core/SsmInferenceCore.cpp` | C++ Mamba-3 engine (R=4, time-domain) — INCOMPATIBLE with PerTrackProcessor |
 | `TODO.md` | Current task list |
 | `MAMBA3_MIGRATION_PLAN.md` | Full architecture and migration plan |
@@ -330,7 +330,7 @@ Per-layer Mamba weights (18 arrays/layer):
 - `model.py` — PerTrackProcessor reference (R=8)
 - `train.py` — canonical training loop (no grad accum, batch=4)
 - `dataset.py` — StemDataset inline in train.py
-- `extract_crepe.py` — CREPE extraction (ported to `scripts/extract_crepe.py`)
+- `extract_crepe.py` — CREPE extraction (ported to `python/tools/extract_crepe.py`)
 - `run_train.sh` — native training runner with gfx1103 spoof
 
 ---
@@ -345,7 +345,7 @@ Per-layer Mamba weights (18 arrays/layer):
 | `gfx1152 not supported` | ROCm doesn't know gfx1152 | `HSA_OVERRIDE_GFX_VERSION=11.0.0` (gfx1100) |
 | `hipRuntimeError: out of memory` | APU shared RAM + SDMA conflict | `HSA_ENABLE_SDMA=0` |
 | Training NaN/Inf loss | Numeric instability | `--amp` (bf16 autocast, fp32 SSM) |
-| Slow DataLoader | CPU STFT bottleneck | Use `--precomputed` + `scripts/precompute_features.py` |
+| Slow DataLoader | CPU STFT bottleneck | Use `--precomputed` + `python/tools/precompute_features.py` |
 | C++ engine crash on load | Weight format mismatch | C++ is R=4, weights are R=8 v3 — H3 update needed |
 
 ---
@@ -366,7 +366,7 @@ python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 # Quick smoke test
 HSA_OVERRIDE_GFX_VERSION=11.0.0 HIP_VISIBLE_DEVICES=0 ROC_VISIBLE_DEVICES=0 \
   HSA_ENABLE_SDMA=0 \
-  PYTHONPATH=. python3 scripts/test_model.py --device cuda
+  PYTHONPATH=. python3 python/tools/test_model.py --device cuda
 # Expected: 5/5 passed, VRAM ~35 MB
 
 # Full training

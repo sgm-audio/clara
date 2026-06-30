@@ -7,7 +7,7 @@ The training dataset loads precomputed features from disk (or RAM cache),
 eliminating all CPU-side DSP computation during training.
 
 Usage (one-time preprocessing):
-    python scripts/precompute_features.py \
+    python python/tools/precompute_features.py \
         --input ~/datasets/musdb18hq/train \
         --output ~/datasets/musdb18hq/precomputed \
         --chunk-seconds 0.5 \

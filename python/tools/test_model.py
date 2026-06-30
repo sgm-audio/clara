@@ -10,8 +10,8 @@ Verifies:
   - Forward + backward gradients are finite
 
 Usage:
-  python scripts/test_model.py --device cuda
-  python scripts/test_model.py --device cpu
+  python python/tools/test_model.py --device cuda
+  python python/tools/test_model.py --device cpu
 """
 
 from __future__ import annotations
