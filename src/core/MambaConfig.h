@@ -16,64 +16,64 @@ namespace clara::mamba3 {
 
 // ── Model Dimensions ──────────────────────────────────────────────
 
-constexpr size_t MAX_D_STATE       = 32;    // SSM state dimension
-constexpr size_t MAX_D_MODEL       = 128;   // Embedding dimension
-constexpr size_t MAX_D_INNER       = 256;   // 2× d_model expansion
-constexpr size_t MAX_NHEADS        = 4;     // Parallel MIMO heads
-constexpr size_t MAX_MIMO_RANK     = 4;     // Frequency slots per head (sub/bass/mids/highs)
-constexpr size_t MAX_NUM_BC_HEADS  = 1;     // B/C groups per head
-constexpr size_t MAX_NUM_ROPE_ANGLES = 16;  // RoPE rotation angles (= d_state/2)
-constexpr size_t MAX_LAYERS        = 6;     // SSM layers in the stack
+constexpr size_t MAX_D_STATE = 32;         // SSM state dimension
+constexpr size_t MAX_D_MODEL = 128;        // Embedding dimension
+constexpr size_t MAX_D_INNER = 256;        // 2× d_model expansion
+constexpr size_t MAX_NHEADS = 4;           // Parallel MIMO heads
+constexpr size_t MAX_MIMO_RANK = 4;        // Frequency slots per head (sub/bass/mids/highs)
+constexpr size_t MAX_NUM_BC_HEADS = 1;     // B/C groups per head
+constexpr size_t MAX_NUM_ROPE_ANGLES = 16; // RoPE rotation angles (= d_state/2)
+constexpr size_t MAX_LAYERS = 6;           // SSM layers in the stack
 
 // ── Derived Dimensions ────────────────────────────────────────────
 
 // ponytail: headdim = d_inner / nheads. The migration plan lists MAX_HEADDIM=64
 // which equals 256/4. This differs from d_model/nheads (=32) — the MIMO architecture
 // uses d_inner as the channel count for head partitioning.
-constexpr size_t MAX_HEADDIM       = MAX_D_INNER / MAX_NHEADS;  // 64
+constexpr size_t MAX_HEADDIM = MAX_D_INNER / MAX_NHEADS; // 64
 
 // in_proj dimensionality: z(d_inner=256) + x(nheads*headdim=256)
 // + B(nheads*mimo_rank*d_state=512) + C(same=512)
 // + dd_dt(nheads=4) + dd_A(4) + trap(4) + angles(nheads*rope_angles=64)
 // Total: 256 + 256 + 512 + 512 + 4 + 4 + 4 + 64 = 1612
-constexpr size_t MAX_IN_PROJ_DIM   = MAX_D_INNER                          // z
-                                   + MAX_NHEADS * MAX_HEADDIM             // x per head
-                                   + MAX_NHEADS * MAX_MIMO_RANK * MAX_D_STATE  // B
-                                   + MAX_NHEADS * MAX_MIMO_RANK * MAX_D_STATE  // C
-                                   + MAX_NHEADS                           // dd_dt
-                                   + MAX_NHEADS                           // dd_A
-                                   + MAX_NHEADS                           // trap
-                                   + MAX_NHEADS * MAX_NUM_ROPE_ANGLES;   // angles
+constexpr size_t MAX_IN_PROJ_DIM = MAX_D_INNER                                // z
+                                   + MAX_NHEADS * MAX_HEADDIM                 // x per head
+                                   + MAX_NHEADS * MAX_MIMO_RANK * MAX_D_STATE // B
+                                   + MAX_NHEADS * MAX_MIMO_RANK * MAX_D_STATE // C
+                                   + MAX_NHEADS                               // dd_dt
+                                   + MAX_NHEADS                               // dd_A
+                                   + MAX_NHEADS                               // trap
+                                   + MAX_NHEADS * MAX_NUM_ROPE_ANGLES;        // angles
 
 // dt_film_proj: γ,β per head → 2 × nheads rows, COND_DIM columns
-constexpr size_t MAX_DT_FILM_ROWS  = 2 * MAX_NHEADS;   // 8
+constexpr size_t MAX_DT_FILM_ROWS = 2 * MAX_NHEADS; // 8
 
 // ── Conditioning ──────────────────────────────────────────────────
 
-constexpr size_t COND_DIM          = 128;   // DAW(8) + CLAP(32) + knobs(32) + reserved(56)
-constexpr size_t COND_DAW_OFFSET   = 0;
-constexpr size_t COND_DAW_SIZE     = 8;
-constexpr size_t COND_CLAP_OFFSET  = 8;
-constexpr size_t COND_CLAP_SIZE    = 32;
-constexpr size_t COND_KNOB_OFFSET  = 40;
-constexpr size_t COND_KNOB_SIZE    = 32;
+constexpr size_t COND_DIM = 128; // DAW(8) + CLAP(32) + knobs(32) + reserved(56)
+constexpr size_t COND_DAW_OFFSET = 0;
+constexpr size_t COND_DAW_SIZE = 8;
+constexpr size_t COND_CLAP_OFFSET = 8;
+constexpr size_t COND_CLAP_SIZE = 32;
+constexpr size_t COND_KNOB_OFFSET = 40;
+constexpr size_t COND_KNOB_SIZE = 32;
 constexpr size_t COND_RESERVED_OFFSET = 72;
-constexpr size_t COND_RESERVED_SIZE   = 56;
+constexpr size_t COND_RESERVED_SIZE = 56;
 
 static_assert(COND_DAW_SIZE + COND_CLAP_SIZE + COND_KNOB_SIZE + COND_RESERVED_SIZE == COND_DIM,
               "COND_DIM must equal sum of all conditioning slot groups");
 
 // ── Block Processing ──────────────────────────────────────────────
 
-constexpr size_t MAX_CHUNK_SIZE    = 64;    // Samples per SSM sub-block
-constexpr size_t MAX_BLOCK_SIZE    = 512;   // Max samples per processBlock() call
-constexpr size_t SSM_STATE_NORM_INTERVAL = 4096;  // Periodic state re-normalization
+constexpr size_t MAX_CHUNK_SIZE = 64;            // Samples per SSM sub-block
+constexpr size_t MAX_BLOCK_SIZE = 512;           // Max samples per processBlock() call
+constexpr size_t SSM_STATE_NORM_INTERVAL = 4096; // Periodic state re-normalization
 
 // ── Weight Format (Version 2) ─────────────────────────────────────
 
-constexpr uint32_t WEIGHT_MAGIC    = 0x4D424D41;  // "MBMA"
-constexpr uint32_t WEIGHT_VERSION  = 2;
-constexpr size_t   WEIGHTS_PER_LAYER  = 13;  // Arrays per layer in flat binary
+constexpr uint32_t WEIGHT_MAGIC = 0x4D424D41; // "MBMA"
+constexpr uint32_t WEIGHT_VERSION = 2;
+constexpr size_t WEIGHTS_PER_LAYER = 13; // Arrays per layer in flat binary
 
 // File header: 8 fields × 8 bytes = 64 bytes
 //   [0] magic(4) + version(4)
@@ -90,28 +90,28 @@ constexpr size_t   WEIGHTS_PER_LAYER  = 13;  // Arrays per layer in flat binary
 //  [11..15] reserved
 
 // Per-layer array element counts (13 arrays, all float32)
-constexpr size_t W_IN_PROJ_ELEMS       = MAX_IN_PROJ_DIM * MAX_D_MODEL;           // 206336
-constexpr size_t W_DT_BIAS_ELEMS       = MAX_NHEADS;                               // 4
-constexpr size_t W_B_BIAS_ELEMS        = MAX_NHEADS * MAX_MIMO_RANK * MAX_D_STATE; // 512
-constexpr size_t W_C_BIAS_ELEMS        = W_B_BIAS_ELEMS;                           // 512
-constexpr size_t W_B_NORM_ELEMS        = MAX_D_STATE;                              // 32
-constexpr size_t W_C_NORM_ELEMS        = MAX_D_STATE;                              // 32
-constexpr size_t W_MIMO_X_ELEMS        = MAX_NHEADS * MAX_MIMO_RANK * MAX_HEADDIM; // 1024
-constexpr size_t W_MIMO_Z_ELEMS        = W_MIMO_X_ELEMS;                            // 1024
-constexpr size_t W_MIMO_O_ELEMS        = W_MIMO_X_ELEMS;                            // 1024
-constexpr size_t W_D_PROJ_ELEMS        = MAX_NHEADS;                               // 4
-constexpr size_t W_OUT_PROJ_ELEMS      = MAX_D_MODEL * MAX_D_INNER;               // 32768
-constexpr size_t W_FILM_PROJ_ELEMS     = 2 * MAX_D_MODEL * COND_DIM;              // 32768
-constexpr size_t W_DT_FILM_PROJ_ELEMS  = 2 * MAX_NHEADS * COND_DIM;               // 1024
+constexpr size_t W_IN_PROJ_ELEMS = MAX_IN_PROJ_DIM * MAX_D_MODEL;           // 206336
+constexpr size_t W_DT_BIAS_ELEMS = MAX_NHEADS;                              // 4
+constexpr size_t W_B_BIAS_ELEMS = MAX_NHEADS * MAX_MIMO_RANK * MAX_D_STATE; // 512
+constexpr size_t W_C_BIAS_ELEMS = W_B_BIAS_ELEMS;                           // 512
+constexpr size_t W_B_NORM_ELEMS = MAX_D_STATE;                              // 32
+constexpr size_t W_C_NORM_ELEMS = MAX_D_STATE;                              // 32
+constexpr size_t W_MIMO_X_ELEMS = MAX_NHEADS * MAX_MIMO_RANK * MAX_HEADDIM; // 1024
+constexpr size_t W_MIMO_Z_ELEMS = W_MIMO_X_ELEMS;                           // 1024
+constexpr size_t W_MIMO_O_ELEMS = W_MIMO_X_ELEMS;                           // 1024
+constexpr size_t W_D_PROJ_ELEMS = MAX_NHEADS;                               // 4
+constexpr size_t W_OUT_PROJ_ELEMS = MAX_D_MODEL * MAX_D_INNER;              // 32768
+constexpr size_t W_FILM_PROJ_ELEMS = 2 * MAX_D_MODEL * COND_DIM;            // 32768
+constexpr size_t W_DT_FILM_PROJ_ELEMS = 2 * MAX_NHEADS * COND_DIM;          // 1024
 
-constexpr size_t WEIGHT_FLOATS_PER_LAYER = W_IN_PROJ_ELEMS + W_DT_BIAS_ELEMS
-    + W_B_BIAS_ELEMS + W_C_BIAS_ELEMS + W_B_NORM_ELEMS + W_C_NORM_ELEMS
-    + W_MIMO_X_ELEMS + W_MIMO_Z_ELEMS + W_MIMO_O_ELEMS + W_D_PROJ_ELEMS
-    + W_OUT_PROJ_ELEMS + W_FILM_PROJ_ELEMS + W_DT_FILM_PROJ_ELEMS;  // 277064
+constexpr size_t WEIGHT_FLOATS_PER_LAYER = W_IN_PROJ_ELEMS + W_DT_BIAS_ELEMS + W_B_BIAS_ELEMS + W_C_BIAS_ELEMS +
+                                           W_B_NORM_ELEMS + W_C_NORM_ELEMS + W_MIMO_X_ELEMS + W_MIMO_Z_ELEMS +
+                                           W_MIMO_O_ELEMS + W_D_PROJ_ELEMS + W_OUT_PROJ_ELEMS + W_FILM_PROJ_ELEMS +
+                                           W_DT_FILM_PROJ_ELEMS; // 277064
 
-constexpr size_t WEIGHT_BYTES_PER_LAYER  = WEIGHT_FLOATS_PER_LAYER * sizeof(float);
-constexpr size_t TOTAL_WEIGHT_BYTES      = WEIGHT_BYTES_PER_LAYER * MAX_LAYERS;
-constexpr size_t TOTAL_FILE_SIZE         = 64 + TOTAL_WEIGHT_BYTES;
+constexpr size_t WEIGHT_BYTES_PER_LAYER = WEIGHT_FLOATS_PER_LAYER * sizeof(float);
+constexpr size_t TOTAL_WEIGHT_BYTES = WEIGHT_BYTES_PER_LAYER * MAX_LAYERS;
+constexpr size_t TOTAL_FILE_SIZE = 64 + TOTAL_WEIGHT_BYTES;
 
 // ── State Memory ──────────────────────────────────────────────────
 
@@ -120,23 +120,20 @@ constexpr size_t TOTAL_FILE_SIZE         = 64 + TOTAL_WEIGHT_BYTES;
 // k_state        = nheads × mimo_rank × d_state = 4 × 4 × 32 = 512
 // angle_state    = nheads × rope_angles = 4 × 16 = 64
 // Total per layer: 8192 + 8192 + 512 + 64 = 16960
-constexpr size_t SSM_REAL_FLOATS   = MAX_NHEADS * MAX_HEADDIM * MAX_D_STATE;     // 8192
-constexpr size_t SSM_IMAG_FLOATS   = MAX_NHEADS * MAX_HEADDIM * MAX_D_STATE;     // 8192
-constexpr size_t K_STATE_FLOATS    = MAX_NHEADS * MAX_MIMO_RANK * MAX_D_STATE;   // 512
-constexpr size_t ANGLE_STATE_FLOATS = MAX_NHEADS * MAX_NUM_ROPE_ANGLES;          // 64
-constexpr size_t STATE_FLOATS_PER_LAYER = SSM_REAL_FLOATS + SSM_IMAG_FLOATS
-                                        + K_STATE_FLOATS + ANGLE_STATE_FLOATS;   // 16960
+constexpr size_t SSM_REAL_FLOATS = MAX_NHEADS * MAX_HEADDIM * MAX_D_STATE;  // 8192
+constexpr size_t SSM_IMAG_FLOATS = MAX_NHEADS * MAX_HEADDIM * MAX_D_STATE;  // 8192
+constexpr size_t K_STATE_FLOATS = MAX_NHEADS * MAX_MIMO_RANK * MAX_D_STATE; // 512
+constexpr size_t ANGLE_STATE_FLOATS = MAX_NHEADS * MAX_NUM_ROPE_ANGLES;     // 64
+constexpr size_t STATE_FLOATS_PER_LAYER =
+    SSM_REAL_FLOATS + SSM_IMAG_FLOATS + K_STATE_FLOATS + ANGLE_STATE_FLOATS; // 16960
 
-constexpr size_t TOTAL_STATE_FLOATS = STATE_FLOATS_PER_LAYER * MAX_LAYERS;       // 101760
+constexpr size_t TOTAL_STATE_FLOATS = STATE_FLOATS_PER_LAYER * MAX_LAYERS; // 101760
 
 // ── Asset Verification ────────────────────────────────────────────
 
 static_assert(MAX_D_INNER == 2 * MAX_D_MODEL, "MAX_D_INNER must be 2× MAX_D_MODEL");
-static_assert(MAX_NHEADS * MAX_HEADDIM == MAX_D_INNER,
-              "MAX_NHEADS × MAX_HEADDIM must equal MAX_D_INNER");
-static_assert(MAX_NUM_ROPE_ANGLES == MAX_D_STATE / 2,
-              "MAX_NUM_ROPE_ANGLES must equal MAX_D_STATE / 2");
-static_assert(MAX_CHUNK_SIZE <= MAX_BLOCK_SIZE,
-              "MAX_CHUNK_SIZE must be ≤ MAX_BLOCK_SIZE");
+static_assert(MAX_NHEADS * MAX_HEADDIM == MAX_D_INNER, "MAX_NHEADS × MAX_HEADDIM must equal MAX_D_INNER");
+static_assert(MAX_NUM_ROPE_ANGLES == MAX_D_STATE / 2, "MAX_NUM_ROPE_ANGLES must equal MAX_D_STATE / 2");
+static_assert(MAX_CHUNK_SIZE <= MAX_BLOCK_SIZE, "MAX_CHUNK_SIZE must be ≤ MAX_BLOCK_SIZE");
 
-}  // namespace clara::mamba3
+} // namespace clara::mamba3

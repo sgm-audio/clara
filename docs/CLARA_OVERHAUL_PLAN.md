@@ -325,16 +325,16 @@ parser.add_argument('--output', default='models/model_trained.bin')
 def train(args):
     amp = args.amp and device.type == 'cuda'
     autocast_dtype = torch.bfloat16 if amp else torch.float32
-    
+
     # ...
-    
+
     while step < n_steps:
         for batch in dataloader:
             with torch.autocast(device_type=device, dtype=autocast_dtype, enabled=amp):
                 # Forward pass — includes STFT, R* features, Mamba, decoder
                 out = model(target_wave, target_crepe, other_embs=None)
                 loss_dict = task_loss(out['output_stft'], target_wave, model)
-            
+
             # SSM recurrence is inside model.forward()
             # Mamba3MIMOLayer disables autocast internally for fp32 complex math
 ```
@@ -467,18 +467,18 @@ def _discretize_trapezoidal(self, a_real, a_imag, dt):
     a_real: (H,) — log-space decay (will be negated)
     a_imag: (H,) — oscillator frequencies
     dt: (B, T, H) — per-step step sizes
-    
+
     Returns:
       A_d: (B, T, H) complex — state transition
       B_d_scale: (B, T, H) complex — input scaling
     """
     a_cont = torch.complex(-torch.exp(a_real), a_imag)  # (H,) complex
-    
+
     half_dt_a = torch.complex(
         dt * (-torch.exp(a_real)) / 2,
         dt * a_imag / 2
     )  # (B, T, H) complex
-    
+
     A_d = (1 + half_dt_a) / (1 - half_dt_a)       # |A_d| ≤ 1
     B_d_scale = dt / (1 - half_dt_a)               # complex scaling
     return A_d, B_d_scale
@@ -507,25 +507,25 @@ def _ssm_scan_parallel(self, x, A_d, B_d):
     x: (B, T, R) — MIMO input features
     A_d: (B, T, H) complex
     B_d: (B, T, H) complex
-    
+
     Returns: (B, T, H, head_dim) — output sequence
     """
     B_batch, T, R = x.shape
-    
+
     # MIMO B: R → N complex per head
     bc = self.B_proj(x)  # (B, T, N*2)
     B_real, B_imag = bc.chunk(2, dim=-1)
     B_vec = torch.complex(B_real, B_imag)  # (B, T, N) complex
-    
+
     # u_t = B_d_t * B_vec_t
     a = A_d.unsqueeze(-1)              # (B, T, H, 1)
     b_d = B_d.unsqueeze(-1)            # (B, T, H, 1)
     b_vec = B_vec.unsqueeze(2)         # (B, T, 1, N)
     u = b_d * b_vec                    # (B, T, H, N) complex
-    
+
     # Parallel associative scan (O(log T) steps)
     h = self._parallel_associative_scan(a, u)  # (B, T, H, N) complex
-    
+
     # Readout: cat real+imag → C projection
     h_cat = torch.cat([h.real, h.imag], dim=-1)  # (B, T, H, N*2)
     out = self.C_proj(h_cat)                      # (B, T, H, head_dim)
@@ -538,11 +538,11 @@ def _ssm_scan_sequential(self, x, A_d, B_d):
     """O(T) sequential scan matching C++ engine step-by-step."""
     B, T, R = x.shape
     H, N = self.H, self.N
-    
+
     bc = self.B_proj(x)
     B_real, B_imag = bc.chunk(2, dim=-1)
     B_vec = torch.complex(B_real, B_imag)
-    
+
     h = torch.zeros(B, H, N, dtype=torch.complex64, device=x.device)
     outputs = []
     for t in range(T):
@@ -565,65 +565,65 @@ class R8FeatureExtractor(nn.Module):
     """
     Extracts R=8 structured spectral features per frame:
     [sub_bass, bass, low_mid, mid, high_mid, air, transient, centroid]
-    
+
     Band boundaries are learnable (initialized from musical Hz ranges).
     Learnable = soft triangular filterbank with trainable center freqs.
     """
-    
+
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
         sr = cfg.sample_rate
         n_fft = cfg.n_fft  # 2048
-        
+
         # Frequency axis
         self.register_buffer("freqs", torch.linspace(0, sr/2, n_fft//2 + 1))
-        
+
         # Initialize band centers (Hz) at geometric mean of boundaries
         # For R=6 band pairs (sub_ass, bass, low_mid, mid, high_mid, air)
         band_pairs = [(20,80), (80,250), (250,800), (800,2500), (2500,8000), (8000,20000)]
         centers_hz = [math.sqrt(lo*hi) for (lo,hi) in band_pairs]
-        
+
         # Store in log-Hz for unconstrained optimization
         self.log_centers = nn.Parameter(torch.log(torch.tensor(centers_hz)))
         self.log_bandwidths = nn.Parameter(torch.full((6,), math.log(0.5)))  # ~1/3 octave
-        
+
         # Transient detector: 1D conv on waveform envelope
         self.transient_conv = nn.Conv1d(1, 1, kernel_size=5, padding=2, bias=False)
-        
+
         # Normalization
         self.log_max_freq = math.log(sr / 2)
-        
+
         # Project R=8 → d_model
         self.input_proj = nn.Linear(8, cfg.d_model)
-    
+
     def _soft_band_energy(self, mag_sq):
         """Soft triangular filterbank. mag_sq: (B, T, F) → (B, T, 6) log-energies."""
         freqs = self.freqs.view(1, 1, -1, 1)
         centers = torch.exp(self.log_centers).view(1, 1, 1, -1)
         bws = torch.exp(self.log_bandwidths).view(1, 1, 1, -1)
-        
+
         log_ratio = torch.log(freqs.clamp(min=1.0) / centers)
         weights = F.relu(1.0 - log_ratio.abs() / bws)
         weights = weights / (weights.sum(dim=2, keepdim=True).clamp(min=1e-8))
-        
+
         energies = (mag_sq.unsqueeze(-1) * weights).sum(dim=2)
         return torch.log1p(energies)
-    
+
     def _transient_density(self, waveform, T):
         """Per-frame onset density. waveform: (B, L), T: target frames."""
         envelope = waveform.abs().unsqueeze(1)  # (B, 1, L)
         diff = F.relu(self.transient_conv(envelope))
         pooled = F.adaptive_avg_pool1d(diff, T)
         return pooled.transpose(1, 2)
-    
+
     def _spectral_centroid(self, mag_sq):
         """Normalized log spectral centroid."""
         freqs = self.freqs.clamp(min=1.0)
         weights = mag_sq / (mag_sq.sum(dim=-1, keepdim=True).clamp(min=1e-8))
         centroid_hz = (weights * freqs).sum(dim=-1, keepdim=True)
         return torch.log(centroid_hz.clamp(min=1.0)) / self.log_max_freq
-    
+
     def forward(self, waveform, mag_sq):
         """
         waveform: (B, L)
@@ -634,10 +634,10 @@ class R8FeatureExtractor(nn.Module):
         T = mag_sq.shape[1]
         transient   = self._transient_density(waveform, T)   # (B, T, 1)
         centroid    = self._spectral_centroid(mag_sq)        # (B, T, 1)
-        
+
         r8 = torch.cat([band_energy, transient, centroid], dim=-1)  # (B, T, 8)
         return self.input_proj(r8)  # (B, T, d_model)
-    
+
     def extract_r8_raw(self, waveform, mag_sq):
         """Return raw R=8 features (before d_model projection) for MIMO input."""
         band_energy = self._soft_band_energy(mag_sq)
@@ -673,7 +673,7 @@ class SemanticEncoder(nn.Module):
             nn.GELU(),
             nn.Linear(cfg.d_model, cfg.d_model),
         )
-    
+
     def forward(self, mel, r8, return_sequence=False):
         """
         mel: (B, T, n_mels)
@@ -685,13 +685,13 @@ class SemanticEncoder(nn.Module):
         x = self.conv_stem[2](x)      # Conv1d
         x = x.transpose(1, 2)         # (B, T, d_model)
         x = self.conv_stem[3](x)      # LayerNorm
-        
+
         for layer in self.mamba_layers:
             x = layer(x, r8)          # No conditioning in encoder
-        
+
         if return_sequence:
             return x                  # (B, T, d_model)
-        
+
         pooled = x.mean(dim=1)
         return F.normalize(self.proj_head(pooled), dim=-1)
 ```
@@ -709,7 +709,7 @@ class F0Conditioner(nn.Module):
             nn.Linear(128, cfg.d_f0),   # 32-dim
             nn.LayerNorm(cfg.d_f0),
         )
-    
+
     def forward(self, crepe_probs):  # (B, T, 360)
         return self.proj(crepe_probs)  # (B, T, 32)
 ```
@@ -731,7 +731,7 @@ class CrossTrackAggregator(nn.Module):
         )
         self.proj = nn.Linear(cfg.d_semantic, cfg.d_cross)  # → 64-dim
         self.norm = nn.LayerNorm(cfg.d_cross)
-    
+
     def forward(self, target_emb, other_embs):
         """
         target_emb: (B, T, D)
@@ -740,10 +740,10 @@ class CrossTrackAggregator(nn.Module):
         """
         B, T, D = target_emb.shape
         K = other_embs.shape[1]
-        
+
         q = target_emb.reshape(B*T, 1, D)
         kv = other_embs.permute(0, 2, 1, 3).reshape(B*T, K, D)
-        
+
         ctx, _ = self.attn(q, kv, kv)
         ctx = ctx.squeeze(1).reshape(B, T, D)
         return self.norm(self.proj(ctx))
@@ -764,18 +764,18 @@ def forward(self, x, x_r8, cond=None):
         gb = self.film_proj(cond)
         gamma, beta = gb.chunk(2, dim=-1)
         x = x * (1 + gamma) + beta
-    
+
     # 2. Δ projection + FiLM on Δ
     dt_raw = self.dt_proj(x)
     if cond is not None:
         dt_gb = self.dt_film_proj(cond)
         dt_g, dt_b = dt_gb.chunk(2, dim=-1)
         dt_raw = dt_raw * (1 + dt_g) + dt_b
-    
+
     # 3. Softplus + clamp
     dt = F.softplus(dt_raw + self.dt_bias)
     dt = dt.clamp(min=self.dt_min, max=self.dt_max)
-    
+
     # 4. Trapezoidal discretization + MIMO SSM scan (fp32 forced)
     with torch.autocast(device_type=x.device.type, enabled=False):
         dt_fp32 = dt.float()
@@ -784,10 +784,10 @@ def forward(self, x, x_r8, cond=None):
             self.log_a_real.float(), self.a_imag.float(), dt_fp32
         )
         out = self._ssm_scan_parallel(x_r8_fp32, A_d, B_d_scale)
-    
+
     out = out.to(x.dtype)
     out = out.reshape(B, T, -1)  # flatten heads
-    
+
     # 5. Output projection + residual
     out = self.out_proj(out)
     return self.norm(out + x)
@@ -804,13 +804,13 @@ class PerTrackProcessor(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        
+
         # Feature extraction
         self.r8_extractor = R8FeatureExtractor(cfg)
         self.f0_cond = F0Conditioner(cfg)
         self.semantic_enc = SemanticEncoder(cfg)
         self.cross_track = CrossTrackAggregator(cfg)
-        
+
         # Conditioning MLP
         cond_in = cfg.d_semantic + cfg.d_f0 + cfg.d_cross + 4  # + loudness(4)
         self.cond_mlp = nn.Sequential(
@@ -819,12 +819,12 @@ class PerTrackProcessor(nn.Module):
             nn.Linear(cfg.cond_dim, cfg.cond_dim),
             nn.LayerNorm(cfg.cond_dim),
         )
-        
+
         # Mamba stack
         self.mamba_layers = nn.ModuleList([
             Mamba3MIMOLayer(cfg) for _ in range(cfg.n_layers)
         ])
-        
+
         # Decoder: d_model → complex STFT bins
         F_bins = cfg.n_fft // 2 + 1
         self.decoder = nn.Sequential(
@@ -832,15 +832,15 @@ class PerTrackProcessor(nn.Module):
             nn.GELU(),
             nn.Linear(cfg.d_model * 2, 2 * F_bins),  # real + imag
         )
-        
+
         # Mel projection (learnable, non-negative init)
         self.mel_proj = nn.Linear(F_bins, cfg.n_mels, bias=False)
         with torch.no_grad():
             self.mel_proj.weight.abs_()
-        
+
         # Pre-register STFT window
         self.register_buffer("stft_window", torch.hann_window(cfg.n_fft))
-    
+
     def _compute_stft(self, waveform):
         stft = torch.stft(waveform, n_fft=self.cfg.n_fft,
                           hop_length=self.cfg.hop_length,
@@ -848,16 +848,16 @@ class PerTrackProcessor(nn.Module):
                           return_complex=True, normalized=False)
         stft = stft.transpose(1, 2)  # (B, T, F)
         return stft.abs().pow(2), stft
-    
+
     def _compute_mel(self, mag_sq):
         projected = self.mel_proj(mag_sq).clamp(min=0.0)
         return torch.log1p(projected)
-    
+
     def _loudness_features(self, waveform, T):
         """4-dim: [rms, peak, crest_factor, lufs_approx] per frame."""
         # ... per-frame loudness computation ...
         pass  # Same as mamba3 reference
-    
+
     def forward(self, waveform, crepe_probs, other_embs=None):
         """
         waveform: (B, L)
@@ -867,46 +867,46 @@ class PerTrackProcessor(nn.Module):
         """
         mag_sq, stft_in = self._compute_stft(waveform)
         T = mag_sq.shape[1]
-        
+
         # Features
         x = self.r8_extractor(waveform, mag_sq)             # (B, T, d_model)
         r8_raw = self.r8_extractor.extract_r8_raw(waveform, mag_sq)  # (B, T, R)
         mel = self._compute_mel(mag_sq)                     # (B, T, n_mels)
-        
+
         # Semantic embedding (per-frame)
         sem_emb = self.semantic_enc(mel, r8_raw, return_sequence=True)
-        
+
         # F0 conditioning
         f0_emb = self.f0_cond(crepe_probs)
-        
+
         # Cross-track context
         if other_embs is not None:
             cross_ctx = self.cross_track(sem_emb, other_embs)
         else:
             cross_ctx = torch.zeros(waveform.shape[0], T, self.cfg.d_cross, device=waveform.device)
-        
+
         # Build conditioning vector
         loudness = self._loudness_features(waveform, T)
         cond_in = torch.cat([sem_emb, f0_emb, cross_ctx, loudness], dim=-1)
         cond = self.cond_mlp(cond_in)  # (B, T, cond_dim)
-        
+
         # Mamba stack
         for layer in self.mamba_layers:
             x = layer(x, r8_raw, cond=cond)
-        
+
         # Decode to STFT
         stft_pred = self.decoder(x)
         F_bins = self.cfg.n_fft // 2 + 1
         stft_real = stft_pred[..., :F_bins].float()
         stft_imag = stft_pred[..., F_bins:].float()
         stft_out = torch.complex(stft_real, stft_imag)
-        
+
         return {
             'output_stft': stft_out,
             'track_emb': sem_emb,
             'r8_raw': r8_raw,
         }
-    
+
     def waveform_from_stft(self, stft):
         """ISTFT reconstruction."""
         return torch.istft(stft.transpose(1, 2),
@@ -968,7 +968,7 @@ public:
     // Called on [Main] thread
     bool init(const float* weightData, size_t layerIndex);
     void resetState();
-    
+
     // Called on [Audio] thread
     void processSample(const float* input,  // [d_model]
                        const float* cond,   // [COND_DIM]
@@ -981,15 +981,15 @@ public:
 private:
     // Weights (15 arrays per layer, all float32)
     // Same base as v2 but: no RoPE angles, added log_a_real, a_imag
-    
+
     // Complex state (replaces real+angle state from v2)
     alignas(64) float stateReal_[MAX_NHEADS * MAX_HEADDIM * MAX_D_STATE];
     alignas(64) float stateImag_[MAX_NHEADS * MAX_HEADDIM * MAX_D_STATE];
-    
+
     // Complex pole parameters (loaded from weights)
     float logAReal_[MAX_NHEADS];
     float AImag_[MAX_NHEADS];
-    
+
     // Methods
     void stepComplexSsm(const float* inProjOutput, float* output);
     void discretizeTrapezoidal(float dt, int head,
@@ -1013,30 +1013,30 @@ void SsmBlock::stepComplexSsm(const float* inProjOutput, float* output) {
     const float* dd_A_imag = dd_A_real + nheads;
     const float* trap_data = dd_A_imag + nheads;
     // (trap_data unused in complex pole version — trapezoidal is now the only method)
-    
+
     // 2. Per-head processing
     for (int h = 0; h < nheads; ++h) {
         // dt = softplus(dd_dt[h] + dtBias[h])
         float dt = softplus(dd_dt[h] + dtBias_[h]);
         dt = std::clamp(dt, DT_MIN, DT_MAX);
-        
+
         // Complex trapezoidal discretization
         // A = -exp(logAReal[h]) + j*AImag[h]
         float A_real = -std::exp(logAReal_[h]);
         float A_imag = AImag_[h] + dd_A_imag[h];  // input-modulated frequency
-        
+
         // A_d = (1 + dt*(A_r+jA_i)/2) / (1 - dt*(A_r+jA_i)/2)
         float half_dt_real = dt * A_real * 0.5f;
         float half_dt_imag = dt * A_imag * 0.5f;
-        
+
         float denom_real = 1.0f - half_dt_real;
         float denom_imag = -half_dt_imag;
         float denom_mag = denom_real * denom_real + denom_imag * denom_imag;
-        
+
         // A_d
         float A_d_real = ((1.0f + half_dt_real) * denom_real - half_dt_imag * denom_imag) / denom_mag;
         float A_d_imag = ((1.0f + half_dt_real) * denom_imag + half_dt_imag * denom_real) / denom_mag;
-        
+
         // B_d = dt / (1 - dt*A/2)
         float B_d_real = dt * denom_real / denom_mag;
         float B_d_imag = dt * (-denom_imag) / denom_mag;  // dt * conj(1 - dt*A/2) / |...|^2
@@ -1044,30 +1044,30 @@ void SsmBlock::stepComplexSsm(const float* inProjOutput, float* output) {
         // conj(1 - half_dt_a) = 1 - half_dt_real + j*half_dt_imag
         B_d_imag = dt * half_dt_imag / denom_mag;  // correct
         B_d_real = dt * (1.0f - half_dt_real) / denom_mag;
-        
+
         // 3. SSM recurrence: h[t] = A_d * h[t-1] + B_d * input
         int state_idx = h * headdim * d_state;
         int mimo_slot = 0;  // Which MIMO slot does the current input activate?
         float mimo_input_real = 0.0f, mimo_input_imag = 0.0f;
-        
+
         // MIMO: sum over R slots of B_proj[h][r][s] * x_r8[r]
         // (B is projected from x_h via MIMO weights, not done here)
-        
+
         // For each d_state component:
         for (int s = 0; s < d_state; ++s) {
             float old_real = stateReal_[state_idx + s];
             float old_imag = stateImag_[state_idx + s];
-            
+
             // B_d * input_contribution
             float input_real = /* B_proj_contribution per slot and state */;
             float input_imag = 0.0f;  // B projection output is real → complex
-            
+
             stateReal_[state_idx + s] = A_d_real * old_real - A_d_imag * old_imag
                                        + B_d_real * input_real - B_d_imag * input_imag;
             stateImag_[state_idx + s] = A_d_real * old_imag + A_d_imag * old_real
                                        + B_d_real * input_imag + B_d_imag * input_real;
         }
-        
+
         // 4. Readout: C_normed[h][r][s] * state[h][d][s] summed over s,r
         // Then z-gate, output projection, D skip, residual
         // (Matches existing z-gate + output logic)
@@ -1125,7 +1125,7 @@ class StemDataset(Dataset):
     """
     Multi-stem dataset for MUSDB18-HQ.
     Returns (target_stem, mixture, other_stems, target_crepe, other_crepe).
-    
+
     Directory layout:
       root/
         track_name/
@@ -1135,9 +1135,9 @@ class StemDataset(Dataset):
           other.wav         + other.crepe.npy + other.pitched.npy
           mixture.wav
     """
-    
+
     STEM_NAMES = ['bass', 'drums', 'vocals', 'other']
-    
+
     def __init__(self, root, cfg, clip_seconds=4.0, augment=True,
                  cache_limit=16, is_val=False):
         self.root = Path(root)
@@ -1145,52 +1145,52 @@ class StemDataset(Dataset):
         self.clip_len = int(clip_seconds * cfg.sample_rate)
         self.augment = augment and not is_val
         self.is_val = is_val
-        
+
         # Discover tracks
         self.tracks = sorted([
             d for d in self.root.iterdir()
             if d.is_dir() and all((d / f"{s}.wav").exists() for s in self.STEM_NAMES)
         ])
         assert len(self.tracks) > 0, f"No complete tracks found in {root}"
-        
+
         # LRU cache
         self.cache_limit = cache_limit
         self.cache_queue = []
         self.cache = {}  # {track_dir: {'stems': {}, 'crepe': {}}}
-    
+
     def __len__(self):
         return len(self.tracks) * len(self.STEM_NAMES) * 4
-    
+
     def _load_stem(self, track_dir, stem_name):
         """Load and cache a stem WAV file."""
         # LRU cache logic (same as mamba3 reference)
         # Uses soundfile to avoid torchcodec/ffmpeg issues
         pass
-    
+
     def _load_crepe(self, track_dir, stem_name):
         """Load pre-extracted CREPE f0 .npy file."""
         crepe_path = track_dir / f"{stem_name}.crepe.npy"
         pitched_path = track_dir / f"{stem_name}.pitched.npy"
-        
+
         if not crepe_path.exists():
             return torch.zeros(T, 360, dtype=torch.float32), 0.0
-        
+
         probs = np.load(str(crepe_path)).astype(np.float32)
         pitched = float(np.load(str(pitched_path)))
         return torch.from_numpy(probs), pitched
-    
+
     def _crop_with_crepe(self, wav, crepe):
         """Sync-crop waveform and CREPE to clip_len."""
         # See mamba3 reference for implementation
         # Converts sample offset to frame offset using hop_length
         pass
-    
+
     def _pitch_shift(self, wav, crepe, semitones):
         """Pitch-shift waveform and roll CREPE 360-D vector by matching bins."""
         # Resample waveform: new_freq = int(44100 * 2^(semitones/12))
         # Roll CREPE: bins_shift = int(round(5 * semitones))  # 20 cents/bin
         pass
-    
+
     def __getitem__(self, idx):
         """Returns dict with target, other_stems, target_crepe, other_crepe, etc."""
         # Same logic as mamba3 StemDataset
@@ -1262,7 +1262,7 @@ class NTXentLoss(nn.Module):
     def __init__(self, temperature=0.1):
         super().__init__()
         self.T = temperature
-    
+
     def forward(self, z1, z2):
         """z1, z2: (B, d) — L2-normalized embeddings."""
         B = z1.shape[0]
@@ -1285,7 +1285,7 @@ class SingleResolutionSTFTLoss(nn.Module):
         self.hop_length = hop_length
         self.win_length = win_length
         self.register_buffer("window", torch.hann_window(win_length))
-    
+
     def forward(self, pred, target):
         stft_pred = torch.stft(pred, self.n_fft, hop_length=self.hop_length,
                                win_length=self.win_length, window=self.window,
@@ -1310,7 +1310,7 @@ class MultiResolutionSTFTLoss(nn.Module):
             SingleResolutionSTFTLoss(n, h, w)
             for n, h, w in zip(fft_sizes, hop_sizes, win_lengths)
         ])
-    
+
     def forward(self, pred, target):
         sc_total = 0.0
         lm_total = 0.0
@@ -1333,7 +1333,7 @@ class MelL1Loss(nn.Module):
             )
             for n, m in [(512, 64), (1024, 80), (2048, 128)]
         ])
-    
+
     def forward(self, pred, target):
         loss = 0.0
         for mel_tf in self.mel_transforms:
@@ -1364,13 +1364,13 @@ def si_sdr_loss(pred, target):
 ```python
 class TrackProcessorLoss(nn.Module):
     """Multi-objective loss matching mamba3 schedule."""
-    
+
     def __init__(self, cfg):
         super().__init__()
         self.mr_stft = MultiResolutionSTFTLoss()
         self.mel_l1 = MelL1Loss(cfg.sample_rate)
         self.global_step = 0
-    
+
     def _si_sdr_weight(self):
         """Ramp 0→0.1 between steps 5k and 15k."""
         if self.global_step < 5000:
@@ -1379,32 +1379,32 @@ class TrackProcessorLoss(nn.Module):
             return 0.1
         else:
             return 0.1 * (self.global_step - 5000) / 10000
-    
+
     def forward(self, pred_stft, target_wave, model):
         """
         pred_stft: (B, T, F) complex — model output
         target_wave: (B, L) — target waveform
         """
         pred_wave = model.waveform_from_stft(pred_stft)
-        
+
         L = min(pred_wave.shape[-1], target_wave.shape[-1])
         pred_wave = pred_wave[..., :L]
         target_wave = target_wave[..., :L]
-        
+
         losses = {}
         losses['mr_stft'] = self.mr_stft(pred_wave, target_wave)
         losses['mel_l1'] = self.mel_l1(pred_wave, target_wave)
-        
+
         si_w = self._si_sdr_weight()
         if si_w > 0:
             losses['si_sdr'] = si_sdr_loss(pred_wave, target_wave) * si_w
         else:
             losses['si_sdr'] = torch.tensor(0.0, device=pred_wave.device)
-        
+
         losses['total'] = (1.0 * losses['mr_stft']
                            + 0.5 * losses['mel_l1']
                            + losses['si_sdr'])
-        
+
         self.global_step += 1
         return losses
 ```
@@ -1446,24 +1446,24 @@ def augment_contrastive(wav, crepe):
     if random.random() < 0.5:
         semitones = random.uniform(-2.0, 2.0)
         wav, crepe = pitch_shift(wav, crepe, semitones)
-    
+
     # 2. Random gain ±4 dB
     gain_db = random.uniform(-4, 4)
     wav = wav * (10 ** (gain_db / 20))
-    
+
     # 3. Random polarity flip (50% chance)
     if random.random() < 0.5:
         wav = -wav
-    
+
     # 4. Random circular time shift
     shift = random.randint(0, wav.shape[-1] // 4)
     wav = torch.roll(wav, shift, dims=-1)
     crepe = torch.roll(crepe, shift // cfg.hop_length, dims=0)
-    
+
     # 5. Additive noise
     noise_level = random.uniform(0, 0.005)
     wav = wav + noise_level * torch.randn_like(wav)
-    
+
     return wav.clamp(-1.0, 1.0), crepe
 ```
 
@@ -1474,19 +1474,19 @@ while step < n_steps:
     for batch in dataloader:
         if batch is None:
             continue  # collate_valid returned nothing
-        
+
         target = batch['target'].to(device)
         target_crepe = batch['target_crepe'].to(device)
         other_stems = batch['other_stems'].to(device)
         other_crepe = batch['other_crepe'].to(device)
         T_frames = 1 + target.shape[-1] // cfg.hop_length
-        
+
         current_phase = (1 if step < PHASE_1_END
                          else 2 if step < PHASE_2_END
                          else 3)
-        
+
         optimizer.zero_grad(set_to_none=True)
-        
+
         with torch.autocast(device_type=device, dtype=bf16, enabled=amp):
             if current_phase == 1:
                 # Contrastive — only semantic encoder
@@ -1495,13 +1495,13 @@ while step < n_steps:
                 z1 = encode_contrastive(model, aug1[0], aug1[1])
                 z2 = encode_contrastive(model, aug2[0], aug2[1])
                 loss = ntxent(z1, z2)
-            
+
             elif current_phase == 2:
                 # Single-track reconstruction
                 out = model(target, target_crepe, other_embs=None)
                 loss_dict = task_loss(out['output_stft'], target, model)
                 loss = loss_dict['total']
-            
+
             else:  # Phase 3
                 # Cross-track: process other stems → embeddings → attend
                 K = other_stems.shape[1]
@@ -1515,30 +1515,30 @@ while step < n_steps:
                 out = model(target, target_crepe, other_embs=other_embs)
                 loss_dict = task_loss(out['output_stft'], target, model)
                 loss = loss_dict['total']
-        
+
         if torch.isnan(loss) or torch.isinf(loss):
             print(f"[step {step}] NaN/Inf — skipping")
             optimizer.zero_grad(set_to_none=True)
             continue
-        
+
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_grad_norm)
         optimizer.step()
         scheduler.step()
-        
+
         # Logging (windowed average)
         if step % log_every == 0:
             # ... print loss components, step/s, lr ...
-        
+
         # Validation (decoupled)
         if step > 0 and step % val_every == 0:
             val_loss = validate_phase(model, val_loader, current_phase)
             # ... early stopping logic ...
-        
+
         # Checkpoint (decoupled)
         if step > 0 and step % ckpt_every == 0:
             save_checkpoint(step, loss.item())
-        
+
         step += 1
 ```
 
@@ -1550,14 +1550,14 @@ def validate_phase(model, val_loader, phase):
     model.eval()
     total_loss = 0.0
     n_batches = 0
-    
+
     for batch in val_loader:
         if batch is None:
             continue
-        
+
         target = batch['target'].to(device)
         target_crepe = batch['target_crepe'].to(device)
-        
+
         with torch.autocast(device_type=device, dtype=bf16, enabled=amp):
             if phase == 1:
                 z1 = encode_contrastive(model, target, target_crepe)
@@ -1579,11 +1579,11 @@ def validate_phase(model, val_loader, phase):
                 other_embs = torch.stack(embs, dim=1)
                 out = model(target, target_crepe, other_embs=other_embs)
                 vl = task_loss(out['output_stft'], target, model)['total']
-        
+
         if not (torch.isnan(vl) or torch.isinf(vl)):
             total_loss += vl.item()
             n_batches += 1
-    
+
     model.train()
     return total_loss / max(1, n_batches)
 ```
@@ -1633,7 +1633,7 @@ Header (64 bytes):
   [11] weight_data_size uint32
   [12] sha256_prefix uint32  (first 4 bytes of SHA256 of weight data)
   [13] reserved  uint32  = 0
-  
+
 Per layer (repeated n_layers times):
   in_proj_w   [in_proj_dim * d_model]   float32
   dt_bias     [nheads]                   float32

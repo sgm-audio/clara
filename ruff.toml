@@ -1,0 +1,30 @@
+line-length = 100
+target-version = "py313"
+
+# Exclude archived Mamba-1 / ONNX-era code
+exclude = ["archive/"]
+
+[format]
+quote-style = "double"
+
+[lint]
+select = [
+    "E",     # pycodestyle errors
+    "F",     # pyflakes (actual bugs)
+    "W",     # pycodestyle warnings
+    "I",     # isort
+    "UP",    # pyupgrade
+]
+
+ignore = [
+    "E402",   # import not at top — intentional in section-script scripts
+    "E501",   # line length — enforced by black
+    "E722",   # bare except — used for device detection fallback
+    "F401",   # import unused — intentional for optional-dep try/except
+    "F841",   # unused variable — intentional tensor unpacking patterns
+    "E741",   # ambiguous variable name 'l' — common in ML layer loops
+    "UP007",  # X | Y syntax — Python 3.13 target
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["E"]

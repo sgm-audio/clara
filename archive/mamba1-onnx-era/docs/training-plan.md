@@ -18,7 +18,7 @@ Train the CLARA Mamba SSM audio effect processor through staged curriculum: iden
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| d_model | 64 | Embedding dimension | 
+| d_model | 64 | Embedding dimension |
 | d_state | 16 | SSM state per channel |
 | n_layers | 4 | Stacked Mamba layers |
 | conv_width | 4 | Causal conv kernel (4-sample latency) |

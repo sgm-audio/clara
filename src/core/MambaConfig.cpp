@@ -9,10 +9,10 @@
 
 namespace clara::mamba3 {
 
-bool validate_config(const void* /*weight_header*/) {
+bool validate_config(const void * /*weight_header*/) {
     // Stub — will validate that a loaded weight file's header dimensions
     // match the compile-time constants in MambaConfig.h.
     return true;
 }
 
-}  // namespace clara::mamba3
+} // namespace clara::mamba3

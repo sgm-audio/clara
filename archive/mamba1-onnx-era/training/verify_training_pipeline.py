@@ -19,11 +19,7 @@ Checks:
 
 import sys
 import os
-import json
 import tempfile
-import struct
-import inspect
-from pathlib import Path
 
 import numpy as np
 
@@ -43,6 +39,7 @@ print()
 pass_count = 0
 fail_count = 0
 
+
 def check(condition, message):
     global pass_count, fail_count
     if condition:
@@ -52,8 +49,10 @@ def check(condition, message):
         print(f"  FAIL: {message}")
         fail_count += 1
 
+
 def section(name):
     print(f"\n=== {name} ===")
+
 
 # ---------------------------------------------------------------------------
 # 1. Config
@@ -93,7 +92,12 @@ check(cfg_den.phase == "denoising", "Phase denoising")
 # ---------------------------------------------------------------------------
 section("2. Model Forward Pass (Parallel)")
 
-from train_clara_model import MambaRTModelParallel, make_zero_states, MambaRTModelSequential, make_zero_cond
+from train_clara_model import (
+    MambaRTModelParallel,
+    make_zero_states,
+    MambaRTModelSequential,
+    make_zero_cond,
+)
 
 batch_size = 2
 seq_len = 256
@@ -118,12 +122,9 @@ convs, ssms = make_zero_states(batch_size, d_model, d_state, n_layers)
 with torch.no_grad():
     output, new_conv, new_ssm = model_p(audio, *convs, *ssms, cond)
 
-check(output.shape == (batch_size, seq_len, 1),
-      f"forward output shape: {output.shape}")
-check(new_conv.shape == (batch_size, n_layers, d_model, 4),
-      f"new_conv shape: {new_conv.shape}")
-check(new_ssm.shape == (batch_size, n_layers, d_model, d_state),
-      f"new_ssm shape: {new_ssm.shape}")
+check(output.shape == (batch_size, seq_len, 1), f"forward output shape: {output.shape}")
+check(new_conv.shape == (batch_size, n_layers, d_model, 4), f"new_conv shape: {new_conv.shape}")
+check(new_ssm.shape == (batch_size, n_layers, d_model, d_state), f"new_ssm shape: {new_ssm.shape}")
 check(not torch.isnan(output).any(), "no NaN in output")
 check(not torch.isinf(output).any(), "no Inf in output")
 
@@ -152,12 +153,13 @@ has_grad = audio_train.grad is not None
 check(has_grad, "audio input has gradient")
 if has_grad:
     check(not torch.isnan(audio_train.grad).any(), "audio grad: no NaN")
-    check(audio_train.grad.shape == (batch_size, seq_len, 1),
-          f"audio grad shape: {audio_train.grad.shape}")
+    check(
+        audio_train.grad.shape == (batch_size, seq_len, 1),
+        f"audio grad shape: {audio_train.grad.shape}",
+    )
 
 # Check model parameter gradients
-param_has_grad = any(p.grad is not None and p.grad.abs().sum() > 0
-                      for p in model_p.parameters())
+param_has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 for p in model_p.parameters())
 check(param_has_grad, "model parameters have non-zero gradients")
 
 # Count parameters
@@ -189,8 +191,10 @@ loss2 = out2.square().mean()
 loss2_val = loss2.item()
 
 # Accept either decrease or within 50% (random init may increase briefly)
-check(loss2_val < loss1_val * 1.5 or loss2_val < loss1_val,
-      f"loss not exploding: {loss1_val:.6f} -> {loss2_val:.6f}")
+check(
+    loss2_val < loss1_val * 1.5 or loss2_val < loss1_val,
+    f"loss not exploding: {loss1_val:.6f} -> {loss2_val:.6f}",
+)
 
 # ---------------------------------------------------------------------------
 # 5. Sequential export model vs parallel
@@ -224,7 +228,7 @@ with torch.no_grad():
     cs_cur = cs_small
     ss_cur = ss_small
     for t in range(seq_test_len):
-        inp_t = audio_export[:, t:t+1, :]  # (B, 1, 1)
+        inp_t = audio_export[:, t : t + 1, :]  # (B, 1, 1)
         out_t, cs_new, ss_new = model_e(inp_t, *cs_cur, *ss_cur, cond_export)
         out_e_list.append(out_t)
         # Unstack for next iteration
@@ -235,8 +239,7 @@ check(out_e.shape == out_p.shape, "parallel vs sequential same shape")
 
 # Compare outputs (tolerance for numerical differences due to parallel vs sequential)
 diff = (out_p - out_e).abs().max().item()
-check(diff < 1e-4,
-      f"parallel vs sequential output diff < 1e-4 (max diff={diff:.6f})")
+check(diff < 1e-4, f"parallel vs sequential output diff < 1e-4 (max diff={diff:.6f})")
 
 # ---------------------------------------------------------------------------
 # 6. ONNX export
@@ -253,7 +256,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         import onnxruntime as ort
 
         # Save model state dict as a checkpoint
-        torch.save({'model_state_dict': model_e.state_dict()}, ckpt_path)
+        torch.save({"model_state_dict": model_e.state_dict()}, ckpt_path)
 
         # Export to ONNX
         export_to_onnx(
@@ -262,12 +265,12 @@ with tempfile.TemporaryDirectory() as tmpdir:
             seq_len=seq_test_len,
         )
         check(os.path.exists(export_path), "ONNX file created")
-        
+
         # Verify the file is valid
         onnx_model = onnx.load(export_path)
         onnx.checker.check_model(onnx_model)
         check(True, "ONNX model passes checker")
-        
+
         # Check input/output names
         input_names = [i.name for i in onnx_model.graph.input]
         output_names = [o.name for o in onnx_model.graph.output]
@@ -282,15 +285,14 @@ with tempfile.TemporaryDirectory() as tmpdir:
         # Verify ONNX Runtime can run the model
         sess = ort.InferenceSession(export_path)
         feeds = {
-            'audio_chunk': np.zeros((1, seq_test_len, 1), dtype=np.float32),
-            'cond': np.zeros((1, 8), dtype=np.float32),
+            "audio_chunk": np.zeros((1, seq_test_len, 1), dtype=np.float32),
+            "cond": np.zeros((1, 8), dtype=np.float32),
         }
         for i in range(4):
-            feeds[f'conv{i}'] = np.zeros((1, 64, 4), dtype=np.float32)
-            feeds[f'ssm{i}'] = np.zeros((1, 64, 16), dtype=np.float32)
+            feeds[f"conv{i}"] = np.zeros((1, 64, 4), dtype=np.float32)
+            feeds[f"ssm{i}"] = np.zeros((1, 64, 16), dtype=np.float32)
         out = sess.run(None, feeds)
-        check(out[0].shape == (1, seq_test_len, 1),
-              f"ONNX runtime output shape: {out[0].shape}")
+        check(out[0].shape == (1, seq_test_len, 1), f"ONNX runtime output shape: {out[0].shape}")
         check(not np.allclose(out[0], 0.0), "ONNX output is non-zero")
         print(f"  ONNX Runtime output range: [{out[0].min():.6f}, {out[0].max():.6f}]")
 
@@ -300,6 +302,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
     except Exception as e:
         check(False, f"ONNX export: {e}")
         import traceback
+
         traceback.print_exc()
 
 # ---------------------------------------------------------------------------
@@ -322,8 +325,9 @@ check(loss_s.item() > 0, "MR-STFT loss > 0")
 
 # Perfect reconstruction (minimum 2048 samples for max n_fft=2048)
 loss_perfect = stft_loss(target[:, :2048, :], target[:, :2048, :])
-check(loss_perfect.item() < 1e-6,
-      f"MR-STFT loss for identical signals ~0 ({loss_perfect.item():.8f})")
+check(
+    loss_perfect.item() < 1e-6, f"MR-STFT loss for identical signals ~0 ({loss_perfect.item():.8f})"
+)
 
 # SI-SDR loss (already covered by ClaraLoss which includes SI-SDR)
 si_sdr_fn = SI_SDRLoss()
@@ -333,12 +337,12 @@ check(not torch.isnan(loss_si).any(), "SI-SDR loss: no NaN")
 # ClaraLoss returns dict
 clara_loss = ClaraLoss()
 loss_dict = clara_loss(pred, target)
-check(not torch.isnan(loss_dict['l1']).any(), "ClaraLoss l1: no NaN")
-check(not torch.isnan(loss_dict['stft']).any(), "ClaraLoss stft: no NaN")
-check(loss_dict['total'].item() > 0, "ClaraLoss total > 0")
-check('l1' in loss_dict, "ClaraLoss returns 'l1'")
-check('stft' in loss_dict, "ClaraLoss returns 'stft'")
-check('total' in loss_dict, "ClaraLoss returns 'total'")
+check(not torch.isnan(loss_dict["l1"]).any(), "ClaraLoss l1: no NaN")
+check(not torch.isnan(loss_dict["stft"]).any(), "ClaraLoss stft: no NaN")
+check(loss_dict["total"].item() > 0, "ClaraLoss total > 0")
+check("l1" in loss_dict, "ClaraLoss returns 'l1'")
+check("stft" in loss_dict, "ClaraLoss returns 'stft'")
+check("total" in loss_dict, "ClaraLoss returns 'total'")
 
 # ---------------------------------------------------------------------------
 # 8. DSP transforms
@@ -357,8 +361,7 @@ check(len(sat_params) == 4, "saturation params: 4 values")
 
 # Compression
 comp = RMSCompressor()
-compressed = comp(audio_dsp, threshold_db=-20.0, ratio=4.0,
-                  attack_ms=10.0, release_ms=100.0)
+compressed = comp(audio_dsp, threshold_db=-20.0, ratio=4.0, attack_ms=10.0, release_ms=100.0)
 check(not torch.isnan(compressed).any(), "compression: no NaN")
 check(compressed.shape == audio_dsp.shape, "compression: correct shape")
 
@@ -379,13 +382,14 @@ from train_clara_dataset import ClaraAudioDataset
 with tempfile.TemporaryDirectory() as tmpdir:
     mock_dir = os.path.join(tmpdir, "mock")
     os.makedirs(mock_dir, exist_ok=True)
-    
+
     # Write a mock audio file
     import soundfile as sf
+
     mock_audio_data = np.random.randn(44100 * 5).astype(np.float32)
     mock_path = os.path.join(mock_dir, "mock_track.wav")
     sf.write(mock_path, mock_audio_data, 44100)
-    
+
     # Create dataset
     try:
         ds = ClaraAudioDataset(
@@ -395,10 +399,10 @@ with tempfile.TemporaryDirectory() as tmpdir:
             max_files=5,
         )
         check(len(ds) > 0, "dataset has entries")
-        
+
         chunk = ds[0]
         check("audio" in chunk, "dataset chunk has 'audio'")
-        
+
         print(f"  Dataset has {len(ds)} chunks ({len(ds.audio_files)} files)")
     except Exception as e:
         check(False, f"dataset construction: {e}")

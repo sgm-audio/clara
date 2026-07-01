@@ -1,14 +1,14 @@
 #pragma once
 
-#include <cstddef>
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstring>
-#include <algorithm>
 
 #ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4324)
+#    pragma warning(push)
+#    pragma warning(disable : 4324)
 #endif
 
 struct alignas(16) ConditioningFrame {
@@ -19,18 +19,17 @@ struct alignas(16) ConditioningFrame {
 
     ConditioningFrame() = default;
 
-    ConditioningFrame(const ConditioningFrame& other)
-        : data(other.data)
-        , seq(other.seq.load(std::memory_order_relaxed))
-    {}
+    ConditioningFrame(const ConditioningFrame &other)
+        : data(other.data), seq(other.seq.load(std::memory_order_relaxed)) {
+    }
 
-    ConditioningFrame& operator=(const ConditioningFrame& other) {
+    ConditioningFrame &operator=(const ConditioningFrame &other) {
         data = other.data;
         seq.store(other.seq.load(std::memory_order_relaxed), std::memory_order_relaxed);
         return *this;
     }
 
-    void fill(const float* src, size_t dim) {
+    void fill(const float *src, size_t dim) {
         size_t n = std::min(dim, kCondDim);
         for (size_t i = 0; i < n; ++i) {
             data[i] = src[i];
@@ -40,18 +39,17 @@ struct alignas(16) ConditioningFrame {
         }
     }
 
-    bool operator==(const ConditioningFrame& other) const {
+    bool operator==(const ConditioningFrame &other) const {
         return data == other.data;
     }
 
-    bool operator!=(const ConditioningFrame& other) const {
+    bool operator!=(const ConditioningFrame &other) const {
         return !(*this == other);
     }
 };
 
 #ifdef _MSC_VER
-#pragma warning(pop)
+#    pragma warning(pop)
 #endif
 
-static_assert(sizeof(ConditioningFrame) <= 576,
-    "ConditioningFrame must be reasonable size");
+static_assert(sizeof(ConditioningFrame) <= 576, "ConditioningFrame must be reasonable size");

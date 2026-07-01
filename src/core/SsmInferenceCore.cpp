@@ -1,15 +1,16 @@
 // CLARA Mamba-3 Inference Core — Multi-layer engine implementation
 
 #include "core/SsmInferenceCore.h"
+
+#include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <algorithm>
 
 namespace clara::mamba3 {
 
 // ── Lifecycle ──────────────────────────────────────────────────────
 
-bool SsmInferenceCore::init(const char* weight_filepath) {
+bool SsmInferenceCore::init(const char *weight_filepath) {
     if (!loader_.load(weight_filepath)) {
         return false;
     }
@@ -35,8 +36,7 @@ bool SsmInferenceCore::init(const char* weight_filepath) {
 bool SsmInferenceCore::process_ready_reset() {
     // Check-and-clear the deferred reset flag
     bool expected = true;
-    if (reset_requested_.compare_exchange_strong(expected, false,
-            std::memory_order_acq_rel)) {
+    if (reset_requested_.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) {
         for (size_t l = 0; l < MAX_LAYERS; ++l) {
             layer_states_[l].zero();
         }
@@ -46,7 +46,7 @@ bool SsmInferenceCore::process_ready_reset() {
     return false;
 }
 
-void SsmInferenceCore::apply_layer_norm(float* x, size_t layer_idx) {
+void SsmInferenceCore::apply_layer_norm(float *x, size_t layer_idx) {
     // Compute mean and variance
     float mean = 0.0f;
     for (size_t d = 0; d < MAX_D_MODEL; ++d) {
@@ -64,25 +64,23 @@ void SsmInferenceCore::apply_layer_norm(float* x, size_t layer_idx) {
     float inv_std = 1.0f / std::sqrt(var + 1e-5f);
 
     for (size_t d = 0; d < MAX_D_MODEL; ++d) {
-        x[d] = ln_gamma_[layer_idx][d] * (x[d] - mean) * inv_std
-             + ln_beta_[layer_idx][d];
+        x[d] = ln_gamma_[layer_idx][d] * (x[d] - mean) * inv_std + ln_beta_[layer_idx][d];
     }
 }
 
-void SsmInferenceCore::process_block(const float* input, float* output,
-                                      size_t n_samples) {
+void SsmInferenceCore::process_block(const float *input, float *output, size_t n_samples) {
     if (!ready_ || n_samples == 0) return;
 
     // Handle deferred reset
     process_ready_reset();
 
-    const float* cond = cond_proc_.get_conditioning();
+    const float *cond = cond_proc_.get_conditioning();
 
     // Process samples one at a time through all layers
     for (size_t i = 0; i < n_samples; ++i) {
         // Embed scalar input → D_MODEL
         float x[MAX_D_MODEL] = {};
-        x[0] = input[i];  // ponytail: first channel gets the mono sample
+        x[0] = input[i]; // ponytail: first channel gets the mono sample
 
         // Forward through 6 layers
         for (size_t l = 0; l < MAX_LAYERS; ++l) {
@@ -105,8 +103,8 @@ void SsmInferenceCore::reset_states() {
     reset_requested_.store(true, std::memory_order_release);
 }
 
-void SsmInferenceCore::set_conditioning(const float* cond) {
+void SsmInferenceCore::set_conditioning(const float *cond) {
     cond_proc_.set_conditioning(cond);
 }
 
-}  // namespace clara::mamba3
+} // namespace clara::mamba3

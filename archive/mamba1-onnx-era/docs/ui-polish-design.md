@@ -1104,7 +1104,7 @@ The `MambaPluginState` struct gains a new member:
 ```cpp
 struct MambaPluginState {
     // ... existing members ...
-    
+
     // GUI state (nullptr when GUI is not created)
     std::unique_ptr<MambaGUI> gui;
 };

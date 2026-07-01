@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Export Mamba-3 weights to flat binary format (Version 2).
+"""Export Mamba-3 weights to flat binary format (Version 2).
 
 Reads a reference Mamba-3 model (from reference_forward.py SSMWeights format),
 writes a single .bin file with 64-byte header + 13 arrays per layer × n_layers.
@@ -14,56 +13,68 @@ Usage:
     python python/tools/export_mamba_weights.py --output models/model.bin --seed 42
 """
 
-import struct
 import argparse
-import numpy as np
+import struct
 from pathlib import Path
 
+import numpy as np
 
 # ── Constants (must match src/core/MambaConfig.h) ──────────────────
 
-D_STATE       = 32
-D_MODEL       = 128
-D_INNER       = 256
-NHEADS        = 4
-HEADDIM       = D_INNER // NHEADS       # 64
-MIMO_RANK     = 4
-NUM_ROPE_ANGLES = D_STATE // 2          # 16
-N_LAYERS      = 6
-COND_DIM      = 128
+D_STATE = 32
+D_MODEL = 128
+D_INNER = 256
+NHEADS = 4
+HEADDIM = D_INNER // NHEADS  # 64
+MIMO_RANK = 4
+NUM_ROPE_ANGLES = D_STATE // 2  # 16
+N_LAYERS = 6
+COND_DIM = 128
 
-IN_PROJ_DIM = (D_INNER
-               + NHEADS * HEADDIM
-               + NHEADS * MIMO_RANK * D_STATE   # B
-               + NHEADS * MIMO_RANK * D_STATE   # C
-               + NHEADS                          # dd_dt
-               + NHEADS                          # dd_A
-               + NHEADS                          # trap
-               + NHEADS * NUM_ROPE_ANGLES)       # angles
+IN_PROJ_DIM = (
+    D_INNER
+    + NHEADS * HEADDIM
+    + NHEADS * MIMO_RANK * D_STATE  # B
+    + NHEADS * MIMO_RANK * D_STATE  # C
+    + NHEADS  # dd_dt
+    + NHEADS  # dd_A
+    + NHEADS  # trap
+    + NHEADS * NUM_ROPE_ANGLES
+)  # angles
 
-WEIGHT_MAGIC   = 0x4D424D41  # "MBMA"
+WEIGHT_MAGIC = 0x4D424D41  # "MBMA"
 WEIGHT_VERSION = 2
 
 # Per-layer array element counts (float32)
-W_IN_PROJ_ELEMS       = IN_PROJ_DIM * D_MODEL             # 1612 × 128 = 206336
-W_DT_BIAS_ELEMS       = NHEADS                            # 4
-W_B_BIAS_ELEMS        = NHEADS * MIMO_RANK * D_STATE      # 512
-W_C_BIAS_ELEMS        = W_B_BIAS_ELEMS                    # 512
-W_B_NORM_ELEMS        = D_STATE                           # 32
-W_C_NORM_ELEMS        = D_STATE                           # 32
-W_MIMO_X_ELEMS        = NHEADS * MIMO_RANK * HEADDIM      # 1024
-W_MIMO_Z_ELEMS        = W_MIMO_X_ELEMS                    # 1024
-W_MIMO_O_ELEMS        = W_MIMO_X_ELEMS                    # 1024
-W_D_PROJ_ELEMS        = NHEADS                            # 4
-W_OUT_PROJ_ELEMS      = D_MODEL * D_INNER                 # 32768
-W_FILM_PROJ_ELEMS     = 2 * D_MODEL * COND_DIM            # 32768
-W_DT_FILM_PROJ_ELEMS  = 2 * NHEADS * COND_DIM             # 1024
+W_IN_PROJ_ELEMS = IN_PROJ_DIM * D_MODEL  # 1612 × 128 = 206336
+W_DT_BIAS_ELEMS = NHEADS  # 4
+W_B_BIAS_ELEMS = NHEADS * MIMO_RANK * D_STATE  # 512
+W_C_BIAS_ELEMS = W_B_BIAS_ELEMS  # 512
+W_B_NORM_ELEMS = D_STATE  # 32
+W_C_NORM_ELEMS = D_STATE  # 32
+W_MIMO_X_ELEMS = NHEADS * MIMO_RANK * HEADDIM  # 1024
+W_MIMO_Z_ELEMS = W_MIMO_X_ELEMS  # 1024
+W_MIMO_O_ELEMS = W_MIMO_X_ELEMS  # 1024
+W_D_PROJ_ELEMS = NHEADS  # 4
+W_OUT_PROJ_ELEMS = D_MODEL * D_INNER  # 32768
+W_FILM_PROJ_ELEMS = 2 * D_MODEL * COND_DIM  # 32768
+W_DT_FILM_PROJ_ELEMS = 2 * NHEADS * COND_DIM  # 1024
 
-FLOATS_PER_LAYER = (W_IN_PROJ_ELEMS + W_DT_BIAS_ELEMS + W_B_BIAS_ELEMS
-                    + W_C_BIAS_ELEMS + W_B_NORM_ELEMS + W_C_NORM_ELEMS
-                    + W_MIMO_X_ELEMS + W_MIMO_Z_ELEMS + W_MIMO_O_ELEMS
-                    + W_D_PROJ_ELEMS + W_OUT_PROJ_ELEMS + W_FILM_PROJ_ELEMS
-                    + W_DT_FILM_PROJ_ELEMS)
+FLOATS_PER_LAYER = (
+    W_IN_PROJ_ELEMS
+    + W_DT_BIAS_ELEMS
+    + W_B_BIAS_ELEMS
+    + W_C_BIAS_ELEMS
+    + W_B_NORM_ELEMS
+    + W_C_NORM_ELEMS
+    + W_MIMO_X_ELEMS
+    + W_MIMO_Z_ELEMS
+    + W_MIMO_O_ELEMS
+    + W_D_PROJ_ELEMS
+    + W_OUT_PROJ_ELEMS
+    + W_FILM_PROJ_ELEMS
+    + W_DT_FILM_PROJ_ELEMS
+)
 
 BYTES_PER_LAYER = FLOATS_PER_LAYER * 4
 
@@ -142,9 +153,9 @@ def write_header(f, weight_data_size: int):
     ]
     # Write as 12 uint32 values (48 bytes)
     for v in header_values:
-        f.write(struct.pack('<I', v))
+        f.write(struct.pack("<I", v))
     # Pad to 64 bytes with zeros
-    f.write(b'\x00' * (64 - len(header_values) * 4))
+    f.write(b"\x00" * (64 - len(header_values) * 4))
 
 
 def export_weights(output_path: str, seed: int = 42):
@@ -154,7 +165,7 @@ def export_weights(output_path: str, seed: int = 42):
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
-    with open(output_path, 'wb') as f:
+    with open(output_path, "wb") as f:
         write_header(f, weight_data_size)
 
         for layer_idx, arrays in enumerate(layers):
@@ -164,9 +175,7 @@ def export_weights(output_path: str, seed: int = 42):
 
     file_size = Path(output_path).stat().st_size
     expected_size = 64 + weight_data_size
-    assert file_size == expected_size, (
-        f"Size mismatch: wrote {file_size}, expected {expected_size}"
-    )
+    assert file_size == expected_size, f"Size mismatch: wrote {file_size}, expected {expected_size}"
 
     print(f"Exported {output_path}")
     print(f"  Layers: {N_LAYERS}")
@@ -180,14 +189,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="Export Mamba-3 weights to flat binary (Version 2)"
     )
-    parser.add_argument('--output', default='models/model.bin',
-                        help='Output .bin file path')
-    parser.add_argument('--seed', type=int, default=42,
-                        help='Random seed for weight generation')
+    parser.add_argument("--output", default="models/model.bin", help="Output .bin file path")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for weight generation")
     args = parser.parse_args()
 
     export_weights(args.output, args.seed)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

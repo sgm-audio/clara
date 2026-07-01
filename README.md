@@ -198,6 +198,27 @@ cmake --build build --target clara_test
 
 The target name `clara_test` (not `test`, which is reserved by CTest) builds the CLAP and ARA plugins first, then invokes `ctest --output-on-failure`. The clap-validator test is automatically skipped (logged as `[SKIPPED]`) if the validator binary is unavailable.
 
+## Code Quality
+
+This project uses [pre-commit](https://pre-commit.com) to enforce consistent formatting and catch common issues before they reach CI:
+
+```bash
+# Install hooks (one-time)
+pre-commit install
+
+# Run on all files (after clone or adding new hooks)
+pre-commit run --all-files
+```
+
+Hooks include:
+- **clang-format** — C++ formatting (`.clang-format`)
+- **black** — Python formatting (100-char lines)
+- **ruff** — Python linting (auto-fix enabled)
+- **trailing-whitespace**, **end-of-file-fixer**, **mixed-line-ending** — file hygiene
+- **check-added-large-files**, **check-merge-conflict**, **check-case-conflict** — safety checks
+
+The `.clang-format` config uses LLVM style with 4-space indent, 120-column limit, right-aligned pointers/references, and C++17 standard.
+
 ## CI/CD
 
 GitHub Actions workflow (`.github/workflows/ci.yml`):
@@ -206,7 +227,7 @@ GitHub Actions workflow (`.github/workflows/ci.yml`):
 - Verifies symbol exports (`clap_entry`, `ARAGetFactory`), RPATH / install name / DLL search path, model deployment
 - Runs `clap-validator` against the built `.clap` (continues on error; may fail without GUI)
 - Validates model round-trip via `python3 python/tools/validate_export.py`
-- Uploads plugin artifact (`.clap`, `.so`/`.dylib`/`.dll`, `libmamba_core.*`, `models/`)
+- Uploads plugin artifacts (`.clap`, `.so`/`.dylib`/`.dll`, `models/`)
 - Debug build with `BUILD_TESTING=ON` runs CTest on all three platforms
 
 ## License

@@ -1,8 +1,8 @@
 #pragma once
 
-#include <cmath>
 #include <algorithm>
 #include <array>
+#include <cmath>
 
 class ConditioningGenerator {
 public:
@@ -10,16 +10,16 @@ public:
 
     // Musical context struct — all fields optional (use -1 or equivalent sentinel for "unknown")
     struct MusicalContext {
-        float tempoBpm = -1.0f;           // beats per minute, -1 if unknown
-        int   keyPitchClass = -1;          // 0=C, 1=C#, ..., 11=B, -1 if unknown
-        int   mode = -1;                   // 0=major, 1=minor, -1 if unknown
-        int   timeSigNumerator = -1;       // 3, 4, 6, etc., -1 if unknown
-        int   sectionType = -1;            // 0=verse, 1=chorus, 2=bridge, 3=intro, 4=outro, -1 if unknown
+        float tempoBpm = -1.0f;    // beats per minute, -1 if unknown
+        int keyPitchClass = -1;    // 0=C, 1=C#, ..., 11=B, -1 if unknown
+        int mode = -1;             // 0=major, 1=minor, -1 if unknown
+        int timeSigNumerator = -1; // 3, 4, 6, etc., -1 if unknown
+        int sectionType = -1;      // 0=verse, 1=chorus, 2=bridge, 3=intro, 4=outro, -1 if unknown
     };
 
     // Encode musical context into cond[COND_DIM].
     // Unknown fields are encoded as zero (no modulation for that dimension).
-    static void encode(const MusicalContext& ctx, float* cond, size_t dim) {
+    static void encode(const MusicalContext &ctx, float *cond, size_t dim) {
         if (!cond || dim == 0) return;
         const size_t n = std::min(dim, COND_DIM);
         std::fill(cond, cond + n, 0.0f);
@@ -40,15 +40,19 @@ public:
         }
 
         if (n > 2) {
-            if (ctx.mode == 0)      cond[2] = 0.0f;  // major
-            else if (ctx.mode == 1) cond[2] = 1.0f;  // minor
-            else                    cond[2] = 0.5f;  // unknown
+            if (ctx.mode == 0) cond[2] = 0.0f; // major
+            else if (ctx.mode == 1)
+                cond[2] = 1.0f; // minor
+            else
+                cond[2] = 0.5f; // unknown
         }
 
         if (n > 3 && ctx.timeSigNumerator > 0) {
-            if (ctx.timeSigNumerator == 3)      cond[3] = 0.0f;
-            else if (ctx.timeSigNumerator == 4) cond[3] = 0.5f;
-            else                                cond[3] = 1.0f;
+            if (ctx.timeSigNumerator == 3) cond[3] = 0.0f;
+            else if (ctx.timeSigNumerator == 4)
+                cond[3] = 0.5f;
+            else
+                cond[3] = 1.0f;
         }
 
         if (n > 4 && ctx.sectionType >= 0 && ctx.sectionType <= 4) {
@@ -60,7 +64,7 @@ public:
 
     // Generate a default "neutral" conditioning (all zeros → no modulation).
     // This is safe to call when no musical context is available.
-    static void neutral(float* cond, size_t dim) {
+    static void neutral(float *cond, size_t dim) {
         if (!cond || dim == 0) return;
         const size_t n = std::min(dim, COND_DIM);
         std::fill(cond, cond + n, 0.0f);
@@ -71,10 +75,10 @@ public:
     static MusicalContext defaultContext() {
         MusicalContext ctx;
         ctx.tempoBpm = 120.0f;
-        ctx.keyPitchClass = 0;   // C
-        ctx.mode = 0;            // major
+        ctx.keyPitchClass = 0; // C
+        ctx.mode = 0;          // major
         ctx.timeSigNumerator = 4;
-        ctx.sectionType = 0;     // verse
+        ctx.sectionType = 0; // verse
         return ctx;
     }
 };

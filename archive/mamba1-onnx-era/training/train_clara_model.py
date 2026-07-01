@@ -2,12 +2,14 @@
 CLARA Mamba RT Model — Parallel (training) and Sequential (export) variants.
 Reconstructed from verify_training_pipeline.py interface contract.
 """
+
 import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 # ── Selective Scan Step ──
+
 
 class SelectiveScanStep(nn.Module):
     def __init__(self, d_model, d_state):
@@ -24,6 +26,7 @@ class SelectiveScanStep(nn.Module):
 
 
 # ── SSM Core ──
+
 
 class MambaSSMCore(nn.Module):
     def __init__(self, d_model, d_state, dt_rank, dt_min=0.001, dt_max=0.1):
@@ -48,15 +51,16 @@ class MambaSSMCore(nn.Module):
 
     def forward(self, x):
         xz = self.x_proj(x)
-        dt_latent = xz[:, :, :self.dt_rank]
-        B = xz[:, :, self.dt_rank:self.dt_rank + self.d_state]
-        C = xz[:, :, self.dt_rank + self.d_state:]
+        dt_latent = xz[:, :, : self.dt_rank]
+        B = xz[:, :, self.dt_rank : self.dt_rank + self.d_state]
+        C = xz[:, :, self.dt_rank + self.d_state :]
         dt = F.softplus(self.dt_proj(dt_latent))
         A = -torch.exp(self.log_A_real)
         return dt, A, B, C, self.D
 
 
 # ── FiLM Conditioning ──
+
 
 class CondFiLM(nn.Module):
     def __init__(self, d_model, cond_dim=8):
@@ -73,6 +77,7 @@ class CondFiLM(nn.Module):
 
 # ── Single Mamba Layer ──
 
+
 class MambaLayer(nn.Module):
     def __init__(self, d_model, d_state=16, conv_width=4, dt_rank=16, cond_dim=8):
         super().__init__()
@@ -80,7 +85,9 @@ class MambaLayer(nn.Module):
         self.d_state = d_state
         self.conv_width = conv_width
         self.in_proj = nn.Linear(d_model, 2 * d_model, bias=False)
-        self.conv1d = nn.Conv1d(d_model, d_model, conv_width, padding=conv_width-1, groups=d_model)
+        self.conv1d = nn.Conv1d(
+            d_model, d_model, conv_width, padding=conv_width - 1, groups=d_model
+        )
         self.ssm_proj = MambaSSMCore(d_model, d_state, dt_rank)
         self.scan_step = SelectiveScanStep(d_model, d_state)
         self.out_proj = nn.Linear(d_model, d_model, bias=False)
@@ -92,13 +99,13 @@ class MambaLayer(nn.Module):
         gamma, beta = self.cond_film(cond)
         x = x * (1 + gamma.unsqueeze(1)) + beta.unsqueeze(1)
         projected = self.in_proj(x)
-        x_ssm = projected[:, :, :self.d_model]
-        x_gate = projected[:, :, self.d_model:]
+        x_ssm = projected[:, :, : self.d_model]
+        x_gate = projected[:, :, self.d_model :]
         x_conv_seq = x_ssm.transpose(1, 2)
         full_seq = torch.cat([conv_state, x_conv_seq], dim=-1)
         conv_full = self.conv1d(full_seq)
         start_idx = self.conv_width - 1
-        conv_out = conv_full[:, :, start_idx:start_idx + seq_len]
+        conv_out = conv_full[:, :, start_idx : start_idx + seq_len]
         conv_out = conv_out.transpose(1, 2)
         conv_out = conv_out * F.silu(x_gate)
         dt, A, B, C, D = self.ssm_proj(conv_out)
@@ -109,12 +116,13 @@ class MambaLayer(nn.Module):
             ys.append(y_t)
         y = torch.stack(ys, dim=1)
         output = self.out_proj(y)
-        new_conv_state = x_conv_seq[:, :, -self.conv_width:]
+        new_conv_state = x_conv_seq[:, :, -self.conv_width :]
         new_ssm_state = h
         return output, new_conv_state, new_ssm_state
 
 
 # ── Input / Output Projections ──
+
 
 class InputProjection(nn.Module):
     def __init__(self, d_model, cond_dim=8):
@@ -142,6 +150,7 @@ class OutputProjection(nn.Module):
 #   Can optionally chunk into 64-sample sub-blocks matching C++ engine
 # ────────────────────────────────────────────────────────────────────────────
 
+
 class MambaRTModelParallel(nn.Module):
     """Parallel-scan Mamba RT model for training. All timesteps at once.
 
@@ -157,10 +166,9 @@ class MambaRTModelParallel(nn.Module):
         self.n_layers = n_layers
         self.conv_width = conv_width
         self.input_proj = InputProjection(d_model, cond_dim)
-        self.layers = nn.ModuleList([
-            MambaLayer(d_model, d_state, conv_width, dt_rank, cond_dim)
-            for _ in range(n_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [MambaLayer(d_model, d_state, conv_width, dt_rank, cond_dim) for _ in range(n_layers)]
+        )
         self.norm = nn.LayerNorm(d_model)
         self.output_proj = OutputProjection(d_model)
 
@@ -216,7 +224,7 @@ class MambaRTModelParallel(nn.Module):
 
             # Trim padding
             if pad_len > 0:
-                out_chunk = out_chunk[:, :chunk.shape[1] - pad_len, :]
+                out_chunk = out_chunk[:, : chunk.shape[1] - pad_len, :]
             output_chunks.append(out_chunk)
 
         output_audio = torch.cat(output_chunks, dim=1)
@@ -224,8 +232,9 @@ class MambaRTModelParallel(nn.Module):
         new_ssm_state = torch.stack(ssm_list, dim=1)
         return output_audio, new_conv_state, new_ssm_state
 
-    def forward(self, audio_chunk, conv0, conv1, conv2, conv3,
-                ssm0, ssm1, ssm2, ssm3, cond, chunk_size=0):
+    def forward(
+        self, audio_chunk, conv0, conv1, conv2, conv3, ssm0, ssm1, ssm2, ssm3, cond, chunk_size=0
+    ):
         """Forward pass with optional sub-block chunking.
 
         Args:
@@ -250,6 +259,7 @@ class MambaRTModelParallel(nn.Module):
 #   audio_chunk: (B, 1, 1) — one sample at a time
 # ────────────────────────────────────────────────────────────────────────────
 
+
 class MambaRTModelSequential(nn.Module):
     """Single-step Mamba RT model for ONNX export with state carryover."""
 
@@ -260,15 +270,13 @@ class MambaRTModelSequential(nn.Module):
         self.n_layers = n_layers
         self.conv_width = conv_width
         self.input_proj = InputProjection(d_model, cond_dim)
-        self.layers = nn.ModuleList([
-            MambaLayer(d_model, d_state, conv_width, dt_rank, cond_dim)
-            for _ in range(n_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [MambaLayer(d_model, d_state, conv_width, dt_rank, cond_dim) for _ in range(n_layers)]
+        )
         self.norm = nn.LayerNorm(d_model)
         self.output_proj = OutputProjection(d_model)
 
-    def forward(self, audio_chunk, conv0, conv1, conv2, conv3,
-                ssm0, ssm1, ssm2, ssm3, cond):
+    def forward(self, audio_chunk, conv0, conv1, conv2, conv3, ssm0, ssm1, ssm2, ssm3, cond):
         """Single step: audio_chunk (B, 1, 1), returns (B, 1, 1) + states."""
         x = self.input_proj(audio_chunk, cond)
         convs = [conv0, conv1, conv2, conv3]
@@ -287,6 +295,7 @@ class MambaRTModelSequential(nn.Module):
 
 
 # ── Helpers ──
+
 
 def make_zero_states(batch_size, d_model, d_state, n_layers, conv_width=4):
     """Returns (convs_tuple, ssms_tuple) of zero initial states."""

@@ -1,41 +1,38 @@
+#include "core/ConditioningFrame.h"
+#include "core/ConditioningGenerator.hpp"
+#include "core/MambaInferenceEngine.hpp"
+
+#include <atomic>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <cmath>
-#include <string>
 #include <memory>
-#include <thread>
-#include <atomic>
-#include <cstdint>
 #include <random>
-#include "core/MambaInferenceEngine.hpp"
-#include "core/ConditioningGenerator.hpp"
-#include "core/ConditioningFrame.h"
+#include <string>
+#include <thread>
 
-#define TEST_ASSERT(cond, msg) \
-    do { \
-        if (!(cond)) { \
-            std::fprintf(stderr, "FAIL: %s (%s:%d)\n", msg, __FILE__, __LINE__); \
-            return 1; \
-        } \
-    } while(0)
+#define TEST_ASSERT(cond, msg)                                                                                         \
+    do {                                                                                                               \
+        if (!(cond)) {                                                                                                 \
+            std::fprintf(stderr, "FAIL: %s (%s:%d)\n", msg, __FILE__, __LINE__);                                       \
+            return 1;                                                                                                  \
+        }                                                                                                              \
+    } while (0)
 
-#define TEST_PASS(msg) \
-    std::printf("  PASS: %s\n", msg)
+#define TEST_PASS(msg) std::printf("  PASS: %s\n", msg)
 
-static std::string getModelPath()
-{
+static std::string getModelPath() {
     return std::string(TEST_MODEL_DIR) + "/mamba_rt.onnx";
 }
 
-static std::unique_ptr<MambaInferenceEngine> createEngine(const std::string& mp)
-{
+static std::unique_ptr<MambaInferenceEngine> createEngine(const std::string &mp) {
     MambaInferenceEngine::Config cfg;
     cfg.modelPath = mp;
     return std::make_unique<MambaInferenceEngine>(cfg);
 }
 
-static int skipTest(const char* name)
-{
+static int skipTest(const char *name) {
     std::printf("  SKIP: model not available\n");
     TEST_PASS(name);
     return 0;
@@ -43,8 +40,7 @@ static int skipTest(const char* name)
 
 // --- existing tests (rewritten for current API) ---
 
-static int test_construct_destroy()
-{
+static int test_construct_destroy() {
     {
         auto engine = std::make_unique<MambaInferenceEngine>(MambaInferenceEngine::Config{});
         TEST_ASSERT(engine != nullptr, "engine constructed");
@@ -59,8 +55,7 @@ static int test_construct_destroy()
     return 0;
 }
 
-static int test_init_model_path()
-{
+static int test_init_model_path() {
     const std::string mp = getModelPath();
     std::printf("  model path: %s\n", mp.c_str());
 
@@ -73,8 +68,7 @@ static int test_init_model_path()
     return 0;
 }
 
-static int test_process_block()
-{
+static int test_process_block() {
     const std::string mp = getModelPath();
     auto engine = createEngine(mp);
     if (!engine->init()) {
@@ -98,8 +92,7 @@ static int test_process_block()
     return 0;
 }
 
-static int test_reset_state()
-{
+static int test_reset_state() {
     const std::string mp = getModelPath();
     auto engine = createEngine(mp);
     if (!engine->init()) {
@@ -121,8 +114,7 @@ static int test_reset_state()
 
 // --- new tests ---
 
-static int test_process_block_partial_block()
-{
+static int test_process_block_partial_block() {
     const std::string mp = getModelPath();
     auto engine = createEngine(mp);
     if (!engine->init()) {
@@ -146,8 +138,7 @@ static int test_process_block_partial_block()
     return 0;
 }
 
-static int test_process_block_stereo()
-{
+static int test_process_block_stereo() {
     const std::string mp = getModelPath();
     auto engine = createEngine(mp);
     if (!engine->init()) {
@@ -179,8 +170,7 @@ static int test_process_block_stereo()
     return 0;
 }
 
-static int test_reset_state_during_processing()
-{
+static int test_reset_state_during_processing() {
     const std::string mp = getModelPath();
     auto engine = createEngine(mp);
     if (!engine->init()) {
@@ -203,8 +193,7 @@ static int test_reset_state_during_processing()
     return 0;
 }
 
-static int test_multiple_process_blocks()
-{
+static int test_multiple_process_blocks() {
     const std::string mp = getModelPath();
     auto engine = createEngine(mp);
     if (!engine->init()) {
@@ -235,8 +224,7 @@ static int test_multiple_process_blocks()
     return 0;
 }
 
-static int test_zero_samples()
-{
+static int test_zero_samples() {
     const std::string mp = getModelPath();
     auto engine = createEngine(mp);
     if (!engine->init()) {
@@ -253,8 +241,7 @@ static int test_zero_samples()
     return 0;
 }
 
-static int test_large_block_size()
-{
+static int test_large_block_size() {
     const std::string mp = getModelPath();
     auto engine = createEngine(mp);
     if (!engine->init()) {
@@ -276,8 +263,7 @@ static int test_large_block_size()
     return 0;
 }
 
-static int test_init_idempotent()
-{
+static int test_init_idempotent() {
     const std::string mp = getModelPath();
     auto engine = createEngine(mp);
 
@@ -290,8 +276,7 @@ static int test_init_idempotent()
     return 0;
 }
 
-static int test_construct_with_different_configs()
-{
+static int test_construct_with_different_configs() {
     {
         MambaInferenceEngine::Config cfg;
         cfg.dModel = 64;
@@ -324,8 +309,7 @@ static int test_construct_with_different_configs()
     return 0;
 }
 
-static int test_construct_destroy_no_init()
-{
+static int test_construct_destroy_no_init() {
     {
         auto engine = std::make_unique<MambaInferenceEngine>(MambaInferenceEngine::Config{});
     }
@@ -333,8 +317,7 @@ static int test_construct_destroy_no_init()
     return 0;
 }
 
-static int test_process_block_no_init()
-{
+static int test_process_block_no_init() {
     auto engine = std::make_unique<MambaInferenceEngine>(MambaInferenceEngine::Config{});
     float input[64] = {};
     float output[64] = {1.0f, 2.0f, 3.0f};
@@ -348,8 +331,7 @@ static int test_process_block_no_init()
     return 0;
 }
 
-static int test_set_conditioning()
-{
+static int test_set_conditioning() {
     auto engine = std::make_unique<MambaInferenceEngine>(MambaInferenceEngine::Config{});
 
     float cond1[8] = {1.0f, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
@@ -363,8 +345,7 @@ static int test_set_conditioning()
     return 0;
 }
 
-static int test_conditioning_basic()
-{
+static int test_conditioning_basic() {
     auto engine = std::make_unique<MambaInferenceEngine>(MambaInferenceEngine::Config{});
 
     float weights[8] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
@@ -378,8 +359,7 @@ static int test_conditioning_basic()
     return 0;
 }
 
-static int test_conditioning_with_model()
-{
+static int test_conditioning_with_model() {
     const std::string mp = getModelPath();
     auto engine = createEngine(mp);
     if (!engine->init()) {
@@ -423,8 +403,7 @@ static int test_conditioning_with_model()
     return 0;
 }
 
-static int test_init_missing_model_path()
-{
+static int test_init_missing_model_path() {
     MambaInferenceEngine::Config config;
     config.modelPath = "/nonexistent/path/mamba_rt.onnx";
     MambaInferenceEngine engine(config);
@@ -434,11 +413,10 @@ static int test_init_missing_model_path()
     return 0;
 }
 
-static int test_conditioning_atomic_swap()
-{
+static int test_conditioning_atomic_swap() {
     auto engine = std::make_unique<MambaInferenceEngine>(MambaInferenceEngine::Config{});
 
-    const float* p0 = engine->getActiveConditioningForTest();
+    const float *p0 = engine->getActiveConditioningForTest();
     TEST_ASSERT(p0 == nullptr, "active conditioning is null before any setConditioning() call");
 
     float cond1[8] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
@@ -446,43 +424,43 @@ static int test_conditioning_atomic_swap()
     float cond3[8] = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
     engine->setConditioning(cond1, 8);
-    const float* p1 = engine->getActiveConditioningForTest();
+    const float *p1 = engine->getActiveConditioningForTest();
     TEST_ASSERT(p1 != nullptr, "active conditioning is non-null after first setConditioning()");
 
     engine->setConditioning(cond2, 8);
-    const float* p2 = engine->getActiveConditioningForTest();
+    const float *p2 = engine->getActiveConditioningForTest();
     TEST_ASSERT(p2 != nullptr, "active conditioning is non-null after second setConditioning()");
     TEST_ASSERT(p2 != p1, "active pointer toggles to a different buffer on second setConditioning()");
 
     engine->setConditioning(cond3, 8);
-    const float* p3 = engine->getActiveConditioningForTest();
+    const float *p3 = engine->getActiveConditioningForTest();
     TEST_ASSERT(p3 != nullptr, "active conditioning is non-null after third setConditioning()");
     TEST_ASSERT(p3 != p2, "active pointer toggles again on third setConditioning()");
-    TEST_ASSERT(p3 == p1, "active pointer returns to first buffer on third setConditioning() (double-buffer ping-pong)");
+    TEST_ASSERT(p3 == p1,
+                "active pointer returns to first buffer on third setConditioning() (double-buffer ping-pong)");
 
     // Verify that the active pointer points to the last-written data and
     // that the dormant buffer retains its previous contents.
     TEST_ASSERT(p3[2] == 1.0f, "active buffer holds the most recent conditioning data (cond3[2]==1.0f)");
-    TEST_ASSERT(p2[1] == 1.0f, "dormant buffer (p2, condBufB_) still holds cond2[1]==1.0f (not overwritten by 3rd call)");
+    TEST_ASSERT(p2[1] == 1.0f,
+                "dormant buffer (p2, condBufB_) still holds cond2[1]==1.0f (not overwritten by 3rd call)");
 
     TEST_PASS("conditioning atomic swap");
     return 0;
 }
 
-static int test_conditioning_projection_math()
-{
+static int test_conditioning_projection_math() {
     auto engine = std::make_unique<MambaInferenceEngine>(MambaInferenceEngine::Config{});
 
     // Initially: no active conditioning.
     TEST_ASSERT(engine->getActiveConditioningForTest() == nullptr,
-        "active conditioning is null before setConditioning()");
+                "active conditioning is null before setConditioning()");
 
     // Set a known conditioning vector.
     float cond[8] = {1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     engine->setConditioning(cond, 8);
-    const float* active = engine->getActiveConditioningForTest();
-    TEST_ASSERT(active != nullptr,
-        "active conditioning is non-null after setConditioning(cond, 8)");
+    const float *active = engine->getActiveConditioningForTest();
+    TEST_ASSERT(active != nullptr, "active conditioning is non-null after setConditioning(cond, 8)");
 
     // Verify data integrity: the active buffer contains our values.
     TEST_ASSERT(active[0] == 1.0f, "cond[0] == 1.0f in active buffer");
@@ -495,33 +473,27 @@ static int test_conditioning_projection_math()
     return 0;
 }
 
-static int test_conditioning_generator_encode()
-{
+static int test_conditioning_generator_encode() {
     ConditioningGenerator::MusicalContext ctx;
     ctx.tempoBpm = 120.0f;
-    ctx.keyPitchClass = 0;   // C
-    ctx.mode = 0;            // major
+    ctx.keyPitchClass = 0; // C
+    ctx.mode = 0;          // major
     ctx.timeSigNumerator = 4;
-    ctx.sectionType = 0;     // verse
+    ctx.sectionType = 0; // verse
 
     float cond[8];
     ConditioningGenerator::encode(ctx, cond, 8);
 
     // Tempo 120bpm → log2(120/120)*0.25 + 0.5 = 0.5 (midpoint)
-    TEST_ASSERT(std::fabs(cond[0] - 0.5f) < 0.01f,
-        "tempo 120bpm encodes to ~0.5");
+    TEST_ASSERT(std::fabs(cond[0] - 0.5f) < 0.01f, "tempo 120bpm encodes to ~0.5");
     // Key C → 0.0
-    TEST_ASSERT(std::fabs(cond[1] - 0.0f) < 0.001f,
-        "key C encodes to 0.0");
+    TEST_ASSERT(std::fabs(cond[1] - 0.0f) < 0.001f, "key C encodes to 0.0");
     // Mode major → 0.0
-    TEST_ASSERT(std::fabs(cond[2] - 0.0f) < 0.001f,
-        "mode major encodes to 0.0");
+    TEST_ASSERT(std::fabs(cond[2] - 0.0f) < 0.001f, "mode major encodes to 0.0");
     // Time sig 4/4 → 0.5
-    TEST_ASSERT(std::fabs(cond[3] - 0.5f) < 0.01f,
-        "time sig 4/4 encodes to 0.5");
+    TEST_ASSERT(std::fabs(cond[3] - 0.5f) < 0.01f, "time sig 4/4 encodes to 0.5");
     // Section verse → 0.0
-    TEST_ASSERT(std::fabs(cond[4] - 0.0f) < 0.001f,
-        "section verse encodes to 0.0");
+    TEST_ASSERT(std::fabs(cond[4] - 0.0f) < 0.001f, "section verse encodes to 0.0");
     // Reserved dims are zero
     TEST_ASSERT(cond[5] == 0.0f, "reserved[5] is zero");
     TEST_ASSERT(cond[6] == 0.0f, "reserved[6] is zero");
@@ -531,8 +503,7 @@ static int test_conditioning_generator_encode()
     return 0;
 }
 
-static int test_conditioning_generator_different_contexts()
-{
+static int test_conditioning_generator_different_contexts() {
     ConditioningGenerator::MusicalContext ctxA;
     ctxA.tempoBpm = 120.0f;
     ctxA.keyPitchClass = 0;
@@ -540,8 +511,8 @@ static int test_conditioning_generator_different_contexts()
 
     ConditioningGenerator::MusicalContext ctxB;
     ctxB.tempoBpm = 60.0f;
-    ctxB.keyPitchClass = 6;   // F#
-    ctxB.mode = 1;            // minor
+    ctxB.keyPitchClass = 6; // F#
+    ctxB.mode = 1;          // minor
 
     float condA[8], condB[8];
     ConditioningGenerator::encode(ctxA, condA, 8);
@@ -561,10 +532,10 @@ static int test_conditioning_generator_different_contexts()
     return 0;
 }
 
-static int test_conditioning_generator_neutral()
-{
+static int test_conditioning_generator_neutral() {
     float cond[8];
-    for (int i = 0; i < 8; ++i) cond[i] = 999.0f;  // poison values
+    for (int i = 0; i < 8; ++i)
+        cond[i] = 999.0f; // poison values
     ConditioningGenerator::neutral(cond, 8);
     for (int i = 0; i < 8; ++i) {
         TEST_ASSERT(cond[i] == 0.0f, "neutral conditioning is all zeros");
@@ -573,8 +544,7 @@ static int test_conditioning_generator_neutral()
     return 0;
 }
 
-static int test_conditioning_generator_unknown_context()
-{
+static int test_conditioning_generator_unknown_context() {
     // All fields unknown (default MusicalContext with sentinel -1 values)
     ConditioningGenerator::MusicalContext ctx;
     float cond[8];
@@ -597,21 +567,16 @@ static int test_conditioning_generator_unknown_context()
 // ConditioningFrame unit tests
 // =============================================================================
 
-static int test_conditioning_frame_alignment()
-{
-    TEST_ASSERT(sizeof(ConditioningFrame) <= 64,
-        "ConditioningFrame fits in one cache line (64 bytes)");
-    TEST_ASSERT(alignof(ConditioningFrame) >= 16,
-        "ConditioningFrame is at least 16-byte aligned");
-    TEST_ASSERT(ConditioningFrame::kCondDim == 8,
-        "ConditioningFrame::kCondDim == 8");
+static int test_conditioning_frame_alignment() {
+    TEST_ASSERT(sizeof(ConditioningFrame) <= 64, "ConditioningFrame fits in one cache line (64 bytes)");
+    TEST_ASSERT(alignof(ConditioningFrame) >= 16, "ConditioningFrame is at least 16-byte aligned");
+    TEST_ASSERT(ConditioningFrame::kCondDim == 8, "ConditioningFrame::kCondDim == 8");
 
     TEST_PASS("conditioning frame alignment");
     return 0;
 }
 
-static int test_conditioning_frame_fill()
-{
+static int test_conditioning_frame_fill() {
     ConditioningFrame frame;
     for (size_t i = 0; i < ConditioningFrame::kCondDim; ++i) {
         TEST_ASSERT(frame.data[i] == 0.0f, "default frame is all zeros");
@@ -620,8 +585,7 @@ static int test_conditioning_frame_fill()
     float src[8] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
     frame.fill(src, 8);
     for (size_t i = 0; i < 8; ++i) {
-        TEST_ASSERT(frame.data[i] == src[i],
-            "fill with 8 elements populates correctly");
+        TEST_ASSERT(frame.data[i] == src[i], "fill with 8 elements populates correctly");
     }
 
     // Partial fill — remaining slots should be zero
@@ -631,8 +595,8 @@ static int test_conditioning_frame_fill()
     TEST_ASSERT(frame.data[1] == 20.0f, "partial fill[1]");
     TEST_ASSERT(frame.data[2] == 30.0f, "partial fill[2]");
     TEST_ASSERT(frame.data[3] == 40.0f, "partial fill[3]");
-    TEST_ASSERT(frame.data[4] == 0.0f,  "partial fill[4] is zero");
-    TEST_ASSERT(frame.data[7] == 0.0f,  "partial fill[7] is zero");
+    TEST_ASSERT(frame.data[4] == 0.0f, "partial fill[4] is zero");
+    TEST_ASSERT(frame.data[7] == 0.0f, "partial fill[7] is zero");
 
     // Zero-dim fill — everything zero
     frame.fill(src, 8);
@@ -645,8 +609,7 @@ static int test_conditioning_frame_fill()
     return 0;
 }
 
-static int test_conditioning_frame_equality()
-{
+static int test_conditioning_frame_equality() {
     ConditioningFrame a, b;
     float src[8] = {1.0f, 2.0f, 3.0f, 4.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     a.fill(src, 8);
@@ -676,27 +639,24 @@ static int test_conditioning_frame_equality()
 // Projection weight tests
 // =============================================================================
 
-static int test_load_cond_weights()
-{
+static int test_load_cond_weights() {
     // Empty weights (default) → no projection
     {
         MambaInferenceEngine::Config cfg;
         MambaInferenceEngine engine(cfg);
-        TEST_ASSERT(!engine.condWeightsLoaded(),
-            "cond weights not loaded with empty config vectors");
+        TEST_ASSERT(!engine.condWeightsLoaded(), "cond weights not loaded with empty config vectors");
     }
 
     // Wrong-size weights → no projection
     {
         MambaInferenceEngine::Config cfg;
-        cfg.deltaWeights = {1.0f, 2.0f, 3.0f};  // only 3, need 8
+        cfg.deltaWeights = {1.0f, 2.0f, 3.0f}; // only 3, need 8
         cfg.bWeights = {};
 
         // deltaWeights is 3 (not 8), bWeights is empty
         MambaInferenceEngine engine(cfg);
         engine.loadCondWeights();
-        TEST_ASSERT(!engine.condWeightsLoaded(),
-            "cond weights not loaded when deltaWeights size != COND_DIM");
+        TEST_ASSERT(!engine.condWeightsLoaded(), "cond weights not loaded when deltaWeights size != COND_DIM");
     }
 
     // Correct-size weights → loaded
@@ -706,16 +666,14 @@ static int test_load_cond_weights()
         cfg.bWeights.resize(ConditioningFrame::kCondDim, 1.0f);
         MambaInferenceEngine engine(cfg);
         engine.loadCondWeights();
-        TEST_ASSERT(engine.condWeightsLoaded(),
-            "cond weights loaded with correct-size vectors");
+        TEST_ASSERT(engine.condWeightsLoaded(), "cond weights loaded with correct-size vectors");
     }
 
     TEST_PASS("load cond weights");
     return 0;
 }
 
-static int test_cond_projection_math()
-{
+static int test_cond_projection_math() {
     // Manual projection: condScale = 1.0f + sum(cond[d] * (delta[d] + B[d]))
     float weights[8] = {0.5f, 0.25f, 0.125f, 0.0625f, 0.0f, 0.0f, 0.0f, 0.0f};
     float cond[8] = {1.0f, 2.0f, 3.0f, 4.0f, 0.0f, 0.0f, 0.0f, 0.0f};
@@ -728,7 +686,7 @@ static int test_cond_projection_math()
     //               = 1.0 + (0.5 + 0.5 + 0.375 + 0.25)
     //               = 1.0 + 1.625 = 2.625
     // Verify known result
-    (void)expectedScale;
+    (void) expectedScale;
 
     // Verify via engine config (+ engine can compute combined weights)
     MambaInferenceEngine::Config cfg;
@@ -738,44 +696,39 @@ static int test_cond_projection_math()
     MambaInferenceEngine engine(cfg);
     engine.loadCondWeights();
 
-    TEST_ASSERT(engine.condWeightsLoaded(),
-        "cond weights loaded after config with deltaWeights");
-    TEST_ASSERT(engine.getCombinedWeights().size() == 8,
-        "combined weights size == 8");
+    TEST_ASSERT(engine.condWeightsLoaded(), "cond weights loaded after config with deltaWeights");
+    TEST_ASSERT(engine.getCombinedWeights().size() == 8, "combined weights size == 8");
 
     // Verify combined = delta (b is zero)
     for (size_t d = 0; d < 8; ++d) {
         TEST_ASSERT(std::fabs(engine.getCombinedWeights()[d] - weights[d]) < 1e-6f,
-            "combined weights match delta when b is zero");
+                    "combined weights match delta when b is zero");
     }
 
     // Same test with both delta and b
     float delta[8] = {0.3f, 0.3f, 0.3f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-    float b[8] =     {0.2f, 0.2f, -0.1f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    float b[8] = {0.2f, 0.2f, -0.1f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     cfg.deltaWeights.assign(delta, delta + 8);
     cfg.bWeights.assign(b, b + 8);
     MambaInferenceEngine engine2(cfg);
     engine2.loadCondWeights();
 
-    TEST_ASSERT(engine2.condWeightsLoaded(),
-        "cond weights loaded with delta+b config");
+    TEST_ASSERT(engine2.condWeightsLoaded(), "cond weights loaded with delta+b config");
     for (size_t d = 0; d < 8; ++d) {
         float expected = delta[d] + b[d];
-        TEST_ASSERT(std::fabs(engine2.getCombinedWeights()[d] - expected) < 1e-6f,
-            "combined weights = delta + b");
+        TEST_ASSERT(std::fabs(engine2.getCombinedWeights()[d] - expected) < 1e-6f, "combined weights = delta + b");
     }
 
     TEST_PASS("cond projection math");
     return 0;
 }
 
-static int test_cond_projection_deterministic()
-{
+static int test_cond_projection_deterministic() {
     // Build engine with known weights
     MambaInferenceEngine::Config cfg;
     cfg.modelPath = getModelPath();
     float delta[8] = {0.5f, 0.25f, 0.125f, 0.0625f, 0.0f, 0.0f, 0.0f, 0.0f};
-    float b[8] =     {0.1f, 0.1f,  0.05f,  0.025f,  0.0f, 0.0f, 0.0f, 0.0f};
+    float b[8] = {0.1f, 0.1f, 0.05f, 0.025f, 0.0f, 0.0f, 0.0f, 0.0f};
     cfg.deltaWeights.assign(delta, delta + 8);
     cfg.bWeights.assign(b, b + 8);
     cfg.maxBlockSize = 64;
@@ -820,7 +773,7 @@ static int test_cond_projection_deterministic()
 
     for (int i = 0; i < blockSamples; ++i) {
         TEST_ASSERT(std::fabs(outputCond[i] - outputCond2[i]) < 1e-6f,
-            "deterministic: same cond vector produces same output");
+                    "deterministic: same cond vector produces same output");
     }
 
     TEST_PASS("cond projection deterministic");
@@ -831,11 +784,10 @@ static int test_cond_projection_deterministic()
 // Concurrent conditioning test — 1M iterations
 // =============================================================================
 
-static int test_concurrent_conditioning()
-{
+static int test_concurrent_conditioning() {
     MambaInferenceEngine::Config cfg;
     float delta[8] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-    float b[8] =     {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    float b[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     cfg.deltaWeights.assign(delta, delta + 8);
     cfg.bWeights.assign(b, b + 8);
     MambaInferenceEngine engine(cfg);
@@ -850,7 +802,7 @@ static int test_concurrent_conditioning()
     // Writer thread: alternates between condA and condB
     std::thread writer([&]() {
         for (uint64_t i = 0; i < kIterations; ++i) {
-            const float* c = (i & 1) ? condA : condB;
+            const float *c = (i & 1) ? condA : condB;
             engine.setConditioning(c, 8);
         }
         writerDone.store(true, std::memory_order_release);
@@ -860,7 +812,7 @@ static int test_concurrent_conditioning()
     // of the two known patterns (no torn reads, no corruption)
     std::thread reader([&]() {
         while (true) {
-            auto* frame = engine.getActiveFrameForTest();
+            auto *frame = engine.getActiveFrameForTest();
             if (!frame) {
                 if (writerDone.load(std::memory_order_acquire)) break;
                 continue;
@@ -878,8 +830,7 @@ static int test_concurrent_conditioning()
                 readErrors.fetch_add(1, std::memory_order_relaxed);
             }
 
-            if (writerDone.load(std::memory_order_acquire) &&
-                frame == engine.getActiveFrameForTest()) {
+            if (writerDone.load(std::memory_order_acquire) && frame == engine.getActiveFrameForTest()) {
                 break;
             }
         }
@@ -888,11 +839,10 @@ static int test_concurrent_conditioning()
     writer.join();
     reader.join();
 
-    TEST_ASSERT(readErrors.load() == 0,
-        "no torn reads detected after 1M concurrent writes");
+    TEST_ASSERT(readErrors.load() == 0, "no torn reads detected after 1M concurrent writes");
 
     // Verify final state is one of the two valid patterns
-    auto* finalFrame = engine.getActiveFrameForTest();
+    auto *finalFrame = engine.getActiveFrameForTest();
     TEST_ASSERT(finalFrame != nullptr, "active frame is non-null after concurrent test");
     bool isCondA = true;
     bool isCondB = true;
@@ -900,8 +850,7 @@ static int test_concurrent_conditioning()
         if (finalFrame->data[d] != condA[d]) isCondA = false;
         if (finalFrame->data[d] != condB[d]) isCondB = false;
     }
-    TEST_ASSERT(isCondA || isCondB,
-        "final frame contains valid cond data (either condA or condB)");
+    TEST_ASSERT(isCondA || isCondB, "final frame contains valid cond data (either condA or condB)");
 
     TEST_PASS("concurrent conditioning");
     return 0;
@@ -911,12 +860,11 @@ static int test_concurrent_conditioning()
 // Integration: conditioned vs unconditioned output
 // =============================================================================
 
-static int test_conditioned_vs_unconditioned_integration()
-{
+static int test_conditioned_vs_unconditioned_integration() {
     MambaInferenceEngine::Config cfg;
     cfg.modelPath = getModelPath();
     float delta[8] = {2.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-    float b[8] =     {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    float b[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     cfg.deltaWeights.assign(delta, delta + 8);
     cfg.bWeights.assign(b, b + 8);
     cfg.maxBlockSize = 64;
@@ -953,8 +901,7 @@ static int test_conditioned_vs_unconditioned_integration()
             break;
         }
     }
-    TEST_ASSERT(differs,
-        "conditioned output differs from unconditioned (non-zero weights)");
+    TEST_ASSERT(differs, "conditioned output differs from unconditioned (non-zero weights)");
 
     // Reproducibility: same cond + same input + same seed = same output
     float conditioned2[64] = {};
@@ -969,8 +916,7 @@ static int test_conditioned_vs_unconditioned_integration()
             break;
         }
     }
-    TEST_ASSERT(matches,
-        "reproducible: same cond+input+reset produces bit-identical output");
+    TEST_ASSERT(matches, "reproducible: same cond+input+reset produces bit-identical output");
 
     TEST_PASS("conditioned vs unconditioned integration");
     return 0;
@@ -980,8 +926,7 @@ static int test_conditioned_vs_unconditioned_integration()
 // Test runner
 // =============================================================================
 
-int main()
-{
+int main() {
     std::printf("=== MambaInferenceEngine Tests ===\n\n");
 
     int failures = 0;

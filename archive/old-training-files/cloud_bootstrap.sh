@@ -57,10 +57,10 @@ if [ ! -d "$VENV_DIR" ]; then
     python3 -m venv "$VENV_DIR"
     source "$VENV_DIR/bin/activate"
     pip install --upgrade pip setuptools wheel
-    
+
     # ROCm PyTorch (MI300X compatible)
     pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
-    
+
     # Training dependencies
     pip install numpy soundfile
 else

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-CLARA Mamba-3 Dataset — dataset.py
+"""CLARA Mamba-3 Dataset — dataset.py
 
 Multi-stem MUSDB18-HQ dataset with pre-extracted CREPE f0.
 
@@ -19,11 +18,8 @@ Directory layout expected:
 
 from __future__ import annotations
 
-import math
 import random
-import time
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import soundfile as sf
@@ -31,16 +27,15 @@ import torch
 import torch.nn.functional as F
 import torchaudio
 from torch import Tensor
-from torch.utils.data import Dataset, DataLoader
-
+from torch.utils.data import DataLoader, Dataset
 
 # ═══════════════════════════════════════════════════════════════════
 # StemDataset
 # ═══════════════════════════════════════════════════════════════════
 
+
 class StemDataset(Dataset):
-    """
-    Multi-stem dataset for MUSDB18-HQ per-track processing.
+    """Multi-stem dataset for MUSDB18-HQ per-track processing.
 
     Returns dict with:
       target:       (L,)   — target stem waveform
@@ -53,7 +48,7 @@ class StemDataset(Dataset):
       valid:        bool  — False if missing stems (filtered by collate)
     """
 
-    STEM_NAMES = ['bass', 'drums', 'vocals', 'other']
+    STEM_NAMES = ["bass", "drums", "vocals", "other"]
 
     def __init__(
         self,
@@ -88,8 +83,7 @@ class StemDataset(Dataset):
 
         n_tracks = len(self.tracks)
         assert n_tracks >= min_complete_tracks, (
-            f"Found {n_tracks} complete tracks in {root}, "
-            f"need at least {min_complete_tracks}"
+            f"Found {n_tracks} complete tracks in {root}, " f"need at least {min_complete_tracks}"
         )
         print(f"  StemDataset: {n_tracks} tracks, {n_tracks * 4} stems")
 
@@ -104,14 +98,14 @@ class StemDataset(Dataset):
 
     # ── Loading ─────────────────────────────────────────────────────
 
-    def _load_stem(self, track_dir: Path, stem_name: str) -> Optional[Tensor]:
+    def _load_stem(self, track_dir: Path, stem_name: str) -> Tensor | None:
         """Load stem WAV, resample to target SR, return (L,) tensor."""
         key = f"{track_dir}/{stem_name}"
 
         # Check cache
         if track_dir.name in self._cache:
-            if stem_name in self._cache[track_dir.name]['stems']:
-                return self._cache[track_dir.name]['stems'][stem_name]
+            if stem_name in self._cache[track_dir.name]["stems"]:
+                return self._cache[track_dir.name]["stems"][stem_name]
 
         # Load from disk
         path = track_dir / f"{stem_name}.wav"
@@ -119,7 +113,7 @@ class StemDataset(Dataset):
             return None
 
         try:
-            data, sr = sf.read(str(path), dtype='float32', always_2d=True)
+            data, sr = sf.read(str(path), dtype="float32", always_2d=True)
             # Mix to mono
             if data.shape[1] > 1:
                 data = data.mean(axis=1)
@@ -129,9 +123,7 @@ class StemDataset(Dataset):
 
             # Resample if needed
             if sr != self.sr:
-                wav = torchaudio.functional.resample(
-                    wav.unsqueeze(0), sr, self.sr
-                ).squeeze(0)
+                wav = torchaudio.functional.resample(wav.unsqueeze(0), sr, self.sr).squeeze(0)
         except Exception as e:
             print(f"  WARNING: failed to load {path}: {e}")
             return None
@@ -140,22 +132,23 @@ class StemDataset(Dataset):
         self._cache_stem(track_dir.name, stem_name, wav)
         return wav
 
-    def _load_crepe(self, track_dir: Path, stem_name: str,
-                    target_len: int) -> tuple[Tensor, float]:
-        """
-        Load pre-extracted CREPE f0.
+    def _load_crepe(self, track_dir: Path, stem_name: str, target_len: int) -> tuple[Tensor, float]:
+        """Load pre-extracted CREPE f0.
 
         Returns:
           probs:   (T_model, 360) float32 or zeros if missing
           pitched: 0.0 or 1.0 (from .pitched.npy)
+
         """
         key = f"{track_dir}/{stem_name}"
 
         # Check cache
         if track_dir.name in self._cache:
-            if 'crepe' in self._cache[track_dir.name] and \
-               stem_name in self._cache[track_dir.name]['crepe']:
-                return self._cache[track_dir.name]['crepe'][stem_name]
+            if (
+                "crepe" in self._cache[track_dir.name]
+                and stem_name in self._cache[track_dir.name]["crepe"]
+            ):
+                return self._cache[track_dir.name]["crepe"][stem_name]
 
         crepe_path = track_dir / f"{stem_name}.crepe.npy"
         pitched_path = track_dir / f"{stem_name}.pitched.npy"
@@ -180,17 +173,16 @@ class StemDataset(Dataset):
     def _cache_stem(self, track_key: str, stem_name: str, wav: Tensor):
         if track_key not in self._cache:
             self._evict_if_full()
-            self._cache[track_key] = {'stems': {}, 'crepe': {}}
+            self._cache[track_key] = {"stems": {}, "crepe": {}}
             self._cache_queue.append(track_key)
-        self._cache[track_key]['stems'][stem_name] = wav
+        self._cache[track_key]["stems"][stem_name] = wav
 
-    def _cache_crepe(self, track_key: str, stem_name: str,
-                     result: tuple[Tensor, float]):
+    def _cache_crepe(self, track_key: str, stem_name: str, result: tuple[Tensor, float]):
         if track_key not in self._cache:
             self._evict_if_full()
-            self._cache[track_key] = {'stems': {}, 'crepe': {}}
+            self._cache[track_key] = {"stems": {}, "crepe": {}}
             self._cache_queue.append(track_key)
-        self._cache[track_key]['crepe'][stem_name] = result
+        self._cache[track_key]["crepe"][stem_name] = result
 
     def _evict_if_full(self):
         if len(self._cache_queue) >= self.cache_limit:
@@ -200,10 +192,8 @@ class StemDataset(Dataset):
 
     # ── Crop / align ───────────────────────────────────────────────
 
-    def _crop_with_crepe(self, wav: Tensor, crepe: Tensor
-                         ) -> tuple[Tensor, Tensor]:
-        """
-        Sync-crop waveform and CREPE tensor so frames stay aligned.
+    def _crop_with_crepe(self, wav: Tensor, crepe: Tensor) -> tuple[Tensor, Tensor]:
+        """Sync-crop waveform and CREPE tensor so frames stay aligned.
 
         wav:   (L,) at sample_rate
         crepe: (T_full, 360) — full-track CREPE probs
@@ -213,7 +203,7 @@ class StemDataset(Dataset):
         L = wav.shape[-1]
         T_clip = self.T_frames
 
-        if L <= self.clip_len:
+        if self.clip_len >= L:
             # Pad waveform
             wav_padded = F.pad(wav, (0, self.clip_len - L))
             # Pad/truncate CREPE
@@ -226,7 +216,7 @@ class StemDataset(Dataset):
 
         # Random sample-aligned start
         start = random.randint(0, L - self.clip_len)
-        wav_crop = wav[start:start + self.clip_len]
+        wav_crop = wav[start : start + self.clip_len]
 
         # Convert sample start → frame start (center=True STFT)
         frame_start = start // self.hop_length
@@ -245,17 +235,14 @@ class StemDataset(Dataset):
     # ── Pitch shift augmentation ───────────────────────────────────
 
     @staticmethod
-    def _pitch_shift_waveform(wav: Tensor, semitones: float, sr: int
-                              ) -> Tensor:
+    def _pitch_shift_waveform(wav: Tensor, semitones: float, sr: int) -> Tensor:
         """Pitch shift via resampling. wav: (L,). Returns (L,)."""
         if abs(semitones) < 0.01:
             return wav
         factor = 2 ** (semitones / 12.0)
         orig_len = wav.shape[-1]
         new_sr = int(sr * factor)
-        shifted = torchaudio.functional.resample(
-            wav.unsqueeze(0), sr, new_sr
-        ).squeeze(0)
+        shifted = torchaudio.functional.resample(wav.unsqueeze(0), sr, new_sr).squeeze(0)
         if shifted.shape[-1] > orig_len:
             shifted = shifted[..., :orig_len]
         else:
@@ -264,8 +251,7 @@ class StemDataset(Dataset):
 
     @staticmethod
     def _pitch_shift_crepe(crepe: Tensor, semitones: float) -> Tensor:
-        """
-        Roll CREPE 360-D probability vector to match pitch shift.
+        """Roll CREPE 360-D probability vector to match pitch shift.
         20 cents per bin → 5 bins per semitone.
         crepe: (T, 360)
         """
@@ -309,9 +295,7 @@ class StemDataset(Dataset):
             return self._fallback(target_name)
 
         # Load target CREPE (full length, then sync-crop)
-        target_crepe, target_pitched = self._load_crepe(
-            track_dir, target_name, target.shape[-1]
-        )
+        target_crepe, target_pitched = self._load_crepe(track_dir, target_name, target.shape[-1])
         target, target_crepe = self._crop_with_crepe(target, target_crepe)
 
         # Load other stems + their CREPE
@@ -342,12 +326,8 @@ class StemDataset(Dataset):
             target_crepe = self._pitch_shift_crepe(target_crepe, semitones)
 
             for i in range(len(other_wavs)):
-                other_wavs[i] = self._pitch_shift_waveform(
-                    other_wavs[i], semitones, self.sr
-                )
-                other_crepes[i] = self._pitch_shift_crepe(
-                    other_crepes[i], semitones
-                )
+                other_wavs[i] = self._pitch_shift_waveform(other_wavs[i], semitones, self.sr)
+                other_crepes[i] = self._pitch_shift_crepe(other_crepes[i], semitones)
 
             # Random gain + polarity (per stem)
             target = self._augment_wav(target)
@@ -355,26 +335,26 @@ class StemDataset(Dataset):
                 other_wavs[i] = self._augment_wav(other_wavs[i])
 
         return {
-            'target':          target,                            # (L,)
-            'other_stems':     torch.stack(other_wavs, dim=0),    # (K, L)
-            'target_crepe':    target_crepe,                      # (T, 360)
-            'other_crepe':     torch.stack(other_crepes, dim=0),  # (K, T, 360)
-            'target_pitched':  float(target_pitched),
-            'other_pitched':   torch.tensor(other_pitched, dtype=torch.float32),  # (K,)
-            'stem_name':       target_name,
-            'valid':           True,
+            "target": target,  # (L,)
+            "other_stems": torch.stack(other_wavs, dim=0),  # (K, L)
+            "target_crepe": target_crepe,  # (T, 360)
+            "other_crepe": torch.stack(other_crepes, dim=0),  # (K, T, 360)
+            "target_pitched": float(target_pitched),
+            "other_pitched": torch.tensor(other_pitched, dtype=torch.float32),  # (K,)
+            "stem_name": target_name,
+            "valid": True,
         }
 
     def _fallback(self, stem_name: str) -> dict:
         return {
-            'target':          torch.zeros(self.clip_len),
-            'other_stems':     torch.zeros(len(self.STEM_NAMES) - 1, self.clip_len),
-            'target_crepe':    torch.zeros(self.T_frames, 360),
-            'other_crepe':     torch.zeros(len(self.STEM_NAMES) - 1, self.T_frames, 360),
-            'target_pitched':  0.0,
-            'other_pitched':   torch.zeros(len(self.STEM_NAMES) - 1),
-            'stem_name':       stem_name,
-            'valid':           False,
+            "target": torch.zeros(self.clip_len),
+            "other_stems": torch.zeros(len(self.STEM_NAMES) - 1, self.clip_len),
+            "target_crepe": torch.zeros(self.T_frames, 360),
+            "other_crepe": torch.zeros(len(self.STEM_NAMES) - 1, self.T_frames, 360),
+            "target_pitched": 0.0,
+            "other_pitched": torch.zeros(len(self.STEM_NAMES) - 1),
+            "stem_name": stem_name,
+            "valid": False,
         }
 
 
@@ -382,25 +362,27 @@ class StemDataset(Dataset):
 # collate_valid — filter out invalid batches
 # ═══════════════════════════════════════════════════════════════════
 
-def collate_valid(batch: list[dict]) -> Optional[dict]:
+
+def collate_valid(batch: list[dict]) -> dict | None:
     """Filter invalid samples and collate."""
-    batch = [b for b in batch if b.get('valid', True)]
+    batch = [b for b in batch if b.get("valid", True)]
     if not batch:
         return None
     return {
-        'target':          torch.stack([b['target'] for b in batch]),
-        'other_stems':     torch.stack([b['other_stems'] for b in batch]),
-        'target_crepe':    torch.stack([b['target_crepe'] for b in batch]),
-        'other_crepe':     torch.stack([b['other_crepe'] for b in batch]),
-        'target_pitched':  torch.tensor([b['target_pitched'] for b in batch]),
-        'other_pitched':   torch.stack([b['other_pitched'] for b in batch]),
-        'stem_names':      [b['stem_name'] for b in batch],
+        "target": torch.stack([b["target"] for b in batch]),
+        "other_stems": torch.stack([b["other_stems"] for b in batch]),
+        "target_crepe": torch.stack([b["target_crepe"] for b in batch]),
+        "other_crepe": torch.stack([b["other_crepe"] for b in batch]),
+        "target_pitched": torch.tensor([b["target_pitched"] for b in batch]),
+        "other_pitched": torch.stack([b["other_pitched"] for b in batch]),
+        "stem_names": [b["stem_name"] for b in batch],
     }
 
 
 # ═══════════════════════════════════════════════════════════════════
 # Helper: make train/val DataLoaders
 # ═══════════════════════════════════════════════════════════════════
+
 
 def make_dataloaders(
     data_root: str,
@@ -414,21 +396,30 @@ def make_dataloaders(
     cache_limit: int = 16,
     seed: int = 42,
 ) -> tuple[DataLoader, DataLoader, int]:
-    """
-    Create train and val DataLoaders with deterministic track split.
+    """Create train and val DataLoaders with deterministic track split.
 
     Returns: (train_loader, val_loader, n_train_tracks)
     """
     # Create datasets
     full_dataset = StemDataset(
-        root=data_root, sample_rate=sample_rate,
-        n_fft=n_fft, hop_length=hop_length, clip_seconds=clip_seconds,
-        augment=True, is_val=False, cache_limit=cache_limit,
+        root=data_root,
+        sample_rate=sample_rate,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        clip_seconds=clip_seconds,
+        augment=True,
+        is_val=False,
+        cache_limit=cache_limit,
     )
     val_dataset = StemDataset(
-        root=data_root, sample_rate=sample_rate,
-        n_fft=n_fft, hop_length=hop_length, clip_seconds=clip_seconds,
-        augment=False, is_val=True, cache_limit=cache_limit,
+        root=data_root,
+        sample_rate=sample_rate,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        clip_seconds=clip_seconds,
+        augment=False,
+        is_val=True,
+        cache_limit=cache_limit,
     )
 
     # Split by TRACK (not by sample) — prevent leakage
@@ -444,14 +435,18 @@ def make_dataloaders(
     print(f"  Tracks: {len(train_tracks)} train, {len(val_tracks)} val")
 
     train_loader = DataLoader(
-        full_dataset, batch_size=batch_size, shuffle=True,
+        full_dataset,
+        batch_size=batch_size,
+        shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
         collate_fn=collate_valid,
         drop_last=True,
     )
     val_loader = DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False,
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
         num_workers=0,  # No fork for val (lower overhead)
         pin_memory=True,
         collate_fn=collate_valid,

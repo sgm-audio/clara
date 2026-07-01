@@ -2,10 +2,11 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
-template<typename T, size_t Capacity = 64>
+template <typename T, size_t Capacity = 64>
 class SPSCQueue {
     static_assert(Capacity > 0 && Capacity <= 65536, "Capacity must be 1..65536");
     static_assert(std::is_nothrow_move_assignable_v<T> || std::is_copy_assignable_v<T>,
@@ -25,28 +26,28 @@ public:
     ~SPSCQueue() = default;
 
     // Non-copyable, non-movable
-    SPSCQueue(const SPSCQueue&) = delete;
-    SPSCQueue& operator=(const SPSCQueue&) = delete;
-    SPSCQueue(SPSCQueue&&) = delete;
-    SPSCQueue& operator=(SPSCQueue&&) = delete;
+    SPSCQueue(const SPSCQueue &) = delete;
+    SPSCQueue &operator=(const SPSCQueue &) = delete;
+    SPSCQueue(SPSCQueue &&) = delete;
+    SPSCQueue &operator=(SPSCQueue &&) = delete;
 
     // Push from producer thread. Returns true if slot was available.
-    bool push(const T& item) {
+    bool push(const T &item) {
         auto tail = tail_.load(std::memory_order_relaxed);
         auto head = head_.load(std::memory_order_acquire);
         if (((tail + 1) & kMask) == (head & kMask)) {
-            return false;  // full
+            return false; // full
         }
         buffer_[tail & kMask] = item;
         tail_.store(tail + 1, std::memory_order_release);
         return true;
     }
 
-    bool push(T&& item) {
+    bool push(T &&item) {
         auto tail = tail_.load(std::memory_order_relaxed);
         auto head = head_.load(std::memory_order_acquire);
         if (((tail + 1) & kMask) == (head & kMask)) {
-            return false;  // full
+            return false; // full
         }
         buffer_[tail & kMask] = std::move(item);
         tail_.store(tail + 1, std::memory_order_release);
@@ -54,11 +55,11 @@ public:
     }
 
     // Pop from consumer thread. Returns false if empty.
-    bool pop(T& item) {
+    bool pop(T &item) {
         auto head = head_.load(std::memory_order_relaxed);
         auto tail = tail_.load(std::memory_order_acquire);
         if (head == tail) {
-            return false;  // empty
+            return false; // empty
         }
         item = std::move(buffer_[head & kMask]);
         head_.store(head + 1, std::memory_order_release);
@@ -75,5 +76,7 @@ public:
         return size() == 0;
     }
 
-    static constexpr size_t capacity() { return Capacity; }
+    static constexpr size_t capacity() {
+        return Capacity;
+    }
 };

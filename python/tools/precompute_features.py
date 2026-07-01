@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Precompute audio features for CLARA training — run once, use forever.
+"""Precompute audio features for CLARA training — run once, use forever.
 
 Computes and saves mel spectrograms + STFT magnitudes for all audio files.
 The training dataset loads precomputed features from disk (or RAM cache),
@@ -36,9 +35,6 @@ Each .npz contains:
 
 import argparse
 import json
-import math
-import os
-import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -48,11 +44,10 @@ import soundfile as sf
 import torch
 import torchaudio
 
-
 # ── Feature computation ──────────────────────────────────────────────
 
-def compute_mel(audio: np.ndarray, sr: int, n_fft: int, hop_length: int,
-                n_mels: int) -> np.ndarray:
+
+def compute_mel(audio: np.ndarray, sr: int, n_fft: int, hop_length: int, n_mels: int) -> np.ndarray:
     """Compute log-mel spectrogram. Returns [n_frames, n_mels]."""
     mel_transform = torchaudio.transforms.MelSpectrogram(
         sample_rate=sr,
@@ -61,16 +56,16 @@ def compute_mel(audio: np.ndarray, sr: int, n_fft: int, hop_length: int,
         n_mels=n_mels,
         f_min=0.0,
         f_max=sr / 2.0,
-        norm='slaney',
-        mel_scale='htk',
+        norm="slaney",
+        mel_scale="htk",
     )
     with torch.no_grad():
         t = torch.from_numpy(audio).float()
         if t.dim() == 1:
             t = t.unsqueeze(0)
-        mel = mel_transform(t)          # [1, n_mels, n_frames]
-        mel = mel.log1p()               # log(1 + mel), same as training loss
-    return mel.squeeze(0).T.numpy()    # [n_frames, n_mels]
+        mel = mel_transform(t)  # [1, n_mels, n_frames]
+        mel = mel.log1p()  # log(1 + mel), same as training loss
+    return mel.squeeze(0).T.numpy()  # [n_frames, n_mels]
 
 
 def compute_stft(audio: np.ndarray, n_fft: int, hop_length: int) -> np.ndarray:
@@ -80,23 +75,29 @@ def compute_stft(audio: np.ndarray, n_fft: int, hop_length: int) -> np.ndarray:
         t = torch.from_numpy(audio).float()
         if t.dim() == 1:
             t = t.unsqueeze(0)
-        stft = torch.stft(
-            t, n_fft, hop_length=hop_length,
-            window=window, return_complex=True
-        )
-        mag = stft.abs()               # [1, n_fft//2+1, n_frames]
-    return mag.squeeze(0).numpy()       # [n_fft//2+1, n_frames]
+        stft = torch.stft(t, n_fft, hop_length=hop_length, window=window, return_complex=True)
+        mag = stft.abs()  # [1, n_fft//2+1, n_frames]
+    return mag.squeeze(0).numpy()  # [n_fft//2+1, n_frames]
 
 
 def process_file(args) -> dict:
     """Process one audio file, returns list of chunk dicts."""
-    (filepath, output_dir, chunk_seconds, sr, n_fft, hop_length,
-     n_mels, file_index, total_files) = args
+    (
+        filepath,
+        output_dir,
+        chunk_seconds,
+        sr,
+        n_fft,
+        hop_length,
+        n_mels,
+        file_index,
+        total_files,
+    ) = args
 
     try:
-        audio, file_sr = sf.read(str(filepath), dtype='float32', always_2d=True)
+        audio, file_sr = sf.read(str(filepath), dtype="float32", always_2d=True)
     except Exception as e:
-        return {'file': str(filepath), 'error': str(e), 'chunks': []}
+        return {"file": str(filepath), "error": str(e), "chunks": []}
 
     # Mix to mono
     if audio.shape[1] > 1:
@@ -146,40 +147,46 @@ def process_file(args) -> dict:
             offset=start,
         )
 
-        chunks.append({
-            'file': str(filepath),
-            'chunk_index': ci,
-            'out_path': str(out_path),
-            'mel_shape': mel.shape,
-            'stft_shape': stft.shape,
-            'audio_shape': chunk_audio.shape,
-        })
+        chunks.append(
+            {
+                "file": str(filepath),
+                "chunk_index": ci,
+                "out_path": str(out_path),
+                "mel_shape": mel.shape,
+                "stft_shape": stft.shape,
+                "audio_shape": chunk_audio.shape,
+            }
+        )
 
     return {
-        'file': str(filepath),
-        'file_index': file_index,
-        'total_chunks': len(chunks),
-        'chunks': chunks,
+        "file": str(filepath),
+        "file_index": file_index,
+        "total_chunks": len(chunks),
+        "chunks": chunks,
     }
 
 
 # ── Main ─────────────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser(description="Precompute audio features for CLARA training")
-    parser.add_argument('--input', required=True, help='Input audio directory (train)')
-    parser.add_argument('--test-input', help='Optional test audio directory')
-    parser.add_argument('--output', required=True, help='Output precomputed directory')
-    parser.add_argument('--chunk-seconds', type=float, default=0.5,
-                        help='Chunk duration in seconds (default: 0.5)')
-    parser.add_argument('--sample-rate', type=int, default=44100)
-    parser.add_argument('--n-fft', type=int, default=1024)
-    parser.add_argument('--hop-length', type=int, default=256)
-    parser.add_argument('--n-mels', type=int, default=64)
-    parser.add_argument('--workers', type=int, default=8,
-                        help='Parallel workers for preprocessing')
-    parser.add_argument('--skip-existing', action='store_true',
-                        help='Skip files that already have precomputed output')
+    parser.add_argument("--input", required=True, help="Input audio directory (train)")
+    parser.add_argument("--test-input", help="Optional test audio directory")
+    parser.add_argument("--output", required=True, help="Output precomputed directory")
+    parser.add_argument(
+        "--chunk-seconds", type=float, default=0.5, help="Chunk duration in seconds (default: 0.5)"
+    )
+    parser.add_argument("--sample-rate", type=int, default=44100)
+    parser.add_argument("--n-fft", type=int, default=1024)
+    parser.add_argument("--hop-length", type=int, default=256)
+    parser.add_argument("--n-mels", type=int, default=64)
+    parser.add_argument("--workers", type=int, default=8, help="Parallel workers for preprocessing")
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip files that already have precomputed output",
+    )
     args = parser.parse_args()
 
     sr = args.sample_rate
@@ -189,7 +196,7 @@ def main():
     chunk_seconds = args.chunk_seconds
     chunk_samples = int(chunk_seconds * sr)
 
-    print(f"CLARA Feature Precomputation")
+    print("CLARA Feature Precomputation")
     print(f"{'='*50}")
     print(f"Input:        {args.input}")
     print(f"Output:       {args.output}")
@@ -202,13 +209,10 @@ def main():
 
     # Find audio files
     def find_audio(root):
-        return sorted([
-            f for f in Path(root).rglob("*.wav")
-            if f.is_file()
-        ] + [
-            f for f in Path(root).rglob("*.flac")
-            if f.is_file()
-        ])
+        return sorted(
+            [f for f in Path(root).rglob("*.wav") if f.is_file()]
+            + [f for f in Path(root).rglob("*.flac") if f.is_file()]
+        )
 
     train_files = find_audio(args.input)
     print(f"Train files:  {len(train_files)}")
@@ -235,10 +239,9 @@ def main():
                 existing = list(output_dir.glob(f"*{stem}*.npz"))
                 if existing:
                     continue
-            items.append((
-                fp, str(output_dir), chunk_seconds, sr,
-                n_fft, hop_length, n_mels, fi, len(files)
-            ))
+            items.append(
+                (fp, str(output_dir), chunk_seconds, sr, n_fft, hop_length, n_mels, fi, len(files))
+            )
         return items
 
     train_work = make_work(train_files, train_out)
@@ -252,8 +255,19 @@ def main():
     if not all_work:
         print("All files already precomputed (use --skip-existing to skip)")
         # Still write metadata
-        write_metadata(args.output, train_out, test_out, train_files, test_files,
-                       chunk_seconds, sr, n_fft, hop_length, n_mels, chunk_samples)
+        write_metadata(
+            args.output,
+            train_out,
+            test_out,
+            train_files,
+            test_files,
+            chunk_seconds,
+            sr,
+            n_fft,
+            hop_length,
+            n_mels,
+            chunk_samples,
+        )
         return 0
 
     # Process
@@ -264,9 +278,11 @@ def main():
 
     # Estimate storage
     # Per chunk: mel(201*64*4=51KB) + stft(513*201*4=412KB) + audio(2048*4=8KB) ≈ 471KB
-    est_mb_per_chunk = (chunk_samples * 4 +  # audio
-                         (n_fft // 2 + 1) * (chunk_samples // hop_length + 1) * 4 +  # STFT
-                         (chunk_samples // hop_length + 1) * n_mels * 4) / 1e6
+    est_mb_per_chunk = (
+        chunk_samples * 4  # audio
+        + (n_fft // 2 + 1) * (chunk_samples // hop_length + 1) * 4  # STFT
+        + (chunk_samples // hop_length + 1) * n_mels * 4
+    ) / 1e6
     est_total_mb = est_mb_per_chunk * len(all_work) * 10  # ~10 chunks/file
     print(f"Estimated output: ~{est_total_mb:.0f} MB")
     print()
@@ -278,12 +294,12 @@ def main():
 
         for future in as_completed(futures):
             result = future.result()
-            if result.get('error'):
+            if result.get("error"):
                 print(f"\n  ERROR {result['file']}: {result['error']}")
                 errors += 1
             else:
                 processed += 1
-                total_chunks += result['total_chunks']
+                total_chunks += result["total_chunks"]
                 if processed % 20 == 0 or processed == len(all_work):
                     elapsed = time.time() - t0
                     rate = processed / max(elapsed, 0.01)
@@ -292,34 +308,61 @@ def main():
                         f"{total_chunks} chunks, "
                         f"{rate:.1f} file/s, "
                         f"{(time.time()-t0)/60:.1f}m elapsed",
-                        end='', flush=True
+                        end="",
+                        flush=True,
                     )
 
     print()
-    print(f"\nDone: {processed} files, {total_chunks} chunks "
-          f"in {(time.time()-t0)/60:.1f} min")
+    print(f"\nDone: {processed} files, {total_chunks} chunks " f"in {(time.time()-t0)/60:.1f} min")
     if errors:
         print(f"Errors: {errors}")
 
     # Write metadata
-    write_metadata(args.output, train_out, test_out, train_files, test_files,
-                   chunk_seconds, sr, n_fft, hop_length, n_mels, chunk_samples)
+    write_metadata(
+        args.output,
+        train_out,
+        test_out,
+        train_files,
+        test_files,
+        chunk_seconds,
+        sr,
+        n_fft,
+        hop_length,
+        n_mels,
+        chunk_samples,
+    )
 
     # Print RAM cache estimate
     # Per chunk in RAM: mel + stft + audio (audio is already in RAM if cached)
-    mb_per_chunk = (chunk_samples * 4 +
-                     (n_fft // 2 + 1) * (chunk_samples // hop_length + 1) * 4 +
-                     (chunk_samples // hop_length + 1) * n_mels * 4) / 1e6
-    print(f"\nRAM cache estimate: {total_chunks * mb_per_chunk:.0f} MB "
-          f"for all chunks ({total_chunks} total)")
+    mb_per_chunk = (
+        chunk_samples * 4
+        + (n_fft // 2 + 1) * (chunk_samples // hop_length + 1) * 4
+        + (chunk_samples // hop_length + 1) * n_mels * 4
+    ) / 1e6
+    print(
+        f"\nRAM cache estimate: {total_chunks * mb_per_chunk:.0f} MB "
+        f"for all chunks ({total_chunks} total)"
+    )
     print(f"  Or ~{mb_per_chunk * 10:.0f} MB per file (~10 chunks/file)")
     print(f"\nPrecomputed features at: {args.output}")
     print(f"Use with: python train_mamba3.py --precomputed {args.output} --cache")
 
 
-def write_metadata(output_dir, train_out, test_out, train_files, test_files,
-                   chunk_seconds, sr, n_fft, hop_length, n_mels, chunk_samples):
+def write_metadata(
+    output_dir,
+    train_out,
+    test_out,
+    train_files,
+    test_files,
+    chunk_seconds,
+    sr,
+    n_fft,
+    hop_length,
+    n_mels,
+    chunk_samples,
+):
     """Write dataset metadata JSON."""
+
     # Count chunks
     def count_chunks(d):
         if not d or not d.exists():
@@ -327,22 +370,22 @@ def write_metadata(output_dir, train_out, test_out, train_files, test_files,
         return len(list(d.glob("*.npz")))
 
     metadata = {
-        'version': 1,
-        'chunk_seconds': chunk_seconds,
-        'chunk_samples': chunk_samples,
-        'sample_rate': sr,
-        'n_fft': n_fft,
-        'hop_length': hop_length,
-        'n_mels': n_mels,
-        'train_files': len(train_files),
-        'train_chunks': count_chunks(train_out),
-        'test_files': len(test_files),
-        'test_chunks': count_chunks(test_out),
+        "version": 1,
+        "chunk_seconds": chunk_seconds,
+        "chunk_samples": chunk_samples,
+        "sample_rate": sr,
+        "n_fft": n_fft,
+        "hop_length": hop_length,
+        "n_mels": n_mels,
+        "train_files": len(train_files),
+        "train_chunks": count_chunks(train_out),
+        "test_files": len(test_files),
+        "test_chunks": count_chunks(test_out),
     }
-    with open(Path(output_dir) / "metadata.json", 'w') as f:
+    with open(Path(output_dir) / "metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
     print(f"\nMetadata written: {output_dir}/metadata.json")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

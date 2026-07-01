@@ -42,26 +42,37 @@ import torchaudio
 
 warnings.filterwarnings("ignore", message="At least one mel filterbank has all zero values")
 
-if sys.platform != 'win32':
+if sys.platform != "win32":
     try:
-        torch.multiprocessing.set_start_method('spawn', force=True)
+        torch.multiprocessing.set_start_method("spawn", force=True)
     except RuntimeError:
         pass
 
 # Import the correct model — the one that CAN be exported to ONNX
 sys.path.insert(0, os.path.dirname(__file__))
-from train_clara_model import MambaRTModelParallel, MambaRTModelSequential, make_zero_states, make_zero_cond
+from train_clara_model import (
+    MambaRTModelParallel,
+    make_zero_states,
+    make_zero_cond,
+)
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # Dataset — flat WAV files (reused from train_clara_now.py)
 # ══════════════════════════════════════════════════════════════════════════
 
+
 class FlatWavDataset(Dataset):
     """Dataset that loads WAV files, crops to clip_seconds, augments."""
-    def __init__(self, root: str, sample_rate: int = 44100,
-                 clip_seconds: float = 0.5, augment: bool = True,
-                 cache_in_ram: bool = False):
+
+    def __init__(
+        self,
+        root: str,
+        sample_rate: int = 44100,
+        clip_seconds: float = 0.5,
+        augment: bool = True,
+        cache_in_ram: bool = False,
+    ):
         self.root = Path(root)
         self.sample_rate = sample_rate
         self.clip_len = int(clip_seconds * sample_rate)
@@ -69,7 +80,7 @@ class FlatWavDataset(Dataset):
         self.cache_in_ram = cache_in_ram
         self._ram_cache: dict[str, Tensor] = {}
 
-        wav_files  = list(self.root.rglob("*.wav"))  + list(self.root.rglob("*.WAV"))
+        wav_files = list(self.root.rglob("*.wav")) + list(self.root.rglob("*.WAV"))
         flac_files = list(self.root.rglob("*.flac")) + list(self.root.rglob("*.FLAC"))
         self.audio_files = sorted([f for f in wav_files + flac_files if f.is_file()])
         assert len(self.audio_files) > 0, f"No audio files (*.wav, *.flac) found in {root}"
@@ -86,21 +97,25 @@ class FlatWavDataset(Dataset):
             print(f"Pre-loading {n} files into RAM (est. {est_total_gb:.1f} GB raw WAV)...")
             # Warn if this seems tight — but don't abort; let the user decide
             try:
-                with open('/proc/meminfo') as f:
+                with open("/proc/meminfo") as f:
                     for line in f:
-                        if 'MemAvailable' in line:
+                        if "MemAvailable" in line:
                             avail_kb = int(line.split()[1])
                             avail_gb = avail_kb / 1024 / 1024
                             if avail_gb < est_total_gb * 1.5:
-                                print(f"  ⚠ WARNING: only {avail_gb:.1f} GB free RAM for ~{est_total_gb:.1f} GB cache!")
-                                print(f"  If training dies silently, re-run without --cache or use --num-workers 0 --no-cache")
+                                print(
+                                    f"  ⚠ WARNING: only {avail_gb:.1f} GB free RAM for ~{est_total_gb:.1f} GB cache!"
+                                )
+                                print(
+                                    "  If training dies silently, re-run without --cache or use --num-workers 0 --no-cache"
+                                )
                             break
             except Exception:
                 pass
-        print(f"  Loading [{n} files]:", end=' ', flush=True)
+        print(f"  Loading [{n} files]:", end=" ", flush=True)
         for i, path in enumerate(self.audio_files):
             if i % max(1, n // 20) == 0:
-                print(f"{i}/{n}", end=' ', flush=True)
+                print(f"{i}/{n}", end=" ", flush=True)
             wav = self._load_file_uncached(path)
             if wav is not None:
                 self._ram_cache[str(path)] = wav
@@ -112,7 +127,7 @@ class FlatWavDataset(Dataset):
 
     def _load_file_uncached(self, path: Path) -> Optional[Tensor]:
         try:
-            data, sr = sf.read(str(path), dtype='float32', always_2d=True)
+            data, sr = sf.read(str(path), dtype="float32", always_2d=True)
         except Exception as e:
             print(f"\n  ERROR loading {path.name}: {e}", flush=True)
             return None
@@ -138,7 +153,7 @@ class FlatWavDataset(Dataset):
         if L <= self.clip_len:
             return F.pad(wav, (0, self.clip_len - L))
         start = random.randint(0, L - self.clip_len)
-        return wav[start:start + self.clip_len]
+        return wav[start : start + self.clip_len]
 
     def _augment(self, wav: Tensor) -> Tensor:
         gain_db = random.uniform(-6, 6)
@@ -152,43 +167,46 @@ class FlatWavDataset(Dataset):
         path = self.audio_files[file_idx]
         wav = self._load_file(path)
         if wav is None:
-            return {'audio': torch.zeros(self.clip_len), 'valid': False}
+            return {"audio": torch.zeros(self.clip_len), "valid": False}
         wav = self._crop(wav)
         if self.augment:
             wav = self._augment(wav)
-        return {'audio': wav, 'valid': True}
+        return {"audio": wav, "valid": True}
 
 
 def collate_valid(batch: list[dict]) -> Optional[dict]:
     """Filter out invalid samples, stack valid ones."""
-    batch = [b for b in batch if b['valid']]
+    batch = [b for b in batch if b["valid"]]
     if not batch:
         return None
-    return {'audio': torch.stack([b['audio'] for b in batch])}
+    return {"audio": torch.stack([b["audio"] for b in batch])}
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # Loss — STFT magnitude L1 + Mel-L1 + SI-SDR (matches LeanClaraLoss)
 # ══════════════════════════════════════════════════════════════════════════
 
+
 class ClaraLoss(nn.Module):
     """Identity training loss: STFT-L1 + Mel-L1 + SI-SDR (ramped)."""
+
     def __init__(self, sample_rate: int = 44100):
         super().__init__()
         self.sr = sample_rate
         self.n_fft = 1024
         self.hop = 256
         self.mel_transform = torchaudio.transforms.MelSpectrogram(
-            sample_rate=sample_rate, n_fft=1024, hop_length=256, n_mels=64)
+            sample_rate=sample_rate, n_fft=1024, hop_length=256, n_mels=64
+        )
         self.global_step = 0
 
     def _si_sdr(self, pred: Tensor, target: Tensor) -> Tensor:
         eps = 1e-8
-        target_energy = (target ** 2).sum(dim=-1, keepdim=True)
+        target_energy = (target**2).sum(dim=-1, keepdim=True)
         dot = (pred * target).sum(dim=-1, keepdim=True)
         proj = dot / (target_energy + eps) * target
         noise = pred - proj
-        si_sdr = 10 * torch.log10((proj ** 2).sum(-1) / ((noise ** 2).sum(-1) + eps) + eps)
+        si_sdr = 10 * torch.log10((proj**2).sum(-1) / ((noise**2).sum(-1) + eps) + eps)
         return -si_sdr.mean()
 
     def _mel_l1(self, pred_wave: Tensor, target_wave: Tensor) -> Tensor:
@@ -222,19 +240,19 @@ class ClaraLoss(nn.Module):
         window = torch.hann_window(self.n_fft, device=pred_wave.device)
         p_stft = torch.stft(pred_wave, self.n_fft, self.hop, window=window, return_complex=True)
         t_stft = torch.stft(target_wave, self.n_fft, self.hop, window=window, return_complex=True)
-        losses['stft'] = F.l1_loss(p_stft.abs(), t_stft.abs())
+        losses["stft"] = F.l1_loss(p_stft.abs(), t_stft.abs())
 
         # Mel-L1
-        losses['mel_l1'] = self._mel_l1(pred_wave, target_wave)
+        losses["mel_l1"] = self._mel_l1(pred_wave, target_wave)
 
         # SI-SDR (ramped in)
         si_w = self._si_sdr_weight()
         if si_w > 0:
-            losses['si_sdr'] = self._si_sdr(pred_wave, target_wave) * si_w
+            losses["si_sdr"] = self._si_sdr(pred_wave, target_wave) * si_w
         else:
-            losses['si_sdr'] = torch.tensor(0.0, device=pred_wave.device)
+            losses["si_sdr"] = torch.tensor(0.0, device=pred_wave.device)
 
-        losses['total'] = 1.0 * losses['stft'] + 0.5 * losses['mel_l1'] + losses['si_sdr']
+        losses["total"] = 1.0 * losses["stft"] + 0.5 * losses["mel_l1"] + losses["si_sdr"]
 
         self.global_step += 1
         return losses
@@ -244,11 +262,16 @@ class ClaraLoss(nn.Module):
 # Training Loop
 # ══════════════════════════════════════════════════════════════════════════
 
+
 def create_model(d_model=64, d_state=16, n_layers=4, conv_width=4, dt_rank=16, cond_dim=8):
     """Create the parallel-scan training model (exportable to ONNX)."""
     model = MambaRTModelParallel(
-        d_model=d_model, d_state=d_state, n_layers=n_layers,
-        conv_width=conv_width, dt_rank=dt_rank, cond_dim=cond_dim,
+        d_model=d_model,
+        d_state=d_state,
+        n_layers=n_layers,
+        conv_width=conv_width,
+        dt_rank=dt_rank,
+        cond_dim=cond_dim,
     )
     return model
 
@@ -261,38 +284,39 @@ def get_lr(step: int, warmup: int = 2000, max_lr: float = 3e-4) -> float:
     return max_lr * 0.5 * (1.0 + np.cos(np.pi * min(progress, 1.0)))
 
 
-def save_checkpoint(model, optimizer, scheduler, step, loss, best_val_loss,
-                    arch, save_dir, is_best=False):
+def save_checkpoint(
+    model, optimizer, scheduler, step, loss, best_val_loss, arch, save_dir, is_best=False
+):
     """Save checkpoint in format compatible with train_clara_export.py."""
     path = Path(save_dir)
     path.mkdir(parents=True, exist_ok=True)
 
     ckpt = {
-        'step': step,
-        'model': model.state_dict(),
-        'optimizer': optimizer.state_dict(),
-        'scheduler': scheduler.state_dict() if scheduler else {},
-        'loss': loss,
-        'best_val_loss': best_val_loss,
-        'architecture': arch,
+        "step": step,
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict() if scheduler else {},
+        "loss": loss,
+        "best_val_loss": best_val_loss,
+        "architecture": arch,
     }
 
     # Regular checkpoint
-    ckpt_path = path / f'checkpoint_{step:06d}.pt'
+    ckpt_path = path / f"checkpoint_{step:06d}.pt"
     torch.save(ckpt, ckpt_path)
     print(f"  Checkpoint saved: {ckpt_path}")
 
     # Best validation checkpoint
     if is_best:
-        best_path = path / 'best.pt'
+        best_path = path / "best.pt"
         torch.save(ckpt, best_path)
         print(f"  Best model updated: {best_path}")
 
 
 def load_checkpoint(checkpoint_path, model, optimizer=None):
     """Load checkpoint. Handles architecture mismatches gracefully."""
-    ckpt = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-    state_dict = ckpt.get('model', ckpt)
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    state_dict = ckpt.get("model", ckpt)
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
     if missing:
         print(f"  Missing keys: {len(missing)} (expected for fresh start)")
@@ -310,7 +334,7 @@ def validate(model, val_loader, loss_fn, device, cond_dim=8):
         for batch in val_loader:
             if batch is None:
                 continue
-            audio = batch['audio'].to(device)  # (B, T)
+            audio = batch["audio"].to(device)  # (B, T)
             B = audio.shape[0]
 
             # Prepare model inputs: audio (B, T, 1), cond (B, 8), zero states
@@ -323,7 +347,7 @@ def validate(model, val_loader, loss_fn, device, cond_dim=8):
             out, _, _ = model(audio_in, *convs, *ssms, cond, chunk_size=64)
 
             losses = loss_fn(out, audio)
-            total_loss += losses['total'].item()
+            total_loss += losses["total"].item()
             n_batches += 1
 
     model.train()
@@ -332,16 +356,19 @@ def validate(model, val_loader, loss_fn, device, cond_dim=8):
 
 def train(args):
     """Main training loop."""
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
-    if device.type == 'cuda':
+    if device.type == "cuda":
         print(f"  GPU: {torch.cuda.get_device_name(0)}")
 
     # Create model
     model = create_model(
-        d_model=args.d_model, d_state=args.d_state,
-        n_layers=args.n_layers, conv_width=args.conv_width,
-        dt_rank=args.dt_rank, cond_dim=args.cond_dim,
+        d_model=args.d_model,
+        d_state=args.d_state,
+        n_layers=args.n_layers,
+        conv_width=args.conv_width,
+        dt_rank=args.dt_rank,
+        cond_dim=args.cond_dim,
     )
     model.to(device)
     arch_name = f"MambaRTModelParallel_d{args.d_model}_l{args.n_layers}"
@@ -354,18 +381,21 @@ def train(args):
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        if 'bias' in name or 'norm' in name or 'log_A_real' in name:
+        if "bias" in name or "norm" in name or "log_A_real" in name:
             no_decay.append(param)
         else:
             decay.append(param)
-    optimizer = torch.optim.AdamW([
-        {'params': decay, 'weight_decay': args.weight_decay},
-        {'params': no_decay, 'weight_decay': 0.0},
-    ], lr=args.lr)
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": decay, "weight_decay": args.weight_decay},
+            {"params": no_decay, "weight_decay": 0.0},
+        ],
+        lr=args.lr,
+    )
 
     scheduler = None
     start_step = 0
-    best_val_loss = float('inf')
+    best_val_loss = float("inf")
     loss_fn = ClaraLoss(sample_rate=args.sample_rate)
     loss_fn = loss_fn.to(device)
 
@@ -373,14 +403,14 @@ def train(args):
     if args.resume:
         print(f"Resuming from: {args.resume}")
         ckpt = load_checkpoint(args.resume, model)
-        start_step = ckpt.get('step', 0)
-        best_val_loss = ckpt.get('best_val_loss', float('inf'))
-        if 'optimizer' in ckpt and args.resume_optimizer:
+        start_step = ckpt.get("step", 0)
+        best_val_loss = ckpt.get("best_val_loss", float("inf"))
+        if "optimizer" in ckpt and args.resume_optimizer:
             try:
-                optimizer.load_state_dict(ckpt['optimizer'])
+                optimizer.load_state_dict(ckpt["optimizer"])
                 print("  Optimizer state loaded")
                 for group in optimizer.param_groups:
-                    group['lr'] = args.lr
+                    group["lr"] = args.lr
             except Exception as e:
                 print(f"  Optimizer load failed (starting fresh): {e}")
         loss_fn.global_step = start_step
@@ -388,25 +418,31 @@ def train(args):
 
     # Dataset
     data_root = Path(args.data)
-    train_root = data_root / 'train' if (data_root / 'train').exists() else data_root
-    val_root = data_root / 'test' if (data_root / 'test').exists() else None
+    train_root = data_root / "train" if (data_root / "train").exists() else data_root
+    val_root = data_root / "test" if (data_root / "test").exists() else None
 
     if val_root:
         train_ds = FlatWavDataset(
-            root=str(train_root), sample_rate=args.sample_rate,
-            clip_seconds=args.clip_seconds, augment=True,
+            root=str(train_root),
+            sample_rate=args.sample_rate,
+            clip_seconds=args.clip_seconds,
+            augment=True,
             cache_in_ram=args.cache,
         )
         val_ds = FlatWavDataset(
-            root=str(val_root), sample_rate=args.sample_rate,
-            clip_seconds=args.clip_seconds, augment=False,
+            root=str(val_root),
+            sample_rate=args.sample_rate,
+            clip_seconds=args.clip_seconds,
+            augment=False,
             cache_in_ram=False,
         )
     else:
         # No test/ subdirectory — auto-split files 90/10 (seed 42)
         train_ds = FlatWavDataset(
-            root=str(train_root), sample_rate=args.sample_rate,
-            clip_seconds=args.clip_seconds, augment=True,
+            root=str(train_root),
+            sample_rate=args.sample_rate,
+            clip_seconds=args.clip_seconds,
+            augment=True,
             cache_in_ram=args.cache,
         )
         all_files = list(train_ds.audio_files)
@@ -415,31 +451,49 @@ def train(args):
         split = max(1, int(len(all_files) * 0.9))
         train_ds.audio_files = all_files[:split]
         val_files = all_files[split:]
-        print(f"  Auto-split: {len(train_ds.audio_files)} train, {len(val_files)} val "
-              f"(seed=42, 90/10)")
+        print(
+            f"  Auto-split: {len(train_ds.audio_files)} train, {len(val_files)} val "
+            f"(seed=42, 90/10)"
+        )
 
         val_ds = FlatWavDataset(
-            root=str(train_root), sample_rate=args.sample_rate,
-            clip_seconds=args.clip_seconds, augment=False,
+            root=str(train_root),
+            sample_rate=args.sample_rate,
+            clip_seconds=args.clip_seconds,
+            augment=False,
             cache_in_ram=False,
         )
         val_ds.audio_files = val_files
 
     train_loader = DataLoader(
-        train_ds, batch_size=args.batch, shuffle=True,
-        num_workers=args.num_workers, pin_memory=True,
-        collate_fn=collate_valid, drop_last=True,
+        train_ds,
+        batch_size=args.batch,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        collate_fn=collate_valid,
+        drop_last=True,
     )
-    val_loader = DataLoader(
-        val_ds, batch_size=args.batch, shuffle=False,
-        num_workers=0, pin_memory=True,
-        collate_fn=collate_valid, drop_last=True,
-    ) if val_ds.audio_files else None
+    val_loader = (
+        DataLoader(
+            val_ds,
+            batch_size=args.batch,
+            shuffle=False,
+            num_workers=0,
+            pin_memory=True,
+            collate_fn=collate_valid,
+            drop_last=True,
+        )
+        if val_ds.audio_files
+        else None
+    )
 
     print(f"Train: {len(train_ds):,} chunks from {len(train_ds.audio_files)} files")
     if val_ds:
         print(f"Val:   {len(val_ds):,} chunks from {len(val_ds.audio_files)} files")
-    print(f"Batch: {args.batch}, Accum: {args.grad_accum}, Eff batch: {args.batch * args.grad_accum}")
+    print(
+        f"Batch: {args.batch}, Accum: {args.grad_accum}, Eff batch: {args.batch * args.grad_accum}"
+    )
 
     # Training loop
     model.train()
@@ -451,8 +505,8 @@ def train(args):
 
     # GPU warmup — single chunk to avoid MIOpen compilation hang on ROCm.
     # Runs BEFORE iter(train_loader) to avoid 'spawn' multiprocess conflict.
-    print("\nGPU warmup...", end=' ', flush=True)
-    if device.type == 'cuda':
+    print("\nGPU warmup...", end=" ", flush=True)
+    if device.type == "cuda":
         torch.cuda.empty_cache()
     model.eval()
     try:
@@ -464,7 +518,7 @@ def train(args):
             cs = tuple(c.to(device) for c in cs)
             ss = tuple(s.to(device) for s in ss)
             model(dummy, *cs, *ss, cd, chunk_size=64)
-            if device.type == 'cuda':
+            if device.type == "cuda":
                 torch.cuda.synchronize()
         print("done")
     except Exception as e:
@@ -474,7 +528,7 @@ def train(args):
     train_iter = iter(train_loader)
 
     print(f"\n{'='*60}")
-    print(f"Starting Phase 1 Identity Training")
+    print("Starting Phase 1 Identity Training")
     print(f"Steps: {step} → {args.steps}")
     print(f"{'='*60}\n")
 
@@ -489,14 +543,16 @@ def train(args):
         if batch is None:
             continue
 
-        audio = batch['audio'].to(device)
+        audio = batch["audio"].to(device)
         B = audio.shape[0]
         T = audio.shape[-1]
 
         # Prepare model inputs
         audio_in = audio.unsqueeze(-1)  # (B, T, 1)
         cond = make_zero_cond(B, args.cond_dim).to(device)
-        convs, ssms = make_zero_states(B, args.d_model, args.d_state, args.n_layers, args.conv_width)
+        convs, ssms = make_zero_states(
+            B, args.d_model, args.d_state, args.n_layers, args.conv_width
+        )
         convs = tuple(c.to(device) for c in convs)
         ssms = tuple(s.to(device) for s in ssms)
 
@@ -505,7 +561,7 @@ def train(args):
 
         # Loss
         losses = loss_fn(out, audio)
-        loss_total = losses['total']
+        loss_total = losses["total"]
 
         # Update LR every step (for logging accuracy)
         current_lr = get_lr(step, warmup=args.warmup, max_lr=args.lr)
@@ -521,7 +577,7 @@ def train(args):
 
             # Apply LR to optimizer
             for group in optimizer.param_groups:
-                group['lr'] = current_lr
+                group["lr"] = current_lr
 
             optimizer.step()
             optimizer.zero_grad()
@@ -532,7 +588,7 @@ def train(args):
             steps_since = min(args.log_every, step - start_step + 1)
             rate = steps_since / max(elapsed, 1e-6)
             # Get current LR from optimizer (safe fallback if warmup logic not hit)
-            lr_val = current_lr if 'current_lr' in dir() else optimizer.param_groups[0]['lr']
+            lr_val = current_lr if "current_lr" in dir() else optimizer.param_groups[0]["lr"]
             print(
                 f"[step {step:6d}] "
                 f"loss={losses['total'].item():.4f} "
@@ -546,13 +602,21 @@ def train(args):
         # Validation
         if val_loader and step > 0 and step % args.val_every == 0:
             val_loss = validate(model, val_loader, loss_fn, device, args.cond_dim)
-            print(f"  [VAL] step {step:6d}: val_loss={val_loss:.6f} "
-                  f"(best={best_val_loss:.6f})")
+            print(f"  [VAL] step {step:6d}: val_loss={val_loss:.6f} " f"(best={best_val_loss:.6f})")
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                save_checkpoint(model, optimizer, scheduler, step, loss_total.item(),
-                                best_val_loss, arch_name, args.save, is_best=True)
+                save_checkpoint(
+                    model,
+                    optimizer,
+                    scheduler,
+                    step,
+                    loss_total.item(),
+                    best_val_loss,
+                    arch_name,
+                    args.save,
+                    is_best=True,
+                )
                 early_stop_counter = 0
             else:
                 early_stop_counter += 1
@@ -562,37 +626,50 @@ def train(args):
 
         # Checkpoint
         if step > 0 and step % args.ckpt_every == 0:
-            save_checkpoint(model, optimizer, scheduler, step, loss_total.item(),
-                            best_val_loss, arch_name, args.save)
+            save_checkpoint(
+                model,
+                optimizer,
+                scheduler,
+                step,
+                loss_total.item(),
+                best_val_loss,
+                arch_name,
+                args.save,
+            )
 
         step += 1
 
     # Final save — loss_total may not exist if loop never ran
-    final_loss = locals().get('loss_total', torch.tensor(0.0)).item()
-    save_checkpoint(model, optimizer, scheduler, step, final_loss,
-                    best_val_loss, arch_name, args.save)
+    final_loss = locals().get("loss_total", torch.tensor(0.0)).item()
+    save_checkpoint(
+        model, optimizer, scheduler, step, final_loss, best_val_loss, arch_name, args.save
+    )
 
     # Make final checkpoint compatible with train_clara_export.py
-    final_path = Path(args.save) / 'final.pt'
+    final_path = Path(args.save) / "final.pt"
     try:
-        ckpt = torch.load(Path(args.save) / f'checkpoint_{step:06d}.pt',
-                           map_location='cpu', weights_only=False)
-        ckpt['model_state_dict'] = ckpt.pop('model')
+        ckpt = torch.load(
+            Path(args.save) / f"checkpoint_{step:06d}.pt", map_location="cpu", weights_only=False
+        )
+        ckpt["model_state_dict"] = ckpt.pop("model")
         torch.save(ckpt, final_path)
         print(f"\nFinal model saved: {final_path}")
     except Exception as e:
         print(f"\nCould not create final.pt (last ckpt may be missing): {e}")
         # Fallback: save current model directly
         final_ckpt = {
-            'step': step, 'model_state_dict': model.state_dict(),
-            'architecture': arch_name,
+            "step": step,
+            "model_state_dict": model.state_dict(),
+            "architecture": arch_name,
         }
         torch.save(final_ckpt, final_path)
         print(f"Fallback final model saved: {final_path}")
 
     print(f"\n{'='*60}")
     print(f"Training Complete! {step} steps, best_val_loss={best_val_loss:.6f}")
-    print(f"Next: python train_clara_export.py --checkpoint {final_path} --output models/mamba_rt.onnx")
+    print(
+        f"Next: python train_clara_export.py --checkpoint {final_path} --output models/mamba_rt.onnx"
+    )
     print(f"{'='*60}")
 
 
@@ -600,49 +677,63 @@ def train(args):
 # CLI
 # ══════════════════════════════════════════════════════════════════════════
 
+
 def main():
     parser = argparse.ArgumentParser(description="CLARA Mamba RT Parallel Training")
-    parser.add_argument('--data', required=True, help='Path to MUSDB18-HQ dataset (train dir)')
-    parser.add_argument('--save', default='checkpoints_clara', help='Checkpoint save directory')
-    parser.add_argument('--resume', default=None, help='Resume from checkpoint path')
-    parser.add_argument('--resume-optimizer', action='store_true',
-                        help='Load optimizer state on resume')
-    parser.add_argument('--steps', type=int, default=50000, help='Total training steps')
-    parser.add_argument('--batch', type=int, default=4, help='Batch size')
-    parser.add_argument('--grad-accum', type=int, default=4, help='Grad accumulation steps')
-    parser.add_argument('--lr', type=float, default=3e-4, help='Max learning rate')
-    parser.add_argument('--warmup', type=int, default=2000, help='Warmup steps')
-    parser.add_argument('--weight-decay', type=float, default=0.01, help='Weight decay')
-    parser.add_argument('--clip-grad-norm', type=float, default=1.0, help='Gradient clipping norm')
+    parser.add_argument("--data", required=True, help="Path to MUSDB18-HQ dataset (train dir)")
+    parser.add_argument("--save", default="checkpoints_clara", help="Checkpoint save directory")
+    parser.add_argument("--resume", default=None, help="Resume from checkpoint path")
+    parser.add_argument(
+        "--resume-optimizer", action="store_true", help="Load optimizer state on resume"
+    )
+    parser.add_argument("--steps", type=int, default=50000, help="Total training steps")
+    parser.add_argument("--batch", type=int, default=4, help="Batch size")
+    parser.add_argument("--grad-accum", type=int, default=4, help="Grad accumulation steps")
+    parser.add_argument("--lr", type=float, default=3e-4, help="Max learning rate")
+    parser.add_argument("--warmup", type=int, default=2000, help="Warmup steps")
+    parser.add_argument("--weight-decay", type=float, default=0.01, help="Weight decay")
+    parser.add_argument("--clip-grad-norm", type=float, default=1.0, help="Gradient clipping norm")
 
     # Model architecture
-    parser.add_argument('--d-model', type=int, default=64)
-    parser.add_argument('--d-state', type=int, default=16)
-    parser.add_argument('--n-layers', type=int, default=4)
-    parser.add_argument('--conv-width', type=int, default=4)
-    parser.add_argument('--dt-rank', type=int, default=16)
-    parser.add_argument('--cond-dim', type=int, default=8)
+    parser.add_argument("--d-model", type=int, default=64)
+    parser.add_argument("--d-state", type=int, default=16)
+    parser.add_argument("--n-layers", type=int, default=4)
+    parser.add_argument("--conv-width", type=int, default=4)
+    parser.add_argument("--dt-rank", type=int, default=16)
+    parser.add_argument("--cond-dim", type=int, default=8)
 
     # Data
-    parser.add_argument('--sample-rate', type=int, default=44100)
-    parser.add_argument('--clip-seconds', type=float, default=0.5,
-                        help='Clip duration. 0.5=fast, 2.0=better quality, 0.25=smoke test')
-    parser.add_argument('--num-workers', type=int, default=0,
-                        help='DataLoader workers (0=safe for ROCm/APU, 2-4=faster)')
-    parser.add_argument('--cache', action='store_true', help='RAM pre-cache dataset')
+    parser.add_argument("--sample-rate", type=int, default=44100)
+    parser.add_argument(
+        "--clip-seconds",
+        type=float,
+        default=0.5,
+        help="Clip duration. 0.5=fast, 2.0=better quality, 0.25=smoke test",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=0,
+        help="DataLoader workers (0=safe for ROCm/APU, 2-4=faster)",
+    )
+    parser.add_argument("--cache", action="store_true", help="RAM pre-cache dataset")
 
     # Logging
-    parser.add_argument('--log-every', type=int, default=25)
-    parser.add_argument('--ckpt-every', type=int, default=500)
-    parser.add_argument('--val-every', type=int, default=500)
-    parser.add_argument('--early-stop-patience', type=int, default=10)
+    parser.add_argument("--log-every", type=int, default=25)
+    parser.add_argument("--ckpt-every", type=int, default=500)
+    parser.add_argument("--val-every", type=int, default=500)
+    parser.add_argument("--early-stop-patience", type=int, default=10)
 
     # Hardware
-    parser.add_argument('--device', default='auto', choices=['auto', 'cuda', 'cpu'],
-                        help='Override device selection')
+    parser.add_argument(
+        "--device",
+        default="auto",
+        choices=["auto", "cuda", "cpu"],
+        help="Override device selection",
+    )
 
     args = parser.parse_args()
-    print(f"CLARA Mamba RT Parallel Training")
+    print("CLARA Mamba RT Parallel Training")
     print(f"{'='*50}")
     print(f"PyTorch: {torch.__version__}")
     print(f"ROCm/HIP: {torch.version.hip if hasattr(torch.version, 'hip') else 'N/A'}")
@@ -651,5 +742,5 @@ def main():
     train(args)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

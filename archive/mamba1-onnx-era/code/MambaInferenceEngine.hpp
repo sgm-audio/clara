@@ -1,18 +1,20 @@
 #pragma once
 
-#include <vector>
-#include <memory>
-#include <string>
-#include <atomic>
-#include <onnxruntime_cxx_api.h>
-#include <cstdint>
-#include <array>
-#include <algorithm>
 #include "ConditioningFrame.h"
 
+#include <onnxruntime_cxx_api.h>
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
 #ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4324)
+#    pragma warning(push)
+#    pragma warning(disable : 4324)
 #endif
 
 class MambaInferenceEngine {
@@ -30,30 +32,36 @@ public:
         std::vector<float> bWeights;
     };
 
-    explicit MambaInferenceEngine(const Config& config);
+    explicit MambaInferenceEngine(const Config &config);
     ~MambaInferenceEngine();
 
     bool init();
     void loadCondWeights();
     void resetState();
-    void processBlock(const float* input, float* output, int numSamples, bool* ok = nullptr);
+    void processBlock(const float *input, float *output, int numSamples, bool *ok = nullptr);
 
     // Set conditioning vector from any thread (double-buffered atomic swap).
     // Writes to the non-active buffer, then atomically swaps the pointer.
-    void setConditioning(const float* cond, size_t dim);
+    void setConditioning(const float *cond, size_t dim);
 
-    const ConditioningFrame* getActiveFrameForTest() const noexcept {
+    const ConditioningFrame *getActiveFrameForTest() const noexcept {
         return activeFrame_.load(std::memory_order_acquire);
     }
 
-    const float* getActiveConditioningForTest() const noexcept {
-        auto* frame = activeFrame_.load(std::memory_order_acquire);
+    const float *getActiveConditioningForTest() const noexcept {
+        auto *frame = activeFrame_.load(std::memory_order_acquire);
         return frame ? frame->data.data() : nullptr;
     }
 
-    bool isInitialized() const noexcept { return initialized_; }
-    bool condWeightsLoaded() const noexcept { return condWeightsLoaded_; }
-    const std::vector<float>& getCombinedWeights() const noexcept { return combinedWeights_; }
+    bool isInitialized() const noexcept {
+        return initialized_;
+    }
+    bool condWeightsLoaded() const noexcept {
+        return condWeightsLoaded_;
+    }
+    const std::vector<float> &getCombinedWeights() const noexcept {
+        return combinedWeights_;
+    }
 
     // Pre-allocate thread_local vectors on the calling thread.
     // Call once per audio thread before real-time processing begins.
@@ -85,13 +93,13 @@ private:
 
     static constexpr size_t kNumInputs = 10;
     static constexpr size_t kNumOutputs = 3;
-    std::array<const char*, kNumInputs> inputNames_;
-    std::array<const char*, kNumOutputs> outputNames_;
+    std::array<const char *, kNumInputs> inputNames_;
+    std::array<const char *, kNumOutputs> outputNames_;
 
     // Conditioning: double-buffered ConditioningFrame with atomic pointer swap.
     ConditioningFrame frameA_;
     ConditioningFrame frameB_;
-    std::atomic<ConditioningFrame*> activeFrame_{nullptr};
+    std::atomic<ConditioningFrame *> activeFrame_{nullptr};
 
     // Projection weights pre-combined at activate() time.
     // combinedWeights_[d] = deltaWeights[d] + bWeights[d]
@@ -105,5 +113,5 @@ private:
 };
 
 #ifdef _MSC_VER
-#pragma warning(pop)
+#    pragma warning(pop)
 #endif

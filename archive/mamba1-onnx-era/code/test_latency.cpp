@@ -1,43 +1,39 @@
-#include <cstdio>
-#include <cstring>
-#include <cmath>
-#include <cstdlib>
-#include <string>
-#include <memory>
 #include "core/MambaInferenceEngine.hpp"
 
-#define TEST_ASSERT(cond, msg) \
-    do { \
-        if (!(cond)) { \
-            std::fprintf(stderr, "FAIL: %s (%s:%d)\n", msg, __FILE__, __LINE__); \
-            return 1; \
-        } \
-    } while(0)
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <memory>
+#include <string>
 
-#define TEST_PASS(msg) \
-    std::printf("  PASS: %s\n", msg)
+#define TEST_ASSERT(cond, msg)                                                                                         \
+    do {                                                                                                               \
+        if (!(cond)) {                                                                                                 \
+            std::fprintf(stderr, "FAIL: %s (%s:%d)\n", msg, __FILE__, __LINE__);                                       \
+            return 1;                                                                                                  \
+        }                                                                                                              \
+    } while (0)
 
-static std::string getModelPath()
-{
+#define TEST_PASS(msg) std::printf("  PASS: %s\n", msg)
+
+static std::string getModelPath() {
     return std::string(TEST_MODEL_DIR) + "/mamba_rt.onnx";
 }
 
-static std::unique_ptr<MambaInferenceEngine> createEngine(const std::string& mp)
-{
+static std::unique_ptr<MambaInferenceEngine> createEngine(const std::string &mp) {
     MambaInferenceEngine::Config cfg;
     cfg.modelPath = mp;
     return std::make_unique<MambaInferenceEngine>(cfg);
 }
 
-static int skipTest(const char* name)
-{
+static int skipTest(const char *name) {
     std::printf("  SKIP: model not available\n");
     TEST_PASS(name);
     return 0;
 }
 
-static int test_latency_at_sample_rate(const char* label, int sampleRate)
-{
+static int test_latency_at_sample_rate(const char *label, int sampleRate) {
     const std::string mp = getModelPath();
     auto engine = createEngine(mp);
     if (!engine->init()) {
@@ -78,37 +74,34 @@ static int test_latency_at_sample_rate(const char* label, int sampleRate)
         }
     }
 
-    std::printf("  %s (%d Hz): measured latency = %d samples, reported = %d samples\n",
-        label, sampleRate, measuredLatency, kReportedLatency);
+    std::printf("  %s (%d Hz): measured latency = %d samples, reported = %d samples\n", label, sampleRate,
+                measuredLatency, kReportedLatency);
 
-    TEST_ASSERT(measuredLatency >= 0,
-        "impulse response detected (output contains signal above noise floor)");
+    TEST_ASSERT(measuredLatency >= 0, "impulse response detected (output contains signal above noise floor)");
 
     int delta = std::abs(measuredLatency - kReportedLatency);
-    TEST_ASSERT(delta <= 1,
-        "measured latency matches reported latency (|measured - reported| <= 1 sample)");
+    TEST_ASSERT(delta <= 1, "measured latency matches reported latency (|measured - reported| <= 1 sample)");
 
     TEST_PASS(label);
     return 0;
 }
 
-int main()
-{
+int main() {
     std::printf("=== MambaInferenceEngine Latency Tests ===\n\n");
 
     struct {
-        const char* label;
+        const char *label;
         int sampleRate;
     } testRates[] = {
         {"latency at 44.1 kHz", 44100},
-        {"latency at 48 kHz",   48000},
-        {"latency at 96 kHz",   96000},
-        {"latency at 192 kHz",  192000},
+        {"latency at 48 kHz", 48000},
+        {"latency at 96 kHz", 96000},
+        {"latency at 192 kHz", 192000},
     };
 
     int failures = 0;
 
-    for (const auto& tr : testRates) {
+    for (const auto &tr : testRates) {
         std::printf("Test: %s\n", tr.label);
         failures += test_latency_at_sample_rate(tr.label, tr.sampleRate);
     }

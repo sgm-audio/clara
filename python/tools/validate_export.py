@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Validate Mamba-3 flat binary weight file (Version 2).
+"""Validate Mamba-3 flat binary weight file (Version 2).
 
 Reads a .bin file, checks header magic/version/dimensions,
 round-trips all arrays, and optionally compares against
@@ -11,23 +10,23 @@ Usage:
     python python/tools/validate_export.py models/model.bin --seed 42
 """
 
-import struct
 import argparse
-import numpy as np
+import struct
 from pathlib import Path
-from typing import List, Tuple
+
+import numpy as np
 
 # ── Expected constants (must match export script) ──────────────────
-EXPECTED_MAGIC    = 0x4D424D41
-EXPECTED_VERSION  = 3
+EXPECTED_MAGIC = 0x4D424D41
+EXPECTED_VERSION = 3
 
-HEADER_FORMAT = '<12I'  # 12 uint32 values (magic, version, 10 dims = 48 bytes)
-HEADER_SIZE   = 64      # padded to 64 bytes
+HEADER_FORMAT = "<12I"  # 12 uint32 values (magic, version, 10 dims = 48 bytes)
+HEADER_SIZE = 64  # padded to 64 bytes
 
 
 def read_header(filepath: Path) -> dict:
     """Read and validate 64-byte header. Returns dict of header values."""
-    with open(filepath, 'rb') as f:
+    with open(filepath, "rb") as f:
         raw = f.read(HEADER_SIZE)
     if len(raw) < HEADER_SIZE:
         raise ValueError(f"File too short for header: {len(raw)} < {HEADER_SIZE}")
@@ -35,41 +34,41 @@ def read_header(filepath: Path) -> dict:
     values = list(struct.unpack_from(HEADER_FORMAT, raw))
 
     header = {
-        'magic':           values[0],
-        'version':         values[1],
-        'd_state':         values[2],
-        'd_model':         values[3],
-        'd_inner':         values[4],
-        'nheads':          values[5],
-        'headdim':         values[6],
-        'mimo_rank':       values[7],
-        'n_layers':        values[8],
-        'cond_dim':        values[9],
-        'in_proj_dim':     values[10],
-        'weight_data_size': values[11],
+        "magic": values[0],
+        "version": values[1],
+        "d_state": values[2],
+        "d_model": values[3],
+        "d_inner": values[4],
+        "nheads": values[5],
+        "headdim": values[6],
+        "mimo_rank": values[7],
+        "n_layers": values[8],
+        "cond_dim": values[9],
+        "in_proj_dim": values[10],
+        "weight_data_size": values[11],
     }
     return header
 
 
-def validate_header(header: dict) -> List[str]:
+def validate_header(header: dict) -> list[str]:
     """Check header values against expected constants. Returns list of errors."""
     errors = []
 
-    if header['magic'] != EXPECTED_MAGIC:
+    if header["magic"] != EXPECTED_MAGIC:
         errors.append(f"Bad magic: 0x{header['magic']:08X} != 0x{EXPECTED_MAGIC:08X}")
-    if header['version'] != EXPECTED_VERSION:
+    if header["version"] != EXPECTED_VERSION:
         errors.append(f"Bad version: {header['version']} != {EXPECTED_VERSION}")
 
     # Dimension checks — v3 (R=8 complex pole format)
     checks = {
-        'd_state':   32,
-        'd_model':   128,
-        'd_inner':   256,
-        'nheads':    4,
-        'headdim':   64,
-        'mimo_rank': 8,   # R=8 (was 4 in v2)
-        'n_layers':  6,
-        'cond_dim':  128,
+        "d_state": 32,
+        "d_model": 128,
+        "d_inner": 256,
+        "nheads": 4,
+        "headdim": 64,
+        "mimo_rank": 8,  # R=8 (was 4 in v2)
+        "n_layers": 6,
+        "cond_dim": 128,
     }
     for key, expected in checks.items():
         actual = header[key]
@@ -77,56 +76,58 @@ def validate_header(header: dict) -> List[str]:
             errors.append(f"{key}: {actual} != expected {expected}")
 
     # Derived checks
-    if header['d_inner'] != 2 * header['d_model']:
+    if header["d_inner"] != 2 * header["d_model"]:
         errors.append(f"d_inner ({header['d_inner']}) != 2 × d_model ({header['d_model']})")
-    if header['nheads'] * header['headdim'] != header['d_inner']:
-        errors.append(f"nheads×headdim ({header['nheads']*header['headdim']}) != d_inner ({header['d_inner']})")
+    if header["nheads"] * header["headdim"] != header["d_inner"]:
+        errors.append(
+            f"nheads×headdim ({header['nheads']*header['headdim']}) != d_inner ({header['d_inner']})"
+        )
 
     return errors
 
 
-def read_weights(filepath: Path, header: dict) -> List[List[np.ndarray]]:
+def read_weights(filepath: Path, header: dict) -> list[list[np.ndarray]]:
     """Read all weight arrays from binary file. Returns layers[array_idx]."""
-    n_layers = header['n_layers']
-    d_state = header['d_state']
-    d_model = header['d_model']
-    d_inner = header['d_inner']
-    nheads = header['nheads']
-    headdim = header['headdim']
-    mimo_rank = header['mimo_rank']
-    cond_dim = header['cond_dim']
-    in_proj_dim = header['in_proj_dim']
+    n_layers = header["n_layers"]
+    d_state = header["d_state"]
+    d_model = header["d_model"]
+    d_inner = header["d_inner"]
+    nheads = header["nheads"]
+    headdim = header["headdim"]
+    mimo_rank = header["mimo_rank"]
+    cond_dim = header["cond_dim"]
+    in_proj_dim = header["in_proj_dim"]
 
     # Per-layer array sizes (v3 — 18 arrays per layer, R=8)
-    b_proj_out = d_state * 2   # N*2
+    b_proj_out = d_state * 2  # N*2
     sizes = [
-        in_proj_dim * d_model,                                    # 0: in_proj_w
-        nheads,                                                    # 1: dt_bias
-        b_proj_out * mimo_rank,                                    # 2: B_proj.weight [N*2, R]
-        b_proj_out,                                                # 3: B_proj.bias [N*2]
-        headdim * b_proj_out,                                      # 4: C_proj.weight [head_dim, N*2]
-        nheads * mimo_rank * headdim,                              # 5: mimo_x
-        nheads * mimo_rank * headdim,                              # 6: mimo_z
-        nheads * mimo_rank * headdim,                              # 7: mimo_o
-        nheads,                                                    # 8: D_proj
-        d_model * d_inner,                                         # 9: out_proj.weight
-        2 * d_model * cond_dim,                                    # 10: film_proj.weight
-        2 * d_model,                                               # 11: film_proj.bias
-        2 * nheads * cond_dim,                                     # 12: dt_film_proj.weight
-        2 * nheads,                                                # 13: dt_film_proj.bias
-        nheads,                                                    # 14: log_a_real
-        nheads,                                                    # 15: a_imag
-        d_model,                                                   # 16: norm.weight
-        d_model,                                                   # 17: norm.bias
+        in_proj_dim * d_model,  # 0: in_proj_w
+        nheads,  # 1: dt_bias
+        b_proj_out * mimo_rank,  # 2: B_proj.weight [N*2, R]
+        b_proj_out,  # 3: B_proj.bias [N*2]
+        headdim * b_proj_out,  # 4: C_proj.weight [head_dim, N*2]
+        nheads * mimo_rank * headdim,  # 5: mimo_x
+        nheads * mimo_rank * headdim,  # 6: mimo_z
+        nheads * mimo_rank * headdim,  # 7: mimo_o
+        nheads,  # 8: D_proj
+        d_model * d_inner,  # 9: out_proj.weight
+        2 * d_model * cond_dim,  # 10: film_proj.weight
+        2 * d_model,  # 11: film_proj.bias
+        2 * nheads * cond_dim,  # 12: dt_film_proj.weight
+        2 * nheads,  # 13: dt_film_proj.bias
+        nheads,  # 14: log_a_real
+        nheads,  # 15: a_imag
+        d_model,  # 16: norm.weight
+        d_model,  # 17: norm.bias
     ]
 
     layers = []
-    with open(filepath, 'rb') as f:
+    with open(filepath, "rb") as f:
         f.seek(HEADER_SIZE)
 
         # Skip R8 extractor weights (prepended before layer weights in v3)
-        if header['version'] == 3:
-            r8_bytes = header['weight_data_size'] - sum(sizes) * n_layers * 4
+        if header["version"] == 3:
+            r8_bytes = header["weight_data_size"] - sum(sizes) * n_layers * 4
             if r8_bytes > 0:
                 f.seek(r8_bytes, 1)  # relative seek
 
@@ -151,7 +152,7 @@ def read_weights(filepath: Path, header: dict) -> List[List[np.ndarray]]:
     return layers
 
 
-def validate_weights(layers: List[List[np.ndarray]]) -> List[str]:
+def validate_weights(layers: list[list[np.ndarray]]) -> list[str]:
     """Validate weight arrays are finite and have expected properties."""
     errors = []
     for li, arrays in enumerate(layers):
@@ -162,10 +163,8 @@ def validate_weights(layers: List[List[np.ndarray]]) -> List[str]:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Validate Mamba-3 flat binary weight file"
-    )
-    parser.add_argument('filepath', help='Path to .bin file')
+    parser = argparse.ArgumentParser(description="Validate Mamba-3 flat binary weight file")
+    parser.add_argument("filepath", help="Path to .bin file")
     args = parser.parse_args()
 
     filepath = Path(args.filepath)
@@ -202,7 +201,7 @@ def main():
     print("✅ All weight arrays valid (finite)")
 
     # 4. Verify file size consistency
-    expected_total = HEADER_SIZE + header['weight_data_size']
+    expected_total = HEADER_SIZE + header["weight_data_size"]
     if file_size != expected_total:
         print(f"⚠️  File size mismatch: {file_size} != expected {expected_total}")
     else:
@@ -210,7 +209,7 @@ def main():
 
     # Summary
     total_floats = sum(arr.size for layer in layers for arr in layer)
-    print(f"\n=== VALIDATION PASSED ===")
+    print("\n=== VALIDATION PASSED ===")
     print(f"  Layers: {header['n_layers']}")
     print(f"  Arrays per layer: {len(layers[0])}")
     print(f"  Total floats: {total_floats:,}")
@@ -219,5 +218,5 @@ def main():
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     exit(main() or 0)

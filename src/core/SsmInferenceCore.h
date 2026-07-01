@@ -8,10 +8,11 @@
 
 #pragma once
 
+#include "core/ConditionProcessor.h"
 #include "core/MambaConfig.h"
 #include "core/SsmBlock.h"
 #include "core/WeightLoader.h"
-#include "core/ConditionProcessor.h"
+
 #include <atomic>
 #include <cstddef>
 
@@ -27,10 +28,12 @@ public:
     // Load weights from a flat binary .bin file and initialize all layers.
     // Returns true on success, false on any error (file not found, dim mismatch).
     // Must be called from the main thread (file I/O). Not RT-safe.
-    bool init(const char* weight_filepath);
+    bool init(const char *weight_filepath);
 
     // True after successful init().
-    bool is_ready() const { return ready_; }
+    bool is_ready() const {
+        return ready_;
+    }
 
     // ── Audio Processing (RT-safe) ─────────────────────────────────
 
@@ -41,7 +44,7 @@ public:
     //
     // Splits into 64-sample sub-blocks internally. State carries across
     // calls. Zero heap allocations.
-    void process_block(const float* input, float* output, size_t n_samples);
+    void process_block(const float *input, float *output, size_t n_samples);
 
     // Reset all SSM states to zero. Deferred — takes effect on the next
     // process_block() call. Safe from any thread.
@@ -51,17 +54,19 @@ public:
 
     // Set the conditioning vector. Called from non-RT threads (ARA, UI).
     // Takes effect on the next process_block() call.
-    void set_conditioning(const float* cond);
+    void set_conditioning(const float *cond);
 
     // Get access to the condition processor for direct manipulation.
-    ConditionProcessor& conditioning() { return cond_proc_; }
+    ConditionProcessor &conditioning() {
+        return cond_proc_;
+    }
 
 private:
     bool ready_ = false;
 
     // Weights (loaded once)
     WeightLoader loader_;
-    const SSMWeights* layer_weights_[MAX_LAYERS] = {};
+    const SSMWeights *layer_weights_[MAX_LAYERS] = {};
 
     // Per-layer SSM blocks (stack-allocated, 6 layers)
     SSMState layer_states_[MAX_LAYERS];
@@ -82,8 +87,8 @@ private:
     size_t sample_count_ = 0;
 
     // Internal helpers
-    void apply_layer_norm(float* x, size_t layer_idx);
+    void apply_layer_norm(float *x, size_t layer_idx);
     bool process_ready_reset();
 };
 
-}  // namespace clara::mamba3
+} // namespace clara::mamba3

@@ -1,5 +1,4 @@
-"""
-CREPE Offline F0 Extraction for MUSDB18-HQ
+"""CREPE Offline F0 Extraction for MUSDB18-HQ
 ===========================================
 Pre-computes 360-D pitch probability tensors for every stem in MUSDB18-HQ,
 saves as float16 .npy files alongside the WAV files.
@@ -33,12 +32,11 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
+import soundfile as sf
 import torch
 import torchaudio
-import soundfile as sf
 
 try:
     import torchcrepe
@@ -49,31 +47,32 @@ except ImportError:
 
 # ── constants ─────────────────────────────────────────────────────────────
 
-CREPE_SR     = 16000      # CREPE's native sample rate
-CREPE_HOP_MS = 10        # 10ms hop → 100 Hz frame rate
-CREPE_BINS   = 360       # 20-cent resolution from C1 to B7
+CREPE_SR = 16000  # CREPE's native sample rate
+CREPE_HOP_MS = 10  # 10ms hop → 100 Hz frame rate
+CREPE_BINS = 360  # 20-cent resolution from C1 to B7
 
-MODEL_SR     = 44100     # MUSDB18-HQ native rate
-MODEL_HOP    = 512       # train_mamba3.py default hop_length
+MODEL_SR = 44100  # MUSDB18-HQ native rate
+MODEL_HOP = 512  # train_mamba3.py default hop_length
 # Model frame rate: 44100/512 ≈ 86.13 Hz
 
 # Stems that get real CREPE (pitched)
-PITCHED_STEMS = {'vocals', 'bass', 'other', 'guitar', 'piano', 'keys'}
+PITCHED_STEMS = {"vocals", "bass", "other", "guitar", "piano", "keys"}
 # Stems that get zero tensor (percussion / unpitched)
-UNPITCHED_STEMS = {'drums', 'percussion'}
+UNPITCHED_STEMS = {"drums", "percussion"}
 # Stems to skip entirely (not used by training)
-SKIP_STEMS = {'mixture'}
+SKIP_STEMS = {"mixture"}
 
 
 # ── audio loading ─────────────────────────────────────────────────────────
 
-def load_wav_mono_16k(path: Path) -> Optional[torch.Tensor]:
+
+def load_wav_mono_16k(path: Path) -> torch.Tensor | None:
     """Load WAV, mix to mono, resample to 16 kHz for CREPE.
 
     Returns float32 tensor of shape (L,) at 16 kHz, or None on failure.
     """
     try:
-        data, sr = sf.read(str(path), dtype='float32', always_2d=True)
+        data, sr = sf.read(str(path), dtype="float32", always_2d=True)
     except Exception as e:
         print(f"    ! Failed to read {path.name}: {e}")
         return None
@@ -88,20 +87,19 @@ def load_wav_mono_16k(path: Path) -> Optional[torch.Tensor]:
 
     # Resample to 16 kHz
     if sr != CREPE_SR:
-        wav = torchaudio.functional.resample(
-            wav.unsqueeze(0), sr, CREPE_SR
-        ).squeeze(0)
+        wav = torchaudio.functional.resample(wav.unsqueeze(0), sr, CREPE_SR).squeeze(0)
 
     return wav
 
 
 # ── CREPE inference ───────────────────────────────────────────────────────
 
+
 @torch.no_grad()
 def crepe_extract(
     wav_16k: torch.Tensor,
-    device:  torch.device,
-    model_capacity: str = 'full',
+    device: torch.device,
+    model_capacity: str = "full",
     batch_size: int = 512,
 ) -> np.ndarray:
     """Run CREPE inference, return (T_crepe, 360) float16 probability tensor.
@@ -141,14 +139,15 @@ def crepe_extract(
 
 
 def resample_frame_rate(
-    crepe_probs: np.ndarray,   # (T_crepe, 360) @ 100 Hz
-    wav_44k_length: int,       # original 44.1k sample count
+    crepe_probs: np.ndarray,  # (T_crepe, 360) @ 100 Hz
+    wav_44k_length: int,  # original 44.1k sample count
 ) -> np.ndarray:
     """Resample CREPE's 100 Hz frames to model's 86.13 Hz frames.
 
     Output T_model = 1 + wav_44k_length // MODEL_HOP  (matches torch.stft center=True)
     """
     import torch.nn.functional as F
+
     T_model = 1 + wav_44k_length // MODEL_HOP
     T_crepe = crepe_probs.shape[0]
 
@@ -156,12 +155,7 @@ def resample_frame_rate(
     crepe_tensor = torch.from_numpy(crepe_probs).float().permute(1, 0).unsqueeze(0)
 
     # Vectorized linear 1D interpolation along the time dimension
-    resampled_tensor = F.interpolate(
-        crepe_tensor,
-        size=T_model,
-        mode='linear',
-        align_corners=True
-    )
+    resampled_tensor = F.interpolate(crepe_tensor, size=T_model, mode="linear", align_corners=True)
 
     # Convert back to half-precision NumPy array: shape (T_model, 360)
     return resampled_tensor.squeeze(0).permute(1, 0).half().numpy()
@@ -169,30 +163,31 @@ def resample_frame_rate(
 
 # ── per-stem processing ───────────────────────────────────────────────────
 
+
 def process_stem(
-    stem_path:  Path,
-    device:     torch.device,
+    stem_path: Path,
+    device: torch.device,
     model_size: str,
-    force:      bool = False,
+    force: bool = False,
 ) -> str:
     """Process one stem file. Returns status string for logging."""
     name = stem_path.stem.lower()  # 'vocals', 'drums', etc.
 
     if name in SKIP_STEMS:
-        return 'skip-mixture'
+        return "skip-mixture"
 
-    crepe_path   = stem_path.parent / f"{stem_path.stem}.crepe.npy"
+    crepe_path = stem_path.parent / f"{stem_path.stem}.crepe.npy"
     pitched_path = stem_path.parent / f"{stem_path.stem}.pitched.npy"
 
     if not force and crepe_path.exists() and pitched_path.exists():
-        return 'cached'
+        return "cached"
 
     # Load original 44.1k to know the length (for frame rate matching)
     try:
         info = sf.info(str(stem_path))
         wav_44k_length = info.frames
     except Exception as e:
-        return f'fail-info ({e})'
+        return f"fail-info ({e})"
 
     # Unpitched stems: write zeros tensor + pitched=0
     if name in UNPITCHED_STEMS:
@@ -200,7 +195,7 @@ def process_stem(
         zeros = np.zeros((T_model, CREPE_BINS), dtype=np.float16)
         np.save(crepe_path, zeros)
         np.save(pitched_path, np.array(0.0, dtype=np.float32))
-        return 'unpitched (zeros)'
+        return "unpitched (zeros)"
 
     # Pitched stems: real CREPE
     if name not in PITCHED_STEMS:
@@ -209,12 +204,12 @@ def process_stem(
 
     wav_16k = load_wav_mono_16k(stem_path)
     if wav_16k is None:
-        return 'fail-load'
+        return "fail-load"
 
     try:
         crepe_probs = crepe_extract(wav_16k, device, model_capacity=model_size)
     except Exception as e:
-        return f'fail-crepe ({type(e).__name__}: {e})'
+        return f"fail-crepe ({type(e).__name__}: {e})"
 
     # Resample 100 Hz → 86 Hz to match model frame rate
     crepe_resampled = resample_frame_rate(crepe_probs, wav_44k_length)
@@ -222,25 +217,29 @@ def process_stem(
     np.save(crepe_path, crepe_resampled)
     np.save(pitched_path, np.array(1.0, dtype=np.float32))
 
-    return f'extracted ({crepe_resampled.shape[0]} frames)'
+    return f"extracted ({crepe_resampled.shape[0]} frames)"
 
 
 # ── main ──────────────────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser(description="Offline CREPE f0 extraction")
-    parser.add_argument('--data',       required=True,
-                        help='Path to MUSDB18-HQ train or test directory')
-    parser.add_argument('--device',     default='cuda',
-                        help='cuda (ROCm) or cpu')
-    parser.add_argument('--model',      default='full',
-                        choices=['tiny', 'full'],
-                        help='torchcrepe only ships tiny (~6 MB) and full (~85 MB). '
-                             'full is the highest accuracy available.')
-    parser.add_argument('--force',      action='store_true',
-                        help='Re-extract even if .crepe.npy already exists')
-    parser.add_argument('--limit',      type=int, default=0,
-                        help='Process only N tracks (0=all, for testing)')
+    parser.add_argument("--data", required=True, help="Path to MUSDB18-HQ train or test directory")
+    parser.add_argument("--device", default="cuda", help="cuda (ROCm) or cpu")
+    parser.add_argument(
+        "--model",
+        default="full",
+        choices=["tiny", "full"],
+        help="torchcrepe only ships tiny (~6 MB) and full (~85 MB). "
+        "full is the highest accuracy available.",
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Re-extract even if .crepe.npy already exists"
+    )
+    parser.add_argument(
+        "--limit", type=int, default=0, help="Process only N tracks (0=all, for testing)"
+    )
     args = parser.parse_args()
 
     root = Path(args.data)
@@ -251,21 +250,21 @@ def main():
     # Discover tracks
     tracks = sorted([d for d in root.iterdir() if d.is_dir()])
     if args.limit > 0:
-        tracks = tracks[:args.limit]
+        tracks = tracks[: args.limit]
 
     print(f"Found {len(tracks)} tracks under {root}")
     print(f"CREPE model: {args.model}")
     print(f"Device: {args.device}")
-    print(f"Output: <stem>.crepe.npy (fp16) + <stem>.pitched.npy alongside each WAV")
+    print("Output: <stem>.crepe.npy (fp16) + <stem>.pitched.npy alongside each WAV")
     print("─" * 60)
 
     # Device setup
-    if args.device == 'cuda' and not torch.cuda.is_available():
+    if args.device == "cuda" and not torch.cuda.is_available():
         print("WARNING: CUDA/ROCm not available, falling back to CPU")
-        args.device = 'cpu'
+        args.device = "cpu"
     dev = torch.device(args.device)
 
-    if args.device == 'cuda':
+    if args.device == "cuda":
         print(f"GPU: {torch.cuda.get_device_name(0)}")
 
     # Warm up CREPE (first call triggers download + MIOpen kernel compile)
@@ -277,10 +276,10 @@ def main():
 
     # Process all stems
     total_stems = 0
-    extracted   = 0
-    cached      = 0
-    failed      = 0
-    t_start     = time.time()
+    extracted = 0
+    cached = 0
+    failed = 0
+    t_start = time.time()
 
     for i, track_dir in enumerate(tracks):
         wavs = sorted(track_dir.glob("*.wav"))
@@ -292,20 +291,20 @@ def main():
             status = process_stem(wav_path, dev, args.model, args.force)
             dt = time.time() - t0
 
-            if 'extracted' in status:
+            if "extracted" in status:
                 extracted += 1
-                marker = '✓'
-            elif status == 'cached':
+                marker = "✓"
+            elif status == "cached":
                 cached += 1
-                marker = '·'
-            elif 'unpitched' in status:
+                marker = "·"
+            elif "unpitched" in status:
                 extracted += 1
-                marker = '○'
-            elif status == 'skip-mixture':
-                marker = '–'
+                marker = "○"
+            elif status == "skip-mixture":
+                marker = "–"
             else:
                 failed += 1
-                marker = '✗'
+                marker = "✗"
 
             print(f"    {marker} {wav_path.name:25s} {status:30s} ({dt:.1f}s)")
 
@@ -322,5 +321,5 @@ def main():
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -63,7 +63,7 @@ python scripts/extract_crepe.py --input track.wav --output track_f0.npz
 ```python
 class StemDataset(Dataset):
     """Multi-stem loader with bounded FIFO cache.
-    
+
     Loads stems on demand, caches last N stems in memory.
     Returns (mixture, stems_dict) pairs for supervised training.
     """
@@ -74,13 +74,13 @@ class StemDataset(Dataset):
         self.cache_size = cache_size
         # Discover all tracks with stems
         self.tracks = self._find_tracks()
-    
+
     def __getitem__(self, idx):
         track = self.tracks[idx]
         if track not in self.cache:
             self._load_and_cache(track)
         return self.cache[track]
-    
+
     def _load_and_cache(self, track):
         if len(self.cache) >= self.cache_size:
             self.cache.popitem(last=False)  # evict oldest
@@ -208,7 +208,7 @@ class SI_SDR(nn.Module):
 2.4 SI-SDR ramping loss (loss change)
     ↓
 2.5 MIMO slot specialization (emergent from conditioning)
-    
+
 2.2 StemDataset (infrastructure)
     ↓
     (used by Phase 3 per-effect training)

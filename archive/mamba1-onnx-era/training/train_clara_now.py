@@ -24,7 +24,6 @@ import warnings
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 import soundfile as sf
 import torch
 import torch.nn as nn
@@ -35,9 +34,9 @@ import torchaudio
 
 warnings.filterwarnings("ignore", message="At least one mel filterbank has all zero values")
 
-if sys.platform != 'win32':
+if sys.platform != "win32":
     try:
-        torch.multiprocessing.set_start_method('spawn', force=True)
+        torch.multiprocessing.set_start_method("spawn", force=True)
     except RuntimeError:
         pass
 
@@ -46,13 +45,16 @@ if sys.platform != 'win32':
 # STFT-based Mamba Model — processes frames, not raw audio
 # ══════════════════════════════════════════════════════════════════════════
 
+
 class STFTMambaLayer(nn.Module):
     """
     Single Mamba layer operating on STFT frame representations.
     Matches the Mamba paper: pre-SSM normalization prevents numerical explosion.
     """
-    def __init__(self, d_model: int = 64, d_state: int = 16,
-                 conv_width: int = 3, dt_rank: int = 16):
+
+    def __init__(
+        self, d_model: int = 64, d_state: int = 16, conv_width: int = 3, dt_rank: int = 16
+    ):
         super().__init__()
         self.d_model = d_model
         self.d_state = d_state
@@ -61,8 +63,9 @@ class STFTMambaLayer(nn.Module):
 
         # Linear projections at frame level
         self.in_proj = nn.Linear(d_model, 2 * d_model, bias=False)
-        self.conv1d = nn.Conv1d(d_model, d_model, conv_width,
-                                padding=conv_width - 1, groups=d_model)
+        self.conv1d = nn.Conv1d(
+            d_model, d_model, conv_width, padding=conv_width - 1, groups=d_model
+        )
 
         # Pre-SSM normalization (critical for stability)
         self.norm_before_ssm = nn.LayerNorm(d_model)
@@ -76,7 +79,9 @@ class STFTMambaLayer(nn.Module):
         self.D = nn.Parameter(torch.ones(d_model))
         self.x_proj = nn.Linear(d_model, dt_rank + 2 * d_state, bias=False)
         self.dt_proj = nn.Linear(dt_rank, d_model, bias=True)
-        dt_init = torch.exp(torch.rand(d_model) * (math.log(0.1) - math.log(0.001)) + math.log(0.001))
+        dt_init = torch.exp(
+            torch.rand(d_model) * (math.log(0.1) - math.log(0.001)) + math.log(0.001)
+        )
         inv_dt = dt_init + torch.log(-torch.expm1(-dt_init))
         with torch.no_grad():
             self.dt_proj.bias.copy_(inv_dt)
@@ -97,9 +102,9 @@ class STFTMambaLayer(nn.Module):
         N = self.d_state
 
         xz = self.x_proj(conv_out)
-        dt_latent = xz[:, :, :self.dt_rank]
-        B_proj = xz[:, :, self.dt_rank:self.dt_rank + N]
-        C_proj = xz[:, :, self.dt_rank + N:]
+        dt_latent = xz[:, :, : self.dt_rank]
+        B_proj = xz[:, :, self.dt_rank : self.dt_rank + N]
+        C_proj = xz[:, :, self.dt_rank + N :]
 
         dt = F.softplus(self.dt_proj(dt_latent)).clamp(max=0.1)
         A = -torch.exp(self.log_A_real)
@@ -120,7 +125,7 @@ class STFTMambaLayer(nn.Module):
             # Serial within chunk (stable for small chunk_size ≤ 64)
             hs = []
             for t in range(chunk_T):
-                h = chunk_dA[:, t:t+1] * h + chunk_dBdx[:, t:t+1]
+                h = chunk_dA[:, t : t + 1] * h + chunk_dBdx[:, t : t + 1]
                 h = h.clamp(-100.0, 100.0)
                 hs.append(h)
             h_chunk = torch.cat(hs, dim=1)
@@ -141,8 +146,8 @@ class STFTMambaLayer(nn.Module):
 
         # Gated linear unit
         projected = self.in_proj(x)
-        x_ssm = projected[:, :, :self.d_model]
-        x_gate = projected[:, :, self.d_model:]
+        x_ssm = projected[:, :, : self.d_model]
+        x_gate = projected[:, :, self.d_model :]
 
         # Causal Conv1d on frame sequence
         x_conv_seq = x_ssm.transpose(1, 2)  # [B, D, T]
@@ -163,14 +168,21 @@ class STFTMambaLayer(nn.Module):
 class STFTMambaModel(nn.Module):
     """
     Full STFT-based Mamba model.
-    
+
     audio [B, L] → STFT [B, T, F] → proj → [B, T, D] → Mamba×4 → [B, T, D]
         → decode → [B, T, 2F] → complex STFT → ISTFT → audio [B, L]
-    
+
     For ONNX export, STFT/ISTFT are included in the graph (opset 18+ supports STFT).
     """
-    def __init__(self, d_model: int = 64, d_state: int = 16, n_layers: int = 4,
-                 n_fft: int = 1024, hop_length: int = 256):
+
+    def __init__(
+        self,
+        d_model: int = 64,
+        d_state: int = 16,
+        n_layers: int = 4,
+        n_fft: int = 1024,
+        hop_length: int = 256,
+    ):
         super().__init__()
         self.d_model = d_model
         self.n_fft = n_fft
@@ -183,10 +195,9 @@ class STFTMambaModel(nn.Module):
         self.skip_weight = nn.Parameter(torch.tensor(1.0))
 
         # Mamba layers at frame rate
-        self.layers = nn.ModuleList([
-            STFTMambaLayer(d_model, d_state, conv_width=3, dt_rank=16)
-            for _ in range(n_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [STFTMambaLayer(d_model, d_state, conv_width=3, dt_rank=16) for _ in range(n_layers)]
+        )
         self.norm = nn.LayerNorm(d_model)
 
         # Decoder: d_model → 2 * F_bins (real + imag)
@@ -194,14 +205,17 @@ class STFTMambaModel(nn.Module):
 
         # Register Hann window as buffer
         window = torch.hann_window(n_fft)
-        self.register_buffer('window', window)
+        self.register_buffer("window", window)
 
     def forward(self, audio: Tensor) -> Tensor:
         L_in = audio.shape[-1]
 
         stft = torch.stft(
-            audio, n_fft=self.n_fft, hop_length=self.hop_length,
-            window=self.window, return_complex=True,
+            audio,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            window=self.window,
+            return_complex=True,
         )
         stft = stft.transpose(1, 2)
 
@@ -215,8 +229,8 @@ class STFTMambaModel(nn.Module):
         x = self.norm(x)
         delta = self.decode(x)
 
-        delta_real = delta[:, :, :self.n_fft_half]
-        delta_imag = delta[:, :, self.n_fft_half:]
+        delta_real = delta[:, :, : self.n_fft_half]
+        delta_imag = delta[:, :, self.n_fft_half :]
 
         stft_out = torch.complex(
             stft_real + delta_real * self.skip_weight,
@@ -224,8 +238,11 @@ class STFTMambaModel(nn.Module):
         ).transpose(1, 2)
 
         return torch.istft(
-            stft_out, n_fft=self.n_fft, hop_length=self.hop_length,
-            window=self.window, length=L_in,
+            stft_out,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            window=self.window,
+            length=L_in,
         )
 
 
@@ -233,10 +250,16 @@ class STFTMambaModel(nn.Module):
 # Dataset — flat WAV files
 # ══════════════════════════════════════════════════════════════════════════
 
+
 class FlatWavDataset(Dataset):
-    def __init__(self, root: str, sample_rate: int = 44100,
-                 clip_seconds: float = 2.0, augment: bool = True,
-                 cache_in_ram: bool = False):
+    def __init__(
+        self,
+        root: str,
+        sample_rate: int = 44100,
+        clip_seconds: float = 2.0,
+        augment: bool = True,
+        cache_in_ram: bool = False,
+    ):
         self.root = Path(root)
         self.sample_rate = sample_rate
         self.clip_len = int(clip_seconds * sample_rate)
@@ -261,7 +284,7 @@ class FlatWavDataset(Dataset):
 
     def _load_file_uncached(self, path: Path) -> Optional[Tensor]:
         try:
-            data, sr = sf.read(str(path), dtype='float32', always_2d=True)
+            data, sr = sf.read(str(path), dtype="float32", always_2d=True)
         except Exception:
             return None
         if data.shape[1] > 1:
@@ -290,7 +313,7 @@ class FlatWavDataset(Dataset):
         if L <= self.clip_len:
             return F.pad(wav, (0, self.clip_len - L))
         start = random.randint(0, L - self.clip_len)
-        return wav[start:start + self.clip_len]
+        return wav[start : start + self.clip_len]
 
     def _augment(self, wav: Tensor) -> Tensor:
         gain_db = random.uniform(-6, 6)
@@ -304,26 +327,28 @@ class FlatWavDataset(Dataset):
         path = self.audio_files[file_idx]
         wav = self._load_file(path)
         if wav is None:
-            return {'audio': torch.zeros(self.clip_len), 'valid': False}
+            return {"audio": torch.zeros(self.clip_len), "valid": False}
         wav = self._crop(wav)
         if self.augment:
             wav = self._augment(wav)
-        return {'audio': wav, 'valid': True}
+        return {"audio": wav, "valid": True}
 
 
 def collate_valid(batch: list[dict]) -> Optional[dict]:
-    batch = [b for b in batch if b['valid']]
+    batch = [b for b in batch if b["valid"]]
     if not batch:
         return None
-    return {'audio': torch.stack([b['audio'] for b in batch])}
+    return {"audio": torch.stack([b["audio"] for b in batch])}
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # Loss — matches train_laptop LeanTrackLoss exactly
 # ══════════════════════════════════════════════════════════════════════════
 
+
 class LeanClaraLoss(nn.Module):
     """Identical pattern to LeanTrackLoss in train_laptop.py."""
+
     def __init__(self, sample_rate: int = 44100):
         super().__init__()
         self.sr = sample_rate
@@ -331,16 +356,17 @@ class LeanClaraLoss(nn.Module):
         self.hop = 256
         # Single mel (like laptop edition)
         self.mel_transform = torchaudio.transforms.MelSpectrogram(
-            sample_rate=sample_rate, n_fft=1024, hop_length=256, n_mels=64)
+            sample_rate=sample_rate, n_fft=1024, hop_length=256, n_mels=64
+        )
         self.global_step = 0
 
     def _si_sdr(self, pred: Tensor, target: Tensor) -> Tensor:
         eps = 1e-8
-        target_energy = (target ** 2).sum(dim=-1, keepdim=True)
+        target_energy = (target**2).sum(dim=-1, keepdim=True)
         dot = (pred * target).sum(dim=-1, keepdim=True)
         proj = dot / (target_energy + eps) * target
         noise = pred - proj
-        si_sdr = 10 * torch.log10((proj ** 2).sum(-1) / ((noise ** 2).sum(-1) + eps) + eps)
+        si_sdr = 10 * torch.log10((proj**2).sum(-1) / ((noise**2).sum(-1) + eps) + eps)
         return -si_sdr.mean()
 
     def _mel_l1(self, pred_wave: Tensor, target_wave: Tensor) -> Tensor:
@@ -368,20 +394,20 @@ class LeanClaraLoss(nn.Module):
         window = torch.hann_window(self.n_fft, device=pred_wave.device)
         p_stft = torch.stft(pred_wave, self.n_fft, self.hop, window=window, return_complex=True)
         t_stft = torch.stft(target_wave, self.n_fft, self.hop, window=window, return_complex=True)
-        losses['stft'] = F.l1_loss(p_stft.abs(), t_stft.abs())
+        losses["stft"] = F.l1_loss(p_stft.abs(), t_stft.abs())
 
         # Mel-L1
-        losses['mel_l1'] = self._mel_l1(pred_wave, target_wave)
+        losses["mel_l1"] = self._mel_l1(pred_wave, target_wave)
 
         # SI-SDR (ramped in)
         si_w = self._si_sdr_weight()
         if si_w > 0:
-            losses['si_sdr'] = self._si_sdr(pred_wave, target_wave) * si_w
+            losses["si_sdr"] = self._si_sdr(pred_wave, target_wave) * si_w
         else:
-            losses['si_sdr'] = torch.tensor(0.0, device=pred_wave.device)
+            losses["si_sdr"] = torch.tensor(0.0, device=pred_wave.device)
 
         # Total — same weights as LeanTrackLoss
-        losses['total'] = 1.0 * losses['stft'] + 0.5 * losses['mel_l1'] + losses['si_sdr']
+        losses["total"] = 1.0 * losses["stft"] + 0.5 * losses["mel_l1"] + losses["si_sdr"]
 
         self.global_step += 1
         return losses
@@ -391,13 +417,14 @@ class LeanClaraLoss(nn.Module):
 # Training — matches train_laptop structure exactly
 # ══════════════════════════════════════════════════════════════════════════
 
+
 def train(
     data_root: str,
     save_dir: str,
     n_steps: int = 50_000,
     batch_size: int = 2,
     lr: float = 3e-4,
-    device: str = 'auto',
+    device: str = "auto",
     resume_from: Optional[str] = None,
     val_split: float = 0.1,
     ckpt_every: int = 200,
@@ -417,53 +444,54 @@ def train(
     save_path = Path(save_dir)
     save_path.mkdir(parents=True, exist_ok=True)
 
-    if device == 'auto':
+    if device == "auto":
         if torch.cuda.is_available():
-            device = 'cuda'
+            device = "cuda"
             print(f"Auto-detected GPU: {torch.cuda.get_device_name(0)}")
         else:
-            device = 'cpu'
+            device = "cpu"
             print("No GPU detected, using CPU")
-    elif device == 'cuda' and not torch.cuda.is_available():
+    elif device == "cuda" and not torch.cuda.is_available():
         print("CUDA not available, falling back to CPU")
-        device = 'cpu'
+        device = "cpu"
 
     dev = torch.device(device)
     print(f"Device: {dev}")
 
-    if device == 'cuda':
+    if device == "cuda":
         torch.backends.cudnn.benchmark = True
 
-    if device == 'cpu':
+    if device == "cpu":
         torch.set_num_threads(min(4, torch.get_num_threads()))
         print(f"CPU threads: {torch.get_num_threads()}")
 
-    if amp and device == 'cpu':
+    if amp and device == "cpu":
         amp = False
         print("AMP disabled on CPU")
 
     autocast_dtype = torch.bfloat16 if amp else torch.float32
     print(f"AMP: {amp} ({autocast_dtype})")
 
-    if device == 'cuda' and num_workers == 2 and sys.platform != 'win32':
+    if device == "cuda" and num_workers == 2 and sys.platform != "win32":
         num_workers = 4
         print(f"num_workers auto-bumped to {num_workers} for GPU")
-    if sys.platform == 'win32' and num_workers > 0:
+    if sys.platform == "win32" and num_workers > 0:
         num_workers = 0
         print("num_workers set to 0 (Windows CUDA multiprocessing is unstable)")
 
     # ── Model: STFT-based (mamba3 pattern) ──
-    model = STFTMambaModel(d_model=64, d_state=16, n_layers=4,
-                           n_fft=1024, hop_length=256).to(dev)
+    model = STFTMambaModel(d_model=64, d_state=16, n_layers=4, n_fft=1024, hop_length=256).to(dev)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model parameters: {n_params:,}")
-    print(f"  Architecture: STFT(n_fft=1024, hop=256) + Mamba(d_model=64, n_layers=4, d_state=16)")
-    print(f"  Frame rate: {44100 // 256} fps, Sequence: ~{int(clip_seconds * 44100 // 256)} frames per clip")
+    print("  Architecture: STFT(n_fft=1024, hop=256) + Mamba(d_model=64, n_layers=4, d_state=16)")
+    print(
+        f"  Frame rate: {44100 // 256} fps, Sequence: ~{int(clip_seconds * 44100 // 256)} frames per clip"
+    )
 
-    if compile_model and hasattr(torch, 'compile'):
+    if compile_model and hasattr(torch, "compile"):
         print("Compiling model with torch.compile (mode='reduce-overhead')...")
-        model = torch.compile(model, mode='reduce-overhead')
+        model = torch.compile(model, mode="reduce-overhead")
     elif compile_model:
         print("torch.compile not available — skipping")
 
@@ -471,15 +499,26 @@ def train(
     loss_fn = LeanClaraLoss(sample_rate=44100).to(dev)
 
     # ── Optimizer ──
-    decay_params = [p for n, p in model.named_parameters()
-                    if 'bias' not in n and 'norm' not in n
-                    and 'LayerNorm' not in type(p).__name__ and p.requires_grad]
-    nodecay_params = [p for n, p in model.named_parameters()
-                      if ('bias' in n or 'norm' in n) and p.requires_grad]
-    optimizer = torch.optim.AdamW([
-        {'params': decay_params, 'weight_decay': 1e-4},
-        {'params': nodecay_params, 'weight_decay': 0.0},
-    ], lr=lr, betas=(0.9, 0.999), eps=1e-8)
+    decay_params = [
+        p
+        for n, p in model.named_parameters()
+        if "bias" not in n
+        and "norm" not in n
+        and "LayerNorm" not in type(p).__name__
+        and p.requires_grad
+    ]
+    nodecay_params = [
+        p for n, p in model.named_parameters() if ("bias" in n or "norm" in n) and p.requires_grad
+    ]
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": decay_params, "weight_decay": 1e-4},
+            {"params": nodecay_params, "weight_decay": 0.0},
+        ],
+        lr=lr,
+        betas=(0.9, 0.999),
+        eps=1e-8,
+    )
 
     def lr_lambda(step: int) -> float:
         warmup = 2000
@@ -492,7 +531,7 @@ def train(
 
     # ── Resume ──
     start_step = 0
-    best_val_loss = float('inf')
+    best_val_loss = float("inf")
     if resume_from is not None:
         ckpt_path = Path(resume_from)
         if not ckpt_path.exists():
@@ -500,23 +539,29 @@ def train(
             sys.exit(1)
         print(f"Resuming from {ckpt_path}")
         ckpt = torch.load(ckpt_path, map_location=dev, weights_only=False)
-        model.load_state_dict(ckpt['model'])
-        optimizer.load_state_dict(ckpt['optimizer'])
-        scheduler.load_state_dict(ckpt['scheduler'])
-        start_step = ckpt['step']
-        if 'best_val_loss' in ckpt and not fresh_best_val:
-            best_val_loss = ckpt['best_val_loss']
+        model.load_state_dict(ckpt["model"])
+        optimizer.load_state_dict(ckpt["optimizer"])
+        scheduler.load_state_dict(ckpt["scheduler"])
+        start_step = ckpt["step"]
+        if "best_val_loss" in ckpt and not fresh_best_val:
+            best_val_loss = ckpt["best_val_loss"]
             print(f"  resumed at step {start_step}, best_val_loss={best_val_loss:.4f}")
         else:
             print(f"  resumed at step {start_step}, best_val_loss reset")
 
     # ── Dataset ──
-    full_dataset = FlatWavDataset(data_root, sample_rate=44100, clip_seconds=clip_seconds,
-                                  augment=True, cache_in_ram=cache_ram)
+    full_dataset = FlatWavDataset(
+        data_root,
+        sample_rate=44100,
+        clip_seconds=clip_seconds,
+        augment=True,
+        cache_in_ram=cache_ram,
+    )
     if cache_ram:
         full_dataset._preload()
-    val_dataset = FlatWavDataset(data_root, sample_rate=44100, clip_seconds=clip_seconds,
-                                 augment=False, cache_in_ram=False)
+    val_dataset = FlatWavDataset(
+        data_root, sample_rate=44100, clip_seconds=clip_seconds, augment=False, cache_in_ram=False
+    )
     if cache_ram:
         val_dataset.set_shared_cache(full_dataset._ram_cache)
 
@@ -532,40 +577,57 @@ def train(
     print(f"Files: {len(train_files)} train, {len(val_files)} val")
 
     # ── DataLoaders ──
-    dataloader = DataLoader(full_dataset, batch_size=batch_size, shuffle=True,
-                            num_workers=num_workers, pin_memory=(device == 'cuda'),
-                            collate_fn=collate_valid, drop_last=True,
-                            persistent_workers=(num_workers > 0),
-                            prefetch_factor=4 if num_workers > 0 else None,
-                            multiprocessing_context='spawn' if num_workers > 0 else None)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
-                            num_workers=0, collate_fn=collate_valid, drop_last=False)
+    dataloader = DataLoader(
+        full_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=(device == "cuda"),
+        collate_fn=collate_valid,
+        drop_last=True,
+        persistent_workers=(num_workers > 0),
+        prefetch_factor=4 if num_workers > 0 else None,
+        multiprocessing_context="spawn" if num_workers > 0 else None,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0,
+        collate_fn=collate_valid,
+        drop_last=False,
+    )
 
     # ── Signal handling ──
     import signal
-    _state = {'step': start_step, 'interrupted': False}
+
+    _state = {"step": start_step, "interrupted": False}
 
     def signal_handler(signum, frame):
-        if _state['interrupted']:
+        if _state["interrupted"]:
             print("\n! Second interrupt — exiting hard.")
             sys.exit(130)
         print(f"\n! Caught signal {signum} — will save after current step.")
-        _state['interrupted'] = True
+        _state["interrupted"] = True
 
     signal.signal(signal.SIGINT, signal_handler)
-    if hasattr(signal, 'SIGTERM') and sys.platform != 'win32':
+    if hasattr(signal, "SIGTERM") and sys.platform != "win32":
         signal.signal(signal.SIGTERM, signal_handler)
-    if sys.platform == 'win32' and hasattr(signal, 'SIGBREAK'):
+    if sys.platform == "win32" and hasattr(signal, "SIGBREAK"):
         signal.signal(signal.SIGBREAK, signal_handler)
 
     # ── Checkpointing ──
-    def save_checkpoint(step: int, loss_val: float, is_best: bool = False,
-                        name: Optional[str] = None):
+    def save_checkpoint(
+        step: int, loss_val: float, is_best: bool = False, name: Optional[str] = None
+    ):
         ckpt = {
-            'step': step, 'model': model.state_dict(),
-            'optimizer': optimizer.state_dict(), 'scheduler': scheduler.state_dict(),
-            'loss': loss_val, 'best_val_loss': best_val_loss,
-            'architecture': 'STFTMambaModel',
+            "step": step,
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict(),
+            "loss": loss_val,
+            "best_val_loss": best_val_loss,
+            "architecture": "STFTMambaModel",
         }
         fname = name if name else f"checkpoint_{step:06d}.pt"
         tmp_path = save_path / f".{fname}.tmp"
@@ -589,10 +651,10 @@ def train(
                 break
             if v_batch is None:
                 continue
-            v_audio = v_batch['audio'].to(dev)
+            v_audio = v_batch["audio"].to(dev)
             pred = model(v_audio)
             vl_dict = loss_fn(pred, v_audio)
-            vl = vl_dict['total']
+            vl = vl_dict["total"]
             if not (torch.isnan(vl) or torch.isinf(vl)):
                 total_loss += vl.item()
                 n_batches += 1
@@ -607,24 +669,24 @@ def train(
     accum_step = 0
 
     print(f"\n{'='*60}")
-    print(f"  CLARA TRAINING (STFT-based, mamba3 pattern)")
+    print("  CLARA TRAINING (STFT-based, mamba3 pattern)")
     print(f"{'='*60}")
     print(f"  steps={n_steps}, batch={batch_size}, grad_accum={grad_accum}")
     print(f"  effective batch = {batch_size * grad_accum}")
     print(f"  lr={lr}, grad_clip={grad_clip}")
     print(f"  ckpt every {ckpt_every} steps, val every {val_every} steps")
     print(f"  clip_seconds={clip_seconds} ({int(clip_seconds * 44100)} samples)")
-    print(f"  STFT: n_fft=1024, hop=256")
+    print("  STFT: n_fft=1024, hop=256")
     print(f"  Frame count per clip: ~{int(clip_seconds * 44100 // 256)}")
     if start_step > 0:
         print(f"  Resuming at step {start_step}")
     print()
 
-    if device == 'cuda':
+    if device == "cuda":
         print("Warming up GPU kernels...", flush=True)
         warm_batch = next(iter(dataloader))
         if warm_batch is not None:
-            wa = warm_batch['audio'][:1].to(dev)
+            wa = warm_batch["audio"][:1].to(dev)
             model.train()
             with torch.autocast(device_type=device, dtype=autocast_dtype, enabled=amp):
                 wp = model(wa)
@@ -638,10 +700,14 @@ def train(
     if profile_steps > 0:
         print(f"Profiler enabled — will capture {profile_steps} steps after warmup")
         prof = torch.profiler.profile(
-            activities=[
-                torch.profiler.ProfilerActivity.CPU,
-                torch.profiler.ProfilerActivity.CUDA,
-            ] if device == 'cuda' else [torch.profiler.ProfilerActivity.CPU],
+            activities=(
+                [
+                    torch.profiler.ProfilerActivity.CPU,
+                    torch.profiler.ProfilerActivity.CUDA,
+                ]
+                if device == "cuda"
+                else [torch.profiler.ProfilerActivity.CPU]
+            ),
             record_shapes=True,
             profile_memory=True,
             with_stack=True,
@@ -664,7 +730,7 @@ def train(
                 continue
             empty_batch_streak = 0
 
-            audio = batch['audio'].to(dev, non_blocking=True)
+            audio = batch["audio"].to(dev, non_blocking=True)
 
             loss_scale = 1.0 / grad_accum
 
@@ -672,7 +738,7 @@ def train(
                 pred = model(audio)
                 loss_dict = loss_fn(pred, audio)
 
-            loss = loss_dict['total']
+            loss = loss_dict["total"]
             if torch.isnan(loss) or torch.isinf(loss):
                 print(f"[step {step}] NaN/Inf loss — skipping")
                 optimizer.zero_grad(set_to_none=True)
@@ -693,7 +759,7 @@ def train(
                 prof.step()
 
             if step % log_every == 0:
-                lr_now = optimizer.param_groups[0]['lr']
+                lr_now = optimizer.param_groups[0]["lr"]
                 now = time.time()
                 elapsed = max(1e-6, now - last_log_time)
                 steps_per_sec = (step - last_log_step) / elapsed
@@ -706,13 +772,17 @@ def train(
                 else:
                     eta_str = "ETA -"
 
-                log_losses = f"  stft={loss_dict['stft'].item():.4f} mel={loss_dict['mel_l1'].item():.4f}"
-                if 'si_sdr' in loss_dict and loss_dict['si_sdr'].item() != 0:
+                log_losses = (
+                    f"  stft={loss_dict['stft'].item():.4f} mel={loss_dict['mel_l1'].item():.4f}"
+                )
+                if "si_sdr" in loss_dict and loss_dict["si_sdr"].item() != 0:
                     log_losses += f" si_sdr={loss_dict['si_sdr'].item():.4f}"
 
-                log_str = (f"[step {step:6d}] loss={loss.item():.4f} lr={lr_now:.2e} "
-                           f"{steps_per_sec:.3f} step/s {eta_str}{log_losses}")
-                if device == 'cuda':
+                log_str = (
+                    f"[step {step:6d}] loss={loss.item():.4f} lr={lr_now:.2e} "
+                    f"{steps_per_sec:.3f} step/s {eta_str}{log_losses}"
+                )
+                if device == "cuda":
                     mem = torch.cuda.max_memory_allocated(dev) / 1024**3
                     log_str += f"  gpu_mem={mem:.2f}GB"
                 print(log_str, flush=True)
@@ -724,12 +794,12 @@ def train(
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     save_checkpoint(step, loss.item(), is_best=True)
-                    print(f"  new best val loss — saved best.pt")
+                    print("  new best val loss — saved best.pt")
                     plateau_count = 0
                 else:
                     plateau_count += 1
                     if plateau_count >= early_stop_patience:
-                        print(f"  Val plateaued — early stopping")
+                        print("  Val plateaued — early stopping")
                         save_checkpoint(step, loss.item(), name="final_earlystop.pt")
                         if prof is not None:
                             prof.stop()
@@ -738,7 +808,7 @@ def train(
             if step > 0 and step % ckpt_every == 0:
                 save_checkpoint(step, loss.item())
 
-            if _state['interrupted']:
+            if _state["interrupted"]:
                 print(f"\n! Saving interrupt checkpoint at step {step}...")
                 save_checkpoint(step, loss.item(), name=f"interrupt_{step:06d}.pt")
                 print(f"  saved. Resume with: --resume {save_path}/interrupt_{step:06d}.pt")
@@ -747,7 +817,7 @@ def train(
                 return model
 
             step += 1
-            _state['step'] = step
+            _state["step"] = step
             if step >= n_steps:
                 break
 
@@ -760,44 +830,60 @@ def train(
     return model
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="CLARA STFT-based Mamba training")
-    parser.add_argument('--data', required=True, help="Path to WAV dataset directory")
-    parser.add_argument('--save', default='./checkpoints_clara')
-    parser.add_argument('--resume', default=None)
-    parser.add_argument('--steps', type=int, default=50_000)
-    parser.add_argument('--batch', type=int, default=2)
-    parser.add_argument('--lr', type=float, default=3e-4)
-    parser.add_argument('--device', default='auto')
-    parser.add_argument('--grad-accum', type=int, default=8)
-    parser.add_argument('--val-split', type=float, default=0.1)
-    parser.add_argument('--val-every', type=int, default=1000)
-    parser.add_argument('--ckpt-every', type=int, default=200)
-    parser.add_argument('--log-every', type=int, default=25)
-    parser.add_argument('--early-stop-patience', type=int, default=20)
-    parser.add_argument('--num-workers', type=int, default=2)
-    parser.add_argument('--amp', action='store_true', help='Enable bfloat16 AMP (may cause NaN on ROCm 860M)')
-    parser.add_argument('--compile', action='store_true')
-    parser.add_argument('--fresh-best-val', action='store_true')
-    parser.add_argument('--cache', action='store_true', help='Enable RAM pre-caching')
-    parser.add_argument('--clip-seconds', type=float, default=2.0)
-    parser.add_argument('--profile', type=int, default=0, metavar='STEPS',
-                        help='Run torch profiler for STEPS steps, save Chrome trace to save dir')
+    parser.add_argument("--data", required=True, help="Path to WAV dataset directory")
+    parser.add_argument("--save", default="./checkpoints_clara")
+    parser.add_argument("--resume", default=None)
+    parser.add_argument("--steps", type=int, default=50_000)
+    parser.add_argument("--batch", type=int, default=2)
+    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--grad-accum", type=int, default=8)
+    parser.add_argument("--val-split", type=float, default=0.1)
+    parser.add_argument("--val-every", type=int, default=1000)
+    parser.add_argument("--ckpt-every", type=int, default=200)
+    parser.add_argument("--log-every", type=int, default=25)
+    parser.add_argument("--early-stop-patience", type=int, default=20)
+    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument(
+        "--amp", action="store_true", help="Enable bfloat16 AMP (may cause NaN on ROCm 860M)"
+    )
+    parser.add_argument("--compile", action="store_true")
+    parser.add_argument("--fresh-best-val", action="store_true")
+    parser.add_argument("--cache", action="store_true", help="Enable RAM pre-caching")
+    parser.add_argument("--clip-seconds", type=float, default=2.0)
+    parser.add_argument(
+        "--profile",
+        type=int,
+        default=0,
+        metavar="STEPS",
+        help="Run torch profiler for STEPS steps, save Chrome trace to save dir",
+    )
 
     args = parser.parse_args()
 
     train(
-        data_root=args.data, save_dir=args.save,
-        n_steps=args.steps, batch_size=args.batch, lr=args.lr,
-        device=args.device, resume_from=args.resume,
-        val_split=args.val_split, ckpt_every=args.ckpt_every,
-        log_every=args.log_every, val_every=args.val_every,
-        num_workers=args.num_workers, grad_accum=args.grad_accum,
+        data_root=args.data,
+        save_dir=args.save,
+        n_steps=args.steps,
+        batch_size=args.batch,
+        lr=args.lr,
+        device=args.device,
+        resume_from=args.resume,
+        val_split=args.val_split,
+        ckpt_every=args.ckpt_every,
+        log_every=args.log_every,
+        val_every=args.val_every,
+        num_workers=args.num_workers,
+        grad_accum=args.grad_accum,
         early_stop_patience=args.early_stop_patience,
-        amp=args.amp, compile_model=args.compile,
+        amp=args.amp,
+        compile_model=args.compile,
         profile_steps=args.profile,
-        fresh_best_val=args.fresh_best_val, cache_ram=args.cache,
+        fresh_best_val=args.fresh_best_val,
+        cache_ram=args.cache,
         clip_seconds=args.clip_seconds,
     )

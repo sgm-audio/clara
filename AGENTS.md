@@ -108,6 +108,19 @@ Conditioning vector `cond[COND_DIM]` (`COND_DIM=128`): slots 0-7 (DAW context fr
 - `init()` returns bool (never throws); callers use `if (!engine->init())` pattern
 - Release builds stripped via `LINK_FLAGS "-s"`
 
+## Code Quality
+
+Pre-commit hooks enforce consistent formatting and catch common issues:
+
+```bash
+pre-commit install              # one-time setup
+pre-commit run --all-files      # run on all tracked files
+```
+
+Hooks: `clang-format` (C++, `--style=file` via `.clang-format`), `black` (Python, 100-char), `ruff` (Python lint, auto-fix), `trailing-whitespace`, `end-of-file-fixer`, `mixed-line-ending`, `check-added-large-files`, `check-merge-conflict`, `check-case-conflict`.
+
+C++ formatting (`.clang-format`): LLVM style with 4-space indent, 120-column limit, right-aligned pointers/references, C++17.
+
 ## CI/CD
 
 GitHub Actions workflow at `.github/workflows/ci.yml`:
@@ -115,7 +128,7 @@ GitHub Actions workflow at `.github/workflows/ci.yml`:
 - Verifies symbol exports (`clap_entry`, `ARAGetFactory`), RPATH / install name / DLL search path, model deployment
 - Runs `clap-validator` against built `.clap` (continues on error — validator may fail without GUI)
 - Validates model round-trip via `python3 python/tools/validate_export.py`
-- Uploads plugin artifact (`.clap`, `.so`/`.dylib`/`.dll`, `libMamba3Core.*`, `models/`)
+- Uploads plugin artifacts (`.clap`, `.so`/`.dylib`/`.dll`, `models/`)
 - Test job builds Debug on all three platforms with `BUILD_TESTING=ON` and runs CTest
 
 ## Verification

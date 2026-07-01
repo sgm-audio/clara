@@ -9,6 +9,7 @@
 #pragma once
 
 #include "core/MambaConfig.h"
+
 #include <atomic>
 #include <cstring>
 
@@ -23,18 +24,16 @@ public:
     // Called from audio thread — returns pointer to current conditioning vector.
     // Pointer is valid until the next call to this method (or until the
     // ConditionProcessor is destroyed). Never blocks.
-    const float* get_conditioning() const {
+    const float *get_conditioning() const {
         return active_.load(std::memory_order_acquire);
     }
 
     // Called from any non-RT thread — writes a new conditioning vector.
     // The update becomes visible to the audio thread on the next call to
     // get_conditioning().
-    void set_conditioning(const float* cond) {
+    void set_conditioning(const float *cond) {
         // Write to the buffer NOT currently being read
-        float* target = (active_.load(std::memory_order_relaxed) == buffer_a_)
-                            ? buffer_b_
-                            : buffer_a_;
+        float *target = (active_.load(std::memory_order_relaxed) == buffer_a_) ? buffer_b_ : buffer_a_;
         std::memcpy(target, cond, COND_DIM * sizeof(float));
         // Atomic swap — makes the new buffer visible
         active_.store(target, std::memory_order_release);
@@ -49,7 +48,7 @@ public:
 private:
     float buffer_a_[COND_DIM] = {};
     float buffer_b_[COND_DIM] = {};
-    std::atomic<float*> active_{};
+    std::atomic<float *> active_{};
 };
 
-}  // namespace clara::mamba3
+} // namespace clara::mamba3

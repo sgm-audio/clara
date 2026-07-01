@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-CLARA Mamba-3 Training Pipeline — train_mamba3.py
+"""CLARA Mamba-3 Training Pipeline — train_mamba3.py
 =======================================================
 
 Mamba-3 MIMO R=8 architecture with complex poles, spectral domain processing,
@@ -31,15 +30,16 @@ from __future__ import annotations
 # ═══════════════════════════════════════════════════════════════════
 # ROCm Environment (must be set before any torch import)
 # ═══════════════════════════════════════════════════════════════════
-
 import os
+
 os.environ.setdefault("HSA_OVERRIDE_GFX_VERSION", "11.0.0")
 os.environ.setdefault("PYTORCH_ROCM_ARCH", "gfx1100")
 os.environ.setdefault("HIP_VISIBLE_DEVICES", "0")
 os.environ.setdefault("ROC_VISIBLE_DEVICES", "0")
 os.environ.setdefault("HSA_ENABLE_SDMA", "0")
-os.environ.setdefault("PYTORCH_ALLOC_CONF",
-                      "garbage_collection_threshold:0.8,max_split_size_mb=256")
+os.environ.setdefault(
+    "PYTORCH_ALLOC_CONF", "garbage_collection_threshold:0.8,max_split_size_mb=256"
+)
 os.environ.setdefault("MIOPEN_FIND_MODE", "5")
 
 import math
@@ -50,58 +50,60 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor
-from torch.utils.checkpoint import checkpoint
 import torchaudio
+from torch import Tensor, nn
+from torch.utils.checkpoint import checkpoint
 
 # ═══════════════════════════════════════════════════════════════════
 # Configuration
 # ═══════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class Mamba3Config:
     """Model dimensions — must match src/core/MambaConfig.h."""
+
     # Audio
     sample_rate: int = 44100
     n_fft: int = 2048
-    hop_length: int = 512          # ~11.6 ms @ 44.1 kHz
+    hop_length: int = 512  # ~11.6 ms @ 44.1 kHz
     n_mels: int = 128
 
     # MIMO spectral features
-    R: int = 8                      # [sub_bass, bass, low_mid, mid, high_mid, air, transient, centroid]
-    mimo_rank: int = 8              # same as R in this architecture
+    R: int = 8  # [sub_bass, bass, low_mid, mid, high_mid, air, transient, centroid]
+    mimo_rank: int = 8  # same as R in this architecture
 
     # Mamba-3 core
     d_model: int = 128
     d_inner: int = 256
     d_state: int = 32
     nheads: int = 4
-    headdim: int = 64               # = d_inner / nheads
+    headdim: int = 64  # = d_inner / nheads
     n_layers: int = 6
     dt_min: float = 0.001
     dt_max: float = 0.1
 
     # Conditioning
-    d_semantic: int = 128           # semantic encoder output
-    d_f0: int = 32                  # CREPE projection
-    d_cross: int = 64               # cross-track attention output
-    cond_dim: int = 128             # final FiLM conditioning dim
+    d_semantic: int = 128  # semantic encoder output
+    d_f0: int = 32  # CREPE projection
+    d_cross: int = 64  # cross-track attention output
+    cond_dim: int = 128  # final FiLM conditioning dim
 
     @property
     def in_proj_dim(self) -> int:
         """Fused in_proj output dimension (no RoPE angles)."""
-        return (self.d_inner                                    # z
-                + self.nheads * self.headdim                    # x per head
-                + self.nheads * self.mimo_rank * self.d_state   # B
-                + self.nheads * self.mimo_rank * self.d_state   # C
-                + self.nheads * 3                                # dd_dt + dd_A_real + dd_A_imag
-                + self.nheads)                                   # trap
+        return (
+            self.d_inner  # z
+            + self.nheads * self.headdim  # x per head
+            + self.nheads * self.mimo_rank * self.d_state  # B
+            + self.nheads * self.mimo_rank * self.d_state  # C
+            + self.nheads * 3  # dd_dt + dd_A_real + dd_A_imag
+            + self.nheads
+        )  # trap
 
     @property
     def F_bins(self) -> int:
@@ -112,9 +114,9 @@ class Mamba3Config:
 # R=8 Structured Spectral Feature Extractor
 # ═══════════════════════════════════════════════════════════════════
 
+
 class R8FeatureExtractor(nn.Module):
-    """
-    Extracts R=8 structured spectral features per frame:
+    """Extracts R=8 structured spectral features per frame:
       [0] sub_bass   20-80 Hz       — deep low end
       [1] bass       80-250 Hz      — bass fundamentals
       [2] low_mid    250-800 Hz     — low harmonics, body
@@ -129,7 +131,12 @@ class R8FeatureExtractor(nn.Module):
 
     # Six musical frequency band pairs
     BAND_PAIRS: list[tuple[float, float]] = [
-        (20, 80), (80, 250), (250, 800), (800, 2500), (2500, 8000), (8000, 20000),
+        (20, 80),
+        (80, 250),
+        (250, 800),
+        (800, 2500),
+        (2500, 8000),
+        (8000, 20000),
     ]
 
     def __init__(self, cfg: Mamba3Config):
@@ -139,24 +146,17 @@ class R8FeatureExtractor(nn.Module):
         n_fft = cfg.n_fft
 
         # Frequency axis (positive freqs only)
-        self.register_buffer(
-            "freqs", torch.linspace(0, sr / 2, n_fft // 2 + 1)
-        )
+        self.register_buffer("freqs", torch.linspace(0, sr / 2, n_fft // 2 + 1))
 
         # Learnable band centers (Hz), init at geometric mean of boundaries
         centers_hz = [math.sqrt(lo * hi) for (lo, hi) in self.BAND_PAIRS]
-        self.log_centers = nn.Parameter(
-            torch.log(torch.tensor(centers_hz, dtype=torch.float32))
-        )
+        self.log_centers = nn.Parameter(torch.log(torch.tensor(centers_hz, dtype=torch.float32)))
         # Learnable log-bandwidths (~1/3 octave init)
-        self.log_bandwidths = nn.Parameter(
-            torch.full((6,), math.log(0.5))
-        )
+        self.log_bandwidths = nn.Parameter(torch.full((6,), math.log(0.5)))
 
         # Transient detector: tiny 1-D conv on waveform envelope
         self.transient_conv = nn.Conv1d(
-            in_channels=1, out_channels=1,
-            kernel_size=5, padding=2, bias=False
+            in_channels=1, out_channels=1, kernel_size=5, padding=2, bias=False
         )
 
         # Centroid normalization
@@ -166,54 +166,50 @@ class R8FeatureExtractor(nn.Module):
         self.input_proj = nn.Linear(cfg.R, cfg.d_model)
 
     def _soft_band_energy(self, mag_sq: Tensor) -> Tensor:
-        """
-        mag_sq: (B, T, F) — squared magnitude spectrogram
+        """mag_sq: (B, T, F) — squared magnitude spectrogram
         returns: (B, T, 6) — log-compressed band energies
         """
-        freqs = self.freqs.view(1, 1, -1, 1)                        # (1, 1, F, 1)
-        centers = torch.exp(self.log_centers).view(1, 1, 1, -1)     # (1, 1, 1, 6)
-        bws = torch.exp(self.log_bandwidths).view(1, 1, 1, -1)      # (1, 1, 1, 6)
+        freqs = self.freqs.view(1, 1, -1, 1)  # (1, 1, F, 1)
+        centers = torch.exp(self.log_centers).view(1, 1, 1, -1)  # (1, 1, 1, 6)
+        bws = torch.exp(self.log_bandwidths).view(1, 1, 1, -1)  # (1, 1, 1, 6)
 
-        log_ratio = torch.log(freqs.clamp(min=1.0) / centers)       # (1, 1, F, 6)
-        weights = F.relu(1.0 - log_ratio.abs() / bws)               # (1, 1, F, 6)
+        log_ratio = torch.log(freqs.clamp(min=1.0) / centers)  # (1, 1, F, 6)
+        weights = F.relu(1.0 - log_ratio.abs() / bws)  # (1, 1, F, 6)
         weights = weights / (weights.sum(dim=2, keepdim=True).clamp(min=1e-8))
 
-        energies = (mag_sq.unsqueeze(-1) * weights).sum(dim=2)      # (B, T, 6)
-        return torch.log1p(energies)                                 # log-compress
+        energies = (mag_sq.unsqueeze(-1) * weights).sum(dim=2)  # (B, T, 6)
+        return torch.log1p(energies)  # log-compress
 
     def _transient_density(self, waveform: Tensor, T: int) -> Tensor:
-        """
-        waveform: (B, L)
+        """waveform: (B, L)
         T: target number of frames (must match STFT output T)
         returns: (B, T, 1) — per-frame transient density
         """
-        envelope = waveform.abs().unsqueeze(1)                       # (B, 1, L)
-        diff = F.relu(self.transient_conv(envelope))                 # (B, 1, L)
-        pooled = F.adaptive_avg_pool1d(diff, T)                      # (B, 1, T)
-        return pooled.transpose(1, 2)                                # (B, T, 1)
+        envelope = waveform.abs().unsqueeze(1)  # (B, 1, L)
+        diff = F.relu(self.transient_conv(envelope))  # (B, 1, L)
+        pooled = F.adaptive_avg_pool1d(diff, T)  # (B, 1, T)
+        return pooled.transpose(1, 2)  # (B, T, 1)
 
     def _spectral_centroid(self, mag_sq: Tensor) -> Tensor:
-        """
-        mag_sq: (B, T, F)
+        """mag_sq: (B, T, F)
         returns: (B, T, 1) — normalized log spectral centroid
         """
         freqs = self.freqs.clamp(min=1.0)
         weights = mag_sq / (mag_sq.sum(dim=-1, keepdim=True).clamp(min=1e-8))
-        centroid_hz = (weights * freqs).sum(dim=-1, keepdim=True)   # (B, T, 1)
+        centroid_hz = (weights * freqs).sum(dim=-1, keepdim=True)  # (B, T, 1)
         return torch.log(centroid_hz.clamp(min=1.0)) / self.log_max_freq
 
     def forward(self, waveform: Tensor, mag_sq: Tensor) -> Tensor:
-        """
-        waveform: (B, L)
+        """waveform: (B, L)
         mag_sq: (B, T, F) — |STFT|^2
         Returns: (B, T, d_model) — embedded features
         """
-        band_energy = self._soft_band_energy(mag_sq)                 # (B, T, 6)
+        band_energy = self._soft_band_energy(mag_sq)  # (B, T, 6)
         T = mag_sq.shape[1]
-        transient = self._transient_density(waveform, T)             # (B, T, 1)
-        centroid = self._spectral_centroid(mag_sq)                   # (B, T, 1)
-        r8 = torch.cat([band_energy, transient, centroid], dim=-1)   # (B, T, 8)
-        return self.input_proj(r8)                                   # (B, T, d_model)
+        transient = self._transient_density(waveform, T)  # (B, T, 1)
+        centroid = self._spectral_centroid(mag_sq)  # (B, T, 1)
+        r8 = torch.cat([band_energy, transient, centroid], dim=-1)  # (B, T, 8)
+        return self.input_proj(r8)  # (B, T, d_model)
 
     @torch.no_grad()
     def extract_r8_raw(self, waveform: Tensor, mag_sq: Tensor) -> Tensor:
@@ -229,9 +225,9 @@ class R8FeatureExtractor(nn.Module):
 # Mamba-3 Complex Pole MIMO Layer
 # ═══════════════════════════════════════════════════════════════════
 
+
 class Mamba3MIMOLayer(nn.Module):
-    """
-    Complex-pole Mamba-3 MIMO layer with trapezoidal discretization.
+    """Complex-pole Mamba-3 MIMO layer with trapezoidal discretization.
 
     Each of H heads acts as a resonant bandpass filter:
       - Real part controls decay (bandwidth)
@@ -246,7 +242,7 @@ class Mamba3MIMOLayer(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.H = cfg.nheads
-        self.N = cfg.d_state          # complex state dim per head
+        self.N = cfg.d_state  # complex state dim per head
         self.d = cfg.d_model
         self.R = cfg.mimo_rank
         self.head_dim = cfg.headdim
@@ -256,9 +252,7 @@ class Mamba3MIMOLayer(nn.Module):
 
         # Complex pole parameters (per head)
         self.log_a_real = nn.Parameter(torch.zeros(cfg.nheads))  # decay (exp → negative)
-        self.a_imag = nn.Parameter(                              # frequency spread 0..π
-            torch.linspace(0, math.pi, cfg.nheads)
-        )
+        self.a_imag = nn.Parameter(torch.linspace(0, math.pi, cfg.nheads))  # frequency spread 0..π
 
         # Δ parameters
         self.dt_bias = nn.Parameter(torch.full((cfg.nheads,), -4.0))  # softplus(-4)≈0.018
@@ -304,10 +298,10 @@ class Mamba3MIMOLayer(nn.Module):
 
     # ── Trapezoidal discretization (complex) ─────────────────────
 
-    def _discretize_trapezoidal(self, a_real: Tensor, a_imag: Tensor,
-                                dt: Tensor) -> tuple[Tensor, Tensor]:
-        """
-        Complex trapezoidal discretization (Mamba-3 innovation).
+    def _discretize_trapezoidal(
+        self, a_real: Tensor, a_imag: Tensor, dt: Tensor
+    ) -> tuple[Tensor, Tensor]:
+        """Complex trapezoidal discretization (Mamba-3 innovation).
 
         A_d = (1 + dt·(α+jω)/2) / (1 - dt·(α+jω)/2)  — |A_d| ≤ 1 for α < 0
         B_d = dt / (1 - dt·(α+jω)/2)
@@ -318,15 +312,14 @@ class Mamba3MIMOLayer(nn.Module):
         Returns: A_d (B, T, H), B_d_scale (B, T, H) both complex64
         """
         half_dt_a = torch.complex(
-            dt * (-torch.exp(a_real)) / 2,
-            dt * a_imag / 2
+            dt * (-torch.exp(a_real)) / 2, dt * a_imag / 2
         )  # (B, T, H) complex
 
         numerator = 1 + half_dt_a
         denominator = 1 - half_dt_a
 
-        A_d = numerator / denominator          # |A_d| ≤ 1
-        B_d_scale = dt / denominator            # complex
+        A_d = numerator / denominator  # |A_d| ≤ 1
+        B_d_scale = dt / denominator  # complex
 
         return A_d, B_d_scale
 
@@ -334,8 +327,7 @@ class Mamba3MIMOLayer(nn.Module):
 
     @staticmethod
     def _parallel_associative_scan(a: Tensor, u: Tensor) -> Tensor:
-        """
-        Blelloch parallel prefix scan: O(log T) steps.
+        """Blelloch parallel prefix scan: O(log T) steps.
         a: (B, T, H, N) complex
         u: (B, T, H, N) complex
         Returns: h (B, T, H, N) complex where h[t] = a[t]*h[t-1] + u[t]
@@ -343,10 +335,10 @@ class Mamba3MIMOLayer(nn.Module):
         B, T, H, N = u.shape
         step = 1
         while step < T:
-            a_slice = a[:, step:]            # (B, T-step, H, N)
+            a_slice = a[:, step:]  # (B, T-step, H, N)
             u_slice = u[:, step:]
-            a_prev = a[:, :T - step]
-            u_prev = u[:, :T - step]
+            a_prev = a[:, : T - step]
+            u_prev = u[:, : T - step]
 
             new_u = a_slice * u_prev + u_slice
             new_a = a_slice * a_prev
@@ -358,10 +350,8 @@ class Mamba3MIMOLayer(nn.Module):
 
     # ── SSM scans ────────────────────────────────────────────────
 
-    def _ssm_scan_parallel(self, x_r8: Tensor, A_d: Tensor,
-                           B_d: Tensor) -> Tensor:
-        """
-        x_r8: (B, T, R) — MIMO input
+    def _ssm_scan_parallel(self, x_r8: Tensor, A_d: Tensor, B_d: Tensor) -> Tensor:
+        """x_r8: (B, T, R) — MIMO input
         A_d: (B, T, H) complex
         B_d: (B, T, H) complex
         Returns: (B, T, H, head_dim)
@@ -370,26 +360,25 @@ class Mamba3MIMOLayer(nn.Module):
         H, N = self.H, self.N
 
         # MIMO B: R → N complex per head
-        bc = self.B_proj(x_r8)                     # (B, T, N*2)
+        bc = self.B_proj(x_r8)  # (B, T, N*2)
         B_real, B_imag = bc.chunk(2, dim=-1)
-        B_vec = torch.complex(B_real, B_imag)       # (B, T, N)
+        B_vec = torch.complex(B_real, B_imag)  # (B, T, N)
 
         # u_t = B_d_t * B_vec_t
-        a = A_d.unsqueeze(-1)                      # (B, T, H, 1)
-        b_d = B_d.unsqueeze(-1)                    # (B, T, H, 1)
-        b_vec = B_vec.unsqueeze(2)                 # (B, T, 1, N)
-        u = b_d * b_vec                            # (B, T, H, N)
+        a = A_d.unsqueeze(-1)  # (B, T, H, 1)
+        b_d = B_d.unsqueeze(-1)  # (B, T, H, 1)
+        b_vec = B_vec.unsqueeze(2)  # (B, T, 1, N)
+        u = b_d * b_vec  # (B, T, H, N)
 
         # Parallel associative scan
         h = self._parallel_associative_scan(a, u)  # (B, T, H, N) complex
 
         # Readout: cat real+imag → C projection
         h_cat = torch.cat([h.real, h.imag], dim=-1)  # (B, T, H, N*2)
-        out = self.C_proj(h_cat)                   # (B, T, H, head_dim)
+        out = self.C_proj(h_cat)  # (B, T, H, head_dim)
         return out
 
-    def _ssm_scan_sequential(self, x_r8: Tensor, A_d: Tensor,
-                             B_d: Tensor) -> Tensor:
+    def _ssm_scan_sequential(self, x_r8: Tensor, A_d: Tensor, B_d: Tensor) -> Tensor:
         """O(T) sequential scan — bit-exact with C++ engine."""
         B, T, R = x_r8.shape
         H, N = self.H, self.N
@@ -401,8 +390,8 @@ class Mamba3MIMOLayer(nn.Module):
         h = torch.zeros(B, H, N, dtype=torch.complex64, device=x_r8.device)
         outputs = []
         for t in range(T):
-            A_d_t = A_d[:, t, :]                     # (B, H)
-            B_d_t = B_d[:, t, :]                     # (B, H)
+            A_d_t = A_d[:, t, :]  # (B, H)
+            B_d_t = B_d[:, t, :]  # (B, H)
             B_input = B_d_t.unsqueeze(-1) * B_vec[:, t, :].unsqueeze(1)
             h = A_d_t.unsqueeze(-1) * h + B_input
             h_cat = torch.cat([h.real, h.imag], dim=-1)
@@ -412,10 +401,8 @@ class Mamba3MIMOLayer(nn.Module):
 
     # ── Forward ──────────────────────────────────────────────────
 
-    def _forward_impl(self, x: Tensor, x_r8: Tensor,
-                      cond: Optional[Tensor] = None) -> Tensor:
-        """
-        x: (B, T, d_model)
+    def _forward_impl(self, x: Tensor, x_r8: Tensor, cond: Tensor | None = None) -> Tensor:
+        """x: (B, T, d_model)
         x_r8: (B, T, R)
         cond: (B, T, cond_dim) or None
         Returns: (B, T, d_model)
@@ -430,16 +417,23 @@ class Mamba3MIMOLayer(nn.Module):
             x = x * (1 + gamma) + beta
 
         # 2. Fused in_proj
-        proj = self.in_proj(x)                           # (B, T, in_proj_dim)
+        proj = self.in_proj(x)  # (B, T, in_proj_dim)
         idx = 0
-        z     = proj[..., :idx + self.cfg.d_inner];             idx += self.cfg.d_inner
-        x_h   = proj[..., idx:idx + self.H * self.head_dim];    idx += self.H * self.head_dim
-        B_raw = proj[..., idx:idx + self.H * self.R * self.N];  idx += self.H * self.R * self.N
-        C_raw = proj[..., idx:idx + self.H * self.R * self.N];  idx += self.H * self.R * self.N
-        dd_dt = proj[..., idx:idx + self.H];                     idx += self.H
-        _dd_A_real = proj[..., idx:idx + self.H];                idx += self.H
-        _dd_A_imag = proj[..., idx:idx + self.H];                idx += self.H
-        trap_val = proj[..., idx:idx + self.H]                   # unused in complex mode
+        z = proj[..., : idx + self.cfg.d_inner]
+        idx += self.cfg.d_inner
+        x_h = proj[..., idx : idx + self.H * self.head_dim]
+        idx += self.H * self.head_dim
+        B_raw = proj[..., idx : idx + self.H * self.R * self.N]
+        idx += self.H * self.R * self.N
+        C_raw = proj[..., idx : idx + self.H * self.R * self.N]
+        idx += self.H * self.R * self.N
+        dd_dt = proj[..., idx : idx + self.H]
+        idx += self.H
+        _dd_A_real = proj[..., idx : idx + self.H]
+        idx += self.H
+        _dd_A_imag = proj[..., idx : idx + self.H]
+        idx += self.H
+        trap_val = proj[..., idx : idx + self.H]  # unused in complex mode
 
         # 3. Δ projection + clamping
         dt = F.softplus(dd_dt + self.dt_bias)
@@ -460,13 +454,13 @@ class Mamba3MIMOLayer(nn.Module):
             )
             out = self._ssm_scan_parallel(x_r8_fp32, A_d, B_d_scale)
 
-        out = out.to(x.dtype)                                  # (B, T, H, head_dim)
-        out = out.reshape(B, T, self.cfg.d_inner)               # (B, T, d_inner)
+        out = out.to(x.dtype)  # (B, T, H, head_dim)
+        out = out.reshape(B, T, self.cfg.d_inner)  # (B, T, d_inner)
 
         # 5. z-gating
         z_gated = z * torch.sigmoid(z)
         z_heads = z_gated.view(B, T, self.H, self.head_dim)
-        z_slots = torch.einsum('bthd,hrd->bthr', z_heads, self.mimo_z)
+        z_slots = torch.einsum("bthd,hrd->bthr", z_heads, self.mimo_z)
         z_gate_val = z_slots.sum(dim=-1, keepdim=True)
         y_gated = out.view(B, T, self.H, self.head_dim) * z_gate_val
         y_flat = y_gated.reshape(B, T, self.cfg.d_inner)
@@ -481,18 +475,20 @@ class Mamba3MIMOLayer(nn.Module):
 
         # MIMO o-coupling
         y_gated_h = y_gated.reshape(B, T, self.H, self.head_dim)
-        o_slots = torch.einsum('bthd,hrd->bthr', y_gated_h, self.mimo_o)
+        o_slots = torch.einsum("bthd,hrd->bthr", y_gated_h, self.mimo_o)
         o_contrib = o_slots.sum(dim=(-2, -1))
         out = out + o_contrib.unsqueeze(-1) * 0.01
 
         out = self.norm(out + residual)
         return out
 
-    def forward(self, x: Tensor, x_r8: Tensor,
-                cond: Optional[Tensor] = None) -> Tensor:
+    def forward(self, x: Tensor, x_r8: Tensor, cond: Tensor | None = None) -> Tensor:
         if self.gradient_checkpointing and self.training:
             return checkpoint(
-                self._forward_impl, x, x_r8, cond,
+                self._forward_impl,
+                x,
+                x_r8,
+                cond,
                 use_reentrant=False,
             )
         return self._forward_impl(x, x_r8, cond)
@@ -502,9 +498,9 @@ class Mamba3MIMOLayer(nn.Module):
 # Semantic Encoder (Phase 1 contrastive pretraining)
 # ═══════════════════════════════════════════════════════════════════
 
+
 class SemanticEncoder(nn.Module):
-    """
-    Lightweight contrastive semantic encoder.
+    """Lightweight contrastive semantic encoder.
     Conv stem → 2 Mamba layers → mean pool → projection head.
     Trained with NT-Xent in Phase 1.
     """
@@ -519,36 +515,37 @@ class SemanticEncoder(nn.Module):
         )
         # 2 Mamba layers with layer-local config override
         enc_cfg = Mamba3Config(
-            d_model=cfg.d_model, d_inner=cfg.d_inner, d_state=cfg.d_state,
-            nheads=cfg.nheads, headdim=cfg.headdim, n_layers=1,
-            R=cfg.R, mimo_rank=cfg.mimo_rank,
+            d_model=cfg.d_model,
+            d_inner=cfg.d_inner,
+            d_state=cfg.d_state,
+            nheads=cfg.nheads,
+            headdim=cfg.headdim,
+            n_layers=1,
+            R=cfg.R,
+            mimo_rank=cfg.mimo_rank,
             cond_dim=cfg.cond_dim,
         )
-        self.mamba_layers = nn.ModuleList([
-            Mamba3MIMOLayer(enc_cfg) for _ in range(2)
-        ])
+        self.mamba_layers = nn.ModuleList([Mamba3MIMOLayer(enc_cfg) for _ in range(2)])
         self.proj_head = nn.Sequential(
             nn.Linear(cfg.d_model, cfg.d_model),
             nn.GELU(),
             nn.Linear(cfg.d_model, cfg.d_model),
         )
 
-    def forward(self, mel: Tensor, r8: Tensor,
-                return_sequence: bool = False) -> Tensor:
-        """
-        mel: (B, T, n_mels) — log-mel spectrogram
+    def forward(self, mel: Tensor, r8: Tensor, return_sequence: bool = False) -> Tensor:
+        """mel: (B, T, n_mels) — log-mel spectrogram
         r8: (B, T, R) — raw MIMO features
         Returns: (B, d_model) if not return_sequence, else (B, T, d_model)
         """
-        x = mel.transpose(1, 2)          # (B, n_mels, T)
-        x = self.conv_stem[0](x)          # Conv1d
-        x = self.conv_stem[1](x)          # GELU
-        x = self.conv_stem[2](x)          # Conv1d
-        x = x.transpose(1, 2)             # (B, T, d_model)
-        x = self.conv_stem[3](x)          # LayerNorm
+        x = mel.transpose(1, 2)  # (B, n_mels, T)
+        x = self.conv_stem[0](x)  # Conv1d
+        x = self.conv_stem[1](x)  # GELU
+        x = self.conv_stem[2](x)  # Conv1d
+        x = x.transpose(1, 2)  # (B, T, d_model)
+        x = self.conv_stem[3](x)  # LayerNorm
 
         for layer in self.mamba_layers:
-            x = layer(x, r8)              # No conditioning in encoder
+            x = layer(x, r8)  # No conditioning in encoder
 
         if return_sequence:
             return x
@@ -560,6 +557,7 @@ class SemanticEncoder(nn.Module):
 # ═══════════════════════════════════════════════════════════════════
 # F0 Conditioner (CREPE projection)
 # ═══════════════════════════════════════════════════════════════════
+
 
 class F0Conditioner(nn.Module):
     """Projects CREPE 360-D f0 probability vector → d_f0."""
@@ -582,24 +580,25 @@ class F0Conditioner(nn.Module):
 # Cross-Track Aggregator
 # ═══════════════════════════════════════════════════════════════════
 
+
 class CrossTrackAggregator(nn.Module):
-    """
-    Causal multi-head attention over track dimension.
+    """Causal multi-head attention over track dimension.
     Each timestep independently attends over K other tracks.
     """
 
     def __init__(self, cfg: Mamba3Config):
         super().__init__()
         self.attn = nn.MultiheadAttention(
-            embed_dim=cfg.d_semantic, num_heads=4,
-            dropout=0.0, batch_first=True,
+            embed_dim=cfg.d_semantic,
+            num_heads=4,
+            dropout=0.0,
+            batch_first=True,
         )
         self.proj = nn.Linear(cfg.d_semantic, cfg.d_cross)
         self.norm = nn.LayerNorm(cfg.d_cross)
 
     def forward(self, target_emb: Tensor, other_embs: Tensor) -> Tensor:
-        """
-        target_emb: (B, T, d_semantic)
+        """target_emb: (B, T, d_semantic)
         other_embs: (B, K, T, d_semantic) — K other tracks
         Returns: (B, T, d_cross)
         """
@@ -618,9 +617,9 @@ class CrossTrackAggregator(nn.Module):
 # Full Per-Track Processor
 # ═══════════════════════════════════════════════════════════════════
 
+
 class PerTrackProcessor(nn.Module):
-    """
-    Complete per-track processor.
+    """Complete per-track processor.
 
     Pipeline: STFT → R=8 features → semantic enc → f0 cond →
               Mamba stack → decoder → ISTFT
@@ -648,9 +647,7 @@ class PerTrackProcessor(nn.Module):
         )
 
         # Mamba stack (n_layers)
-        self.mamba_layers = nn.ModuleList([
-            Mamba3MIMOLayer(cfg) for _ in range(cfg.n_layers)
-        ])
+        self.mamba_layers = nn.ModuleList([Mamba3MIMOLayer(cfg) for _ in range(cfg.n_layers)])
 
         # Decoder: d_model → 2 × F_bins (real + imag STFT coefficients)
         F_bins = cfg.F_bins
@@ -666,23 +663,28 @@ class PerTrackProcessor(nn.Module):
             self.mel_proj.weight.abs_()
 
         # Pre-register STFT window
-        self.register_buffer("stft_window", torch.hann_window(cfg.n_fft),
-                             persistent=False)
+        self.register_buffer("stft_window", torch.hann_window(cfg.n_fft), persistent=False)
 
     # ── STFT helpers ─────────────────────────────────────────────
 
     def _compute_stft(self, waveform: Tensor) -> tuple[Tensor, Tensor]:
-        """
-        waveform: (B, L)
+        """waveform: (B, L)
+
         Returns:
           mag_sq: (B, T, F) — squared magnitude
           stft:   (B, T, F) complex — for reconstruction
+
         """
         cfg = self.cfg
-        s = torch.stft(waveform, n_fft=cfg.n_fft, hop_length=cfg.hop_length,
-                       window=self.stft_window, return_complex=True,
-                       normalized=False)                           # (B, F, T) complex
-        s = s.transpose(1, 2)                                       # (B, T, F)
+        s = torch.stft(
+            waveform,
+            n_fft=cfg.n_fft,
+            hop_length=cfg.hop_length,
+            window=self.stft_window,
+            return_complex=True,
+            normalized=False,
+        )  # (B, F, T) complex
+        s = s.transpose(1, 2)  # (B, T, F)
         return s.abs().pow(2), s
 
     def _compute_mel(self, mag_sq: Tensor) -> Tensor:
@@ -691,8 +693,7 @@ class PerTrackProcessor(nn.Module):
         return torch.log1p(projected)
 
     def _loudness_features(self, waveform: Tensor, T: int) -> Tensor:
-        """
-        4-dim loudness per frame: [rms, peak, crest_factor, lufs_approx].
+        """4-dim loudness per frame: [rms, peak, crest_factor, lufs_approx].
         waveform: (B, L)
         T: target frames
         Returns: (B, T, 4)
@@ -715,23 +716,24 @@ class PerTrackProcessor(nn.Module):
         return torch.cat([rms, peak, crest, lufs], dim=-1)
 
     def waveform_from_stft(self, stft: Tensor) -> Tensor:
-        """
-        Reconstruct waveform from predicted complex STFT.
+        """Reconstruct waveform from predicted complex STFT.
         stft: (B, T, F) complex
         Returns: (B, L) waveform
         """
         cfg = self.cfg
-        return torch.istft(stft.transpose(1, 2),
-                          n_fft=cfg.n_fft,
-                          hop_length=cfg.hop_length,
-                          window=self.stft_window)
+        return torch.istft(
+            stft.transpose(1, 2),
+            n_fft=cfg.n_fft,
+            hop_length=cfg.hop_length,
+            window=self.stft_window,
+        )
 
     # ── Forward ──────────────────────────────────────────────────
 
-    def forward(self, waveform: Tensor, crepe_probs: Tensor,
-                other_embs: Optional[Tensor] = None) -> dict:
-        """
-        waveform: (B, L)
+    def forward(
+        self, waveform: Tensor, crepe_probs: Tensor, other_embs: Tensor | None = None
+    ) -> dict:
+        """waveform: (B, L)
         crepe_probs: (B, T, 360)
         other_embs: (B, K, T, d_semantic) or None for Phase 1/2
 
@@ -746,44 +748,42 @@ class PerTrackProcessor(nn.Module):
         mag_sq, _ = self._compute_stft(waveform)
         T = mag_sq.shape[1]
 
-        x = self.r8_extractor(waveform, mag_sq)                     # (B, T, d_model)
-        r8_raw = self.r8_extractor.extract_r8_raw(waveform, mag_sq) # (B, T, 8)
-        mel = self._compute_mel(mag_sq)                              # (B, T, n_mels)
+        x = self.r8_extractor(waveform, mag_sq)  # (B, T, d_model)
+        r8_raw = self.r8_extractor.extract_r8_raw(waveform, mag_sq)  # (B, T, 8)
+        mel = self._compute_mel(mag_sq)  # (B, T, n_mels)
 
         # ── Semantic encoding (per-frame) ──
         sem_emb = self.semantic_enc(mel, r8_raw, return_sequence=True)  # (B, T, d_semantic)
 
         # ── F0 conditioning ──
-        f0_emb = self.f0_cond(crepe_probs)                          # (B, T, d_f0)
+        f0_emb = self.f0_cond(crepe_probs)  # (B, T, d_f0)
 
         # ── Cross-track aggregation ──
         if other_embs is not None:
-            cross_ctx = self.cross_track(sem_emb, other_embs)       # (B, T, d_cross)
+            cross_ctx = self.cross_track(sem_emb, other_embs)  # (B, T, d_cross)
         else:
-            cross_ctx = torch.zeros(
-                waveform.shape[0], T, cfg.d_cross, device=waveform.device
-            )
+            cross_ctx = torch.zeros(waveform.shape[0], T, cfg.d_cross, device=waveform.device)
 
         # ── Build conditioning vector ──
-        loudness = self._loudness_features(waveform, T)             # (B, T, 4)
+        loudness = self._loudness_features(waveform, T)  # (B, T, 4)
         cond_in = torch.cat([sem_emb, f0_emb, cross_ctx, loudness], dim=-1)
-        cond = self.cond_mlp(cond_in)                               # (B, T, cond_dim)
+        cond = self.cond_mlp(cond_in)  # (B, T, cond_dim)
 
         # ── Mamba stack ──
         for layer in self.mamba_layers:
             x = layer(x, r8_raw, cond=cond)
 
         # ── Decode to STFT ──
-        stft_pred = self.decoder(x)                                 # (B, T, 2*F_bins)
+        stft_pred = self.decoder(x)  # (B, T, 2*F_bins)
         F_bins = cfg.F_bins
         stft_real = stft_pred[..., :F_bins].float()
         stft_imag = stft_pred[..., F_bins:].float()
-        stft_out = torch.complex(stft_real, stft_imag)              # (B, T, F)
+        stft_out = torch.complex(stft_real, stft_imag)  # (B, T, F)
 
         return {
-            'output_stft': stft_out,
-            'track_emb': sem_emb,
-            'r8_raw': r8_raw,
+            "output_stft": stft_out,
+            "track_emb": sem_emb,
+            "r8_raw": r8_raw,
         }
 
     def num_params(self) -> int:
@@ -791,26 +791,25 @@ class PerTrackProcessor(nn.Module):
 
     @property
     def mamba_params(self) -> int:
-        return sum(p.numel() for l in self.mamba_layers
-                   for p in l.parameters() if p.requires_grad)
+        return sum(p.numel() for l in self.mamba_layers for p in l.parameters() if p.requires_grad)
 
 
 # ═══════════════════════════════════════════════════════════════════
 # Contrastive Encoding Helpers
 # ═══════════════════════════════════════════════════════════════════
 
-def _encode_for_contrastive(model: PerTrackProcessor,
-                            wav: Tensor, crepe: Tensor) -> Tensor:
+
+def _encode_for_contrastive(model: PerTrackProcessor, wav: Tensor, crepe: Tensor) -> Tensor:
     """Run semantic encoder on waveform for contrastive embedding.
-    Returns: (B, d_model) L2-normalized"""
+    Returns: (B, d_model) L2-normalized
+    """
     mag_sq, _ = model._compute_stft(wav)
     mel = model._compute_mel(mag_sq)
     r8 = model.r8_extractor.extract_r8_raw(wav, mag_sq)
     return model.semantic_enc(mel, r8, return_sequence=False)
 
 
-def _augment_for_contrastive(wav: Tensor, crepe: Tensor,
-                             sr: int = 44100) -> tuple[Tensor, Tensor]:
+def _augment_for_contrastive(wav: Tensor, crepe: Tensor, sr: int = 44100) -> tuple[Tensor, Tensor]:
     """Augment waveform+CREPE for contrastive pair generation.
     ALWAYS runs pitch shift on CPU to avoid GPU OOM from sinc resample kernels.
     """
@@ -824,9 +823,7 @@ def _augment_for_contrastive(wav: Tensor, crepe: Tensor,
         new_freq = int(sr * factor)
         # Force CPU for resample
         wav_cpu = wav.cpu()
-        wav_cpu = torchaudio.functional.resample(
-            wav_cpu.unsqueeze(0), sr, new_freq
-        ).squeeze(0)
+        wav_cpu = torchaudio.functional.resample(wav_cpu.unsqueeze(0), sr, new_freq).squeeze(0)
         if wav_cpu.shape[-1] > orig_len:
             wav_cpu = wav_cpu[..., :orig_len]
         else:
@@ -872,25 +869,24 @@ def _augment_for_contrastive(wav: Tensor, crepe: Tensor,
 # ═══════════════════════════════════════════════════════════════════
 
 from loss import NTXentLoss, TrackProcessorLoss
-from dataset import StemDataset, collate_valid
-
 
 # ═══════════════════════════════════════════════════════════════════
 # Training
 # ═══════════════════════════════════════════════════════════════════
 
+
 def train(args):
     if not args.data:
         print("ERROR: --data is required for training")
         sys.exit(1)
-    device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
+    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
-    if device.type == 'cuda':
+    if device.type == "cuda":
         print(f"  GPU: {torch.cuda.get_device_name(0)}")
         if args.amp:
-            print(f"  AMP: bfloat16 (fp32 SSM core)")
+            print("  AMP: bfloat16 (fp32 SSM core)")
 
-    amp = args.amp and device.type == 'cuda'
+    amp = args.amp and device.type == "cuda"
     autocast_dtype = torch.bfloat16 if amp else torch.float32
 
     # ── Model ──
@@ -906,21 +902,30 @@ def train(args):
     # Gradient checkpointing on all Mamba layers
     for layer in model.mamba_layers:
         layer.gradient_checkpointing = True
-    print(f"  Gradient checkpointing: ON")
+    print("  Gradient checkpointing: ON")
 
     # ── Losses ──
     task_loss = TrackProcessorLoss(cfg.sample_rate).to(device)
     contrastive = NTXentLoss(temperature=0.1).to(device)
 
     # ── Optimizer + scheduler ──
-    decay_params = [p for n, p in model.named_parameters()
-                    if 'bias' not in n and 'norm' not in n and p.requires_grad]
-    nodecay_params = [p for n, p in model.named_parameters()
-                      if ('bias' in n or 'norm' in n) and p.requires_grad]
-    optimizer = torch.optim.AdamW([
-        {'params': decay_params,   'weight_decay': args.weight_decay},
-        {'params': nodecay_params, 'weight_decay': 0.0},
-    ], lr=args.lr, betas=(0.9, 0.999), eps=1e-8)
+    decay_params = [
+        p
+        for n, p in model.named_parameters()
+        if "bias" not in n and "norm" not in n and p.requires_grad
+    ]
+    nodecay_params = [
+        p for n, p in model.named_parameters() if ("bias" in n or "norm" in n) and p.requires_grad
+    ]
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": decay_params, "weight_decay": args.weight_decay},
+            {"params": nodecay_params, "weight_decay": 0.0},
+        ],
+        lr=args.lr,
+        betas=(0.9, 0.999),
+        eps=1e-8,
+    )
 
     def lr_lambda(step: int) -> float:
         warmup = args.warmup
@@ -933,25 +938,30 @@ def train(args):
 
     # ── Resume ──
     start_step = 0
-    best_val_loss = float('inf')
+    best_val_loss = float("inf")
     if args.resume:
         ckpt = torch.load(args.resume, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt['model'])
-        optimizer.load_state_dict(ckpt['optimizer'])
-        scheduler.load_state_dict(ckpt['scheduler'])
-        start_step = ckpt['step']
-        best_val_loss = ckpt.get('best_val_loss', float('inf'))
+        model.load_state_dict(ckpt["model"])
+        optimizer.load_state_dict(ckpt["optimizer"])
+        scheduler.load_state_dict(ckpt["scheduler"])
+        start_step = ckpt["step"]
+        best_val_loss = ckpt.get("best_val_loss", float("inf"))
         print(f"Resumed from step {start_step}, best_val_loss={best_val_loss:.4f}")
 
     # ── Dataset ──
     print(f"Data: {args.data}")
     from dataset import make_dataloaders
+
     train_loader, val_loader, n_train_tracks = make_dataloaders(
-        data_root=args.data, sample_rate=cfg.sample_rate,
-        n_fft=cfg.n_fft, hop_length=cfg.hop_length,
+        data_root=args.data,
+        sample_rate=cfg.sample_rate,
+        n_fft=cfg.n_fft,
+        hop_length=cfg.hop_length,
         clip_seconds=args.clip_seconds,
-        batch_size=args.batch, val_split=args.val_split,
-        num_workers=args.num_workers, cache_limit=args.cache_limit,
+        batch_size=args.batch,
+        val_split=args.val_split,
+        num_workers=args.num_workers,
+        cache_limit=args.cache_limit,
     )
 
     # Phase boundaries
@@ -963,14 +973,14 @@ def train(args):
         PHASE_2_END = int(args.steps * 0.50)
 
     # ── Signal handler ──
-    _state = {'step': start_step, 'interrupted': False}
+    _state = {"step": start_step, "interrupted": False}
 
     def _signal_handler(signum, frame):
-        if _state['interrupted']:
+        if _state["interrupted"]:
             print("\n! Second interrupt — exiting hard.", flush=True)
             sys.exit(130)
         print(f"\n! Caught signal {signum} — saving interrupt checkpoint...", flush=True)
-        _state['interrupted'] = True
+        _state["interrupted"] = True
 
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
@@ -981,11 +991,13 @@ def train(args):
 
     def _save_checkpoint(step, loss_val, is_best=False, name=None):
         ckpt = {
-            'step': step, 'model': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'scheduler': scheduler.state_dict(),
-            'cfg': cfg.__dict__, 'loss': loss_val,
-            'best_val_loss': best_val_loss,
+            "step": step,
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict(),
+            "cfg": cfg.__dict__,
+            "loss": loss_val,
+            "best_val_loss": best_val_loss,
         }
         fname = name if name else f"checkpoint_{step:06d}.pt"
         tmp = save_path / f".{fname}.tmp"
@@ -1006,33 +1018,37 @@ def train(args):
         for batch in val_loader:
             if batch is None:
                 continue
-            v_target = batch['target'].to(device)
-            v_crepe = batch['target_crepe'].to(device)[..., :1 + v_target.shape[-1] // cfg.hop_length, :]
+            v_target = batch["target"].to(device)
+            v_crepe = batch["target_crepe"].to(device)[
+                ..., : 1 + v_target.shape[-1] // cfg.hop_length, :
+            ]
 
             with torch.autocast(device_type=device.type, dtype=autocast_dtype, enabled=amp):
                 if current_phase == 1:
                     # Phase 1: contrastive validation
                     z1 = _encode_for_contrastive(model, v_target, v_crepe)
-                    aug_wav, aug_crepe = _augment_for_contrastive(v_target, v_crepe, cfg.sample_rate)
+                    aug_wav, aug_crepe = _augment_for_contrastive(
+                        v_target, v_crepe, cfg.sample_rate
+                    )
                     z2 = _encode_for_contrastive(model, aug_wav, aug_crepe)
                     vl = contrastive(z1, z2)
                 else:
                     # Phase 2/3: reconstruction validation
                     if current_phase == 3:
-                        v_other = batch['other_stems'].to(device)
-                        v_other_crepe = batch['other_crepe'].to(device)
+                        v_other = batch["other_stems"].to(device)
+                        v_other_crepe = batch["other_crepe"].to(device)
                         K = v_other.shape[1]
                         embs = []
                         for k in range(K):
                             ck = v_other_crepe[:, k, :, :]
                             out_k = model(v_other[:, k, :], ck, other_embs=None)
-                            embs.append(out_k['track_emb'])
+                            embs.append(out_k["track_emb"])
                         other_embs = torch.stack(embs, dim=1)
                         out = model(v_target, v_crepe, other_embs=other_embs)
                     else:
                         out = model(v_target, v_crepe, other_embs=None)
-                    vl_dict = task_loss(out['output_stft'], v_target, model)
-                    vl = vl_dict['total']
+                    vl_dict = task_loss(out["output_stft"], v_target, model)
+                    vl = vl_dict["total"]
 
             if not (torch.isnan(vl) or torch.isinf(vl)):
                 total_loss += vl.item()
@@ -1042,7 +1058,7 @@ def train(args):
         return total_loss / max(1, n_batches)
 
     # ── GPU flags ──
-    if device.type == 'cuda':
+    if device.type == "cuda":
         torch.backends.cuda.matmul.allow_tf32 = False
 
     # ── Training loop ──
@@ -1052,12 +1068,14 @@ def train(args):
     last_log_step = step
     last_phase = None
 
-    print(f"\nStarting training: {args.steps} steps, batch={args.batch}, accum={args.grad_accum}, device={device}")
+    print(
+        f"\nStarting training: {args.steps} steps, batch={args.batch}, accum={args.grad_accum}, device={device}"
+    )
     print(f"  Phase 1 (contrastive):  0 → {PHASE_1_END}")
     print(f"  Phase 2 (single-track): {PHASE_1_END} → {PHASE_2_END}")
     print(f"  Phase 3 (cross-track):  {PHASE_2_END} → {args.steps}")
     if args.precomputed:
-        print(f"  [Note] --precomputed is deprecated; StemDataset loads .crepe.npy automatically")
+        print("  [Note] --precomputed is deprecated; StemDataset loads .crepe.npy automatically")
     if start_step > 0:
         print(f"  Resuming at step {start_step}")
     print()
@@ -1069,17 +1087,15 @@ def train(args):
             if step >= args.steps:
                 break
 
-            target = batch['target'].to(device)
-            target_crepe = batch['target_crepe'].to(device)
+            target = batch["target"].to(device)
+            target_crepe = batch["target_crepe"].to(device)
             # Trim CREPE to match waveform length's frame count
             T_frames = 1 + target.shape[-1] // cfg.hop_length
             target_crepe = target_crepe[:, :T_frames, :]
-            other_stems = batch['other_stems'].to(device)
-            other_crepe = batch['other_crepe'].to(device)
+            other_stems = batch["other_stems"].to(device)
+            other_crepe = batch["other_crepe"].to(device)
 
-            current_phase = (1 if step < PHASE_1_END
-                             else 2 if step < PHASE_2_END
-                             else 3)
+            current_phase = 1 if step < PHASE_1_END else 2 if step < PHASE_2_END else 3
 
             if current_phase != last_phase:
                 print(f"\n{'─'*60}")
@@ -1098,19 +1114,21 @@ def train(args):
                 if current_phase == 1:
                     # Phase 1: Contrastive — only semantic encoder is trained
                     aug1_wav, aug1_crepe = _augment_for_contrastive(
-                        target, target_crepe, cfg.sample_rate)
+                        target, target_crepe, cfg.sample_rate
+                    )
                     aug2_wav, aug2_crepe = _augment_for_contrastive(
-                        target, target_crepe, cfg.sample_rate)
+                        target, target_crepe, cfg.sample_rate
+                    )
                     z1 = _encode_for_contrastive(model, aug1_wav, aug1_crepe)
                     z2 = _encode_for_contrastive(model, aug2_wav, aug2_crepe)
                     loss = contrastive(z1, z2)
-                    loss_dict = {'total': loss, 'contrastive': loss}
+                    loss_dict = {"total": loss, "contrastive": loss}
 
                 elif current_phase == 2:
                     # Phase 2: Single-track reconstruction
                     out = model(target, target_crepe, other_embs=None)
-                    loss_dict = task_loss(out['output_stft'], target, model)
-                    loss = loss_dict['total']
+                    loss_dict = task_loss(out["output_stft"], target, model)
+                    loss = loss_dict["total"]
 
                 else:
                     # Phase 3: Cross-track conditioned
@@ -1120,11 +1138,11 @@ def train(args):
                         stem_k = other_stems[:, k, :]
                         crepe_k = other_crepe[:, k, :T_frames, :]
                         out_k = model(stem_k, crepe_k, other_embs=None)
-                        other_embs_list.append(out_k['track_emb'])
+                        other_embs_list.append(out_k["track_emb"])
                     other_embs = torch.stack(other_embs_list, dim=1)
                     out = model(target, target_crepe, other_embs=other_embs)
-                    loss_dict = task_loss(out['output_stft'], target, model)
-                    loss = loss_dict['total']
+                    loss_dict = task_loss(out["output_stft"], target, model)
+                    loss = loss_dict["total"]
 
                 # Scale by 1/accum so backward() accumulates grads internally
                 loss_scaled = loss / accum
@@ -1146,7 +1164,7 @@ def train(args):
 
             # ── Logging ──
             if step % args.log_every == 0:
-                lr_now = optimizer.param_groups[0]['lr']
+                lr_now = optimizer.param_groups[0]["lr"]
                 now = time.time()
                 sps = (step - last_log_step) / max(1e-6, now - last_log_time)
                 last_log_time = now
@@ -1156,11 +1174,11 @@ def train(args):
                     f"[step {step:6d}] p{current_phase} loss={loss.item():.4f} "
                     f"lr={lr_now:.2e} {sps:.2f} step/s"
                 )
-                if 'mr_stft' in loss_dict:
+                if "mr_stft" in loss_dict:
                     log_str += f" stft={loss_dict['mr_stft'].item():.4f}"
-                if 'mel_l1' in loss_dict:
+                if "mel_l1" in loss_dict:
                     log_str += f" mel={loss_dict['mel_l1'].item():.4f}"
-                if 'si_sdr' in loss_dict and loss_dict['si_sdr'].item() != 0:
+                if "si_sdr" in loss_dict and loss_dict["si_sdr"].item() != 0:
                     log_str += f" si_sdr={loss_dict['si_sdr'].item():.4f}"
                 print(log_str, flush=True)
 
@@ -1173,13 +1191,16 @@ def train(args):
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     _save_checkpoint(step, loss.item(), is_best=True)
-                    print(f"  ✓ new best val loss — saved best.pt", flush=True)
+                    print("  ✓ new best val loss — saved best.pt", flush=True)
                     plateau_count = 0
                 else:
                     plateau_count += 1
                     if plateau_count >= args.early_stop_patience:
-                        print(f"  ! Early stopping — no improvement for "
-                              f"{args.early_stop_patience} val checks", flush=True)
+                        print(
+                            f"  ! Early stopping — no improvement for "
+                            f"{args.early_stop_patience} val checks",
+                            flush=True,
+                        )
                         _save_checkpoint(step, loss.item(), name="final_earlystop.pt")
                         print(f"\nTotal time: {(time.time() - last_log_time) / 60:.1f} min")
                         return model
@@ -1191,10 +1212,13 @@ def train(args):
                     print(f"  ✓ checkpoint at step {step}", flush=True)
 
             # ── Signal interrupt ──
-            if _state['interrupted']:
+            if _state["interrupted"]:
                 print(f"\n! Saving interrupt checkpoint at step {step}...", flush=True)
                 _save_checkpoint(step, loss.item(), name=f"interrupt_{step:06d}.pt")
-                print(f"  ✓ saved. Resume with: --resume {save_path}/interrupt_{step:06d}.pt", flush=True)
+                print(
+                    f"  ✓ saved. Resume with: --resume {save_path}/interrupt_{step:06d}.pt",
+                    flush=True,
+                )
                 return model
 
             step += 1
@@ -1210,6 +1234,7 @@ def train(args):
 # ═══════════════════════════════════════════════════════════════════
 # Export (Version 3 — complex pole weight format)
 # ═══════════════════════════════════════════════════════════════════
+
 
 def export_weights(checkpoint_path: str, output_path: str):
     """Export trained model to flat binary model.bin (Version 3).
@@ -1231,51 +1256,52 @@ def export_weights(checkpoint_path: str, output_path: str):
     [13] log_a_real       [nheads]          ← NEW in v3
     [14] a_imag           [nheads]          ← NEW in v3
     """
-    ckpt = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-    cfg_raw = ckpt.get('cfg', {})
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    cfg_raw = ckpt.get("cfg", {})
     if isinstance(cfg_raw, dict):
-        cfg = Mamba3Config(**{k: v for k, v in cfg_raw.items()
-                              if k in Mamba3Config.__dataclass_fields__})
+        cfg = Mamba3Config(
+            **{k: v for k, v in cfg_raw.items() if k in Mamba3Config.__dataclass_fields__}
+        )
     else:
         cfg = cfg_raw
-    state = ckpt['model']
+    state = ckpt["model"]
 
-    state_dict = ckpt['model']
+    state_dict = ckpt["model"]
 
     weight_data = bytearray()
 
     # Write R8 extractor weights (shared frontend)
-    r8_keys = [k for k in state_dict if k.startswith('r8_extractor.') and 'weight' in k]
+    r8_keys = [k for k in state_dict if k.startswith("r8_extractor.") and "weight" in k]
     for k in sorted(r8_keys):
         arr = state_dict[k].detach().cpu().numpy().astype(np.float32)
         weight_data.extend(arr.tobytes())
 
     # Per-layer Mamba weights (17 arrays per layer)
     mamba_keys = [
-        'in_proj.weight',           # [0]  [in_proj_dim, d_model]
-        'dt_bias',                  # [1]  [nheads]
-        'B_proj.weight',            # [2]  [N*2, R]
-        'B_proj.bias',              # [3]  [N*2]
-        'C_proj.weight',            # [4]  [head_dim, N*2]
-        'mimo_x',                   # [5]  [nheads, R, headdim]
-        'mimo_z',                   # [6]  [nheads, R, headdim]
-        'mimo_o',                   # [7]  [nheads, R, headdim]
-        'D_proj',                   # [8]  [nheads]
-        'out_proj.weight',          # [9]  [d_model, d_inner]
-        'film_proj.weight',         # [10] [2*d_model, cond_dim]
-        'film_proj.bias',           # [11] [2*d_model]
-        'dt_film_proj.weight',      # [12] [2*nheads, cond_dim]
-        'dt_film_proj.bias',        # [13] [2*nheads]
-        'log_a_real',               # [14] [nheads]
-        'a_imag',                   # [15] [nheads]
-        'norm.weight',              # [16] [d_model]
-        'norm.bias',                # [17] [d_model]
+        "in_proj.weight",  # [0]  [in_proj_dim, d_model]
+        "dt_bias",  # [1]  [nheads]
+        "B_proj.weight",  # [2]  [N*2, R]
+        "B_proj.bias",  # [3]  [N*2]
+        "C_proj.weight",  # [4]  [head_dim, N*2]
+        "mimo_x",  # [5]  [nheads, R, headdim]
+        "mimo_z",  # [6]  [nheads, R, headdim]
+        "mimo_o",  # [7]  [nheads, R, headdim]
+        "D_proj",  # [8]  [nheads]
+        "out_proj.weight",  # [9]  [d_model, d_inner]
+        "film_proj.weight",  # [10] [2*d_model, cond_dim]
+        "film_proj.bias",  # [11] [2*d_model]
+        "dt_film_proj.weight",  # [12] [2*nheads, cond_dim]
+        "dt_film_proj.bias",  # [13] [2*nheads]
+        "log_a_real",  # [14] [nheads]
+        "a_imag",  # [15] [nheads]
+        "norm.weight",  # [16] [d_model]
+        "norm.bias",  # [17] [d_model]
     ]
 
     for l in range(cfg.n_layers):
-        prefix = f'mamba_layers.{l}.'
+        prefix = f"mamba_layers.{l}."
         for key in mamba_keys:
-            full_key = f'{prefix}{key}'
+            full_key = f"{prefix}{key}"
             param = state_dict[full_key].detach().cpu().numpy().astype(np.float32)
             weight_data.extend(param.tobytes())
 
@@ -1283,24 +1309,25 @@ def export_weights(checkpoint_path: str, output_path: str):
     # Python-only for training. C++ engine uses frozen Mamba stack + R8.
 
     # Header (64 bytes)
-    from loss import TrackProcessorLoss  # noqa — ensures import but we use local cfg
-    header = struct.pack('<12I',
-        0x4D424D41,             # magic "MBMA"
-        3,                       # version (3 = complex pole format)
+
+    header = struct.pack(
+        "<12I",
+        0x4D424D41,  # magic "MBMA"
+        3,  # version (3 = complex pole format)
         cfg.d_state,
         cfg.d_model,
         cfg.d_inner,
         cfg.nheads,
         cfg.headdim,
-        cfg.mimo_rank,           # = R = 8
+        cfg.mimo_rank,  # = R = 8
         cfg.n_layers,
         cfg.cond_dim,
-        cfg.in_proj_dim,         # 1552
-        len(weight_data),        # weight_data_size (bytes)
+        cfg.in_proj_dim,  # 1552
+        len(weight_data),  # weight_data_size (bytes)
     )
-    header += b'\x00' * (64 - len(header))
+    header += b"\x00" * (64 - len(header))
 
-    with open(output_path, 'wb') as f:
+    with open(output_path, "wb") as f:
         f.write(header)
         f.write(weight_data)
 
@@ -1315,55 +1342,63 @@ def export_weights(checkpoint_path: str, output_path: str):
 # Main / CLI
 # ═══════════════════════════════════════════════════════════════════
 
+
 def main():
     import argparse
-    parser = argparse.ArgumentParser(
-        description="CLARA Mamba-3 Training Pipeline"
-    )
+
+    parser = argparse.ArgumentParser(description="CLARA Mamba-3 Training Pipeline")
 
     # Data + I/O
-    parser.add_argument('--data',
-                        help='Path to MUSDB18-HQ train/ root (not needed for --export)')
-    parser.add_argument('--save', default='./checkpoints',
-                        help='Checkpoint directory')
-    parser.add_argument('--resume',
-                        help='Resume from checkpoint path')
+    parser.add_argument("--data", help="Path to MUSDB18-HQ train/ root (not needed for --export)")
+    parser.add_argument("--save", default="./checkpoints", help="Checkpoint directory")
+    parser.add_argument("--resume", help="Resume from checkpoint path")
 
     # Training schedule
-    parser.add_argument('--steps', type=int, default=100000)
-    parser.add_argument('--batch', type=int, default=4)
-    parser.add_argument('--grad-accum', type=int, default=1,
-                        help='Gradient accumulation steps (effective_batch=batch*accum)')
-    parser.add_argument('--lr', type=float, default=3e-4)
-    parser.add_argument('--weight-decay', type=float, default=1e-4)
-    parser.add_argument('--clip-grad-norm', type=float, default=1.0)
-    parser.add_argument('--warmup', type=int, default=2000)
-    parser.add_argument('--clip-seconds', type=float, default=4.0,
-                        help='Audio clip duration in seconds')
-    parser.add_argument('--amp', action='store_true',
-                        help='Enable bf16 AMP (fp32 SSM core)')
-    parser.add_argument('--skip-contrastive', action='store_true', default=True,
-                        help='Skip Phase 1 contrastive pretraining (default: True)')
+    parser.add_argument("--steps", type=int, default=100000)
+    parser.add_argument("--batch", type=int, default=4)
+    parser.add_argument(
+        "--grad-accum",
+        type=int,
+        default=1,
+        help="Gradient accumulation steps (effective_batch=batch*accum)",
+    )
+    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--clip-grad-norm", type=float, default=1.0)
+    parser.add_argument("--warmup", type=int, default=2000)
+    parser.add_argument(
+        "--clip-seconds", type=float, default=4.0, help="Audio clip duration in seconds"
+    )
+    parser.add_argument("--amp", action="store_true", help="Enable bf16 AMP (fp32 SSM core)")
+    parser.add_argument(
+        "--skip-contrastive",
+        action="store_true",
+        default=True,
+        help="Skip Phase 1 contrastive pretraining (default: True)",
+    )
 
     # DataLoader
-    parser.add_argument('--num-workers', type=int, default=0)
-    parser.add_argument('--cache-limit', type=int, default=16)
-    parser.add_argument('--precomputed', type=str, default=None,
-                        help='[Deprecated] StemDataset loads .crepe.npy automatically; '
-                             'this flag is a passthrough for backward compat.')
+    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--cache-limit", type=int, default=16)
+    parser.add_argument(
+        "--precomputed",
+        type=str,
+        default=None,
+        help="[Deprecated] StemDataset loads .crepe.npy automatically; "
+        "this flag is a passthrough for backward compat.",
+    )
 
     # Validation + checkpointing
-    parser.add_argument('--val-split', type=float, default=0.1)
-    parser.add_argument('--val-every', type=int, default=2000)
-    parser.add_argument('--ckpt-every', type=int, default=1000)
-    parser.add_argument('--log-every', type=int, default=50)
-    parser.add_argument('--early-stop-patience', type=int, default=10)
-    parser.add_argument('--device', default='cuda')
+    parser.add_argument("--val-split", type=float, default=0.1)
+    parser.add_argument("--val-every", type=int, default=2000)
+    parser.add_argument("--ckpt-every", type=int, default=1000)
+    parser.add_argument("--log-every", type=int, default=50)
+    parser.add_argument("--early-stop-patience", type=int, default=10)
+    parser.add_argument("--device", default="cuda")
 
     # Export mode
-    parser.add_argument('--export',
-                        help='Export checkpoint to model.bin')
-    parser.add_argument('--output', default='models/model_trained.bin')
+    parser.add_argument("--export", help="Export checkpoint to model.bin")
+    parser.add_argument("--output", default="models/model_trained.bin")
 
     args = parser.parse_args()
 
@@ -1373,5 +1408,5 @@ def main():
         train(args)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

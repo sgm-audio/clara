@@ -7,6 +7,7 @@
 
 #include "core/MambaConfig.h"
 #include "core/SsmBlock.h"
+
 #include <cstddef>
 #include <cstdint>
 
@@ -34,21 +35,23 @@ public:
 
     // Load a .bin file and set up weight pointers.
     // Returns true on success, false on any error (bad magic, dim mismatch, etc.)
-    bool load(const char* filepath);
+    bool load(const char *filepath);
 
     // Get weights for a specific layer (0-indexed).
     // The returned pointer is valid until the WeightLoader is destroyed.
-    const SSMWeights* get_layer_weights(size_t layer) const;
+    const SSMWeights *get_layer_weights(size_t layer) const;
 
     // Number of layers loaded.
-    size_t num_layers() const { return header_.n_layers; }
+    size_t num_layers() const {
+        return header_.n_layers;
+    }
 
     // Release the loaded data (called automatically by destructor).
     void unload();
 
 private:
     WeightHeader header_ = {};
-    uint8_t* mapped_data_ = nullptr;
+    uint8_t *mapped_data_ = nullptr;
     size_t mapped_size_ = 0;
     bool loaded_ = false;
 
@@ -59,4 +62,4 @@ private:
     bool setup_layer_pointers();
 };
 
-}  // namespace clara::mamba3
+} // namespace clara::mamba3

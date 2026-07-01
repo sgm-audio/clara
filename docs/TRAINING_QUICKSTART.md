@@ -7,7 +7,7 @@ cd ~/Desktop/Dev/clara
 bash scripts/setup_cloud.sh all
 ```
 
-That's it. Downloads MUSDB18-HQ (21GB), extracts it, precomputes features, runs training. 
+That's it. Downloads MUSDB18-HQ (21GB), extracts it, precomputes features, runs training.
 
 ## What It Does
 

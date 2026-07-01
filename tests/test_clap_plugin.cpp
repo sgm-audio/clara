@@ -1,34 +1,35 @@
-#include <cstdio>
-#include <cstring>
-#include <cmath>
-#include <cstdint>
-#include <cstddef>
-#include <vector>
-#include <string>
-#include <algorithm>
-#include <thread>
-#include <atomic>
+#include "../core/SPSCQueue.hpp"
+#include "clap/MambaClapPlugin.hpp"
+
 #include <clap/clap.h>
+#include <clap/ext/audio-ports.h>
+#include <clap/ext/latency.h>
 #include <clap/ext/params.h>
 #include <clap/ext/state.h>
-#include <clap/ext/latency.h>
-#include <clap/ext/audio-ports.h>
-#include "clap/MambaClapPlugin.hpp"
-#include "../core/SPSCQueue.hpp"
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <thread>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // Test framework
 // ---------------------------------------------------------------------------
-#define TEST_ASSERT(cond, msg) \
-    do { \
-        if (!(cond)) { \
-            std::fprintf(stderr, "FAIL: %s (%s:%d)\n", msg, __FILE__, __LINE__); \
-            return 1; \
-        } \
-    } while(0)
+#define TEST_ASSERT(cond, msg)                                                                                         \
+    do {                                                                                                               \
+        if (!(cond)) {                                                                                                 \
+            std::fprintf(stderr, "FAIL: %s (%s:%d)\n", msg, __FILE__, __LINE__);                                       \
+            return 1;                                                                                                  \
+        }                                                                                                              \
+    } while (0)
 
-#define TEST_PASS(msg) \
-    std::printf("  PASS: %s\n", msg)
+#define TEST_PASS(msg) std::printf("  PASS: %s\n", msg)
 
 // ---------------------------------------------------------------------------
 // Mock CLAP streams for state save/load roundtrip
@@ -38,9 +39,9 @@ struct MockOStream : clap_ostream {
 
     MockOStream() {
         this->ctx = this;
-        this->write = [](const clap_ostream* s, const void* d, uint64_t sz) -> int64_t {
-            auto* self = static_cast<MockOStream*>(s->ctx);
-            const char* data = static_cast<const char*>(d);
+        this->write = [](const clap_ostream *s, const void *d, uint64_t sz) -> int64_t {
+            auto *self = static_cast<MockOStream *>(s->ctx);
+            const char *data = static_cast<const char *>(d);
             self->buf.insert(self->buf.end(), data, data + static_cast<size_t>(sz));
             return static_cast<int64_t>(sz);
         };
@@ -51,10 +52,10 @@ struct MockIStream : clap_istream {
     std::vector<char> buf;
     size_t pos;
 
-    explicit MockIStream(const std::vector<char>& data) : buf(data), pos(0) {
+    explicit MockIStream(const std::vector<char> &data) : buf(data), pos(0) {
         this->ctx = this;
-        this->read = [](const clap_istream* s, void* buffer, uint64_t size) -> int64_t {
-            auto* self = static_cast<MockIStream*>(s->ctx);
+        this->read = [](const clap_istream *s, void *buffer, uint64_t size) -> int64_t {
+            auto *self = static_cast<MockIStream *>(s->ctx);
             uint64_t avail = self->buf.size() - self->pos;
             uint64_t toRead = std::min(size, avail);
             if (toRead == 0) return 0;
@@ -69,7 +70,7 @@ struct MockIStream : clap_istream {
 // Test helpers
 // ---------------------------------------------------------------------------
 
-static clap_plugin_t makeMockPlugin(MambaPluginState* state) {
+static clap_plugin_t makeMockPlugin(MambaPluginState *state) {
     clap_plugin_t plugin = mamba_plugin;
     plugin.plugin_data = state;
     return plugin;
@@ -79,8 +80,7 @@ static clap_plugin_t makeMockPlugin(MambaPluginState* state) {
 // 1. test_plugin_descriptor
 //    Verify MambaPluginState default values
 // ---------------------------------------------------------------------------
-static int test_plugin_descriptor()
-{
+static int test_plugin_descriptor() {
     MambaPluginState s;
 
     TEST_ASSERT(s.bypass.load() == 0.0f, "default bypass is 0.0");
@@ -97,8 +97,7 @@ static int test_plugin_descriptor()
 // 2. test_plugin_info_descriptor
 //    Verify the global plugin descriptor
 // ---------------------------------------------------------------------------
-static int test_plugin_info_descriptor()
-{
+static int test_plugin_info_descriptor() {
     TEST_ASSERT(mamba_plugin_info.clap_version.major == 1, "CLAP version major is 1");
     TEST_ASSERT(mamba_plugin_info.clap_version.minor == 2, "CLAP version minor is 2");
 
@@ -107,7 +106,7 @@ static int test_plugin_info_descriptor()
 
     bool hasAudioEffect = false;
     bool hasUtility = false;
-    for (const char* const* f = mamba_plugin_info.features; *f != nullptr; ++f) {
+    for (const char *const *f = mamba_plugin_info.features; *f != nullptr; ++f) {
         if (std::strcmp(*f, CLAP_PLUGIN_FEATURE_AUDIO_EFFECT) == 0) hasAudioEffect = true;
         if (std::strcmp(*f, CLAP_PLUGIN_FEATURE_UTILITY) == 0) hasUtility = true;
     }
@@ -134,14 +133,13 @@ static_assert(offsetof(TestPresetData, bypass) == 0, "bypass offset 0");
 static_assert(offsetof(TestPresetData, wetDry) == 4, "wetDry offset 4");
 static_assert(offsetof(TestPresetData, intensity) == 8, "intensity offset 8");
 
-static int test_preset_data_packing()
-{
+static int test_preset_data_packing() {
     TestPresetData data;
     data.bypass = 1.0f;
     data.wetDry = 0.5f;
     data.intensity = 0.75f;
 
-    const unsigned char* bytes = reinterpret_cast<const unsigned char*>(&data);
+    const unsigned char *bytes = reinterpret_cast<const unsigned char *>(&data);
     float readBypass, readWetDry, readIntensity;
     std::memcpy(&readBypass, bytes + 0, 4);
     std::memcpy(&readWetDry, bytes + 4, 4);
@@ -158,13 +156,11 @@ static int test_preset_data_packing()
 // ---------------------------------------------------------------------------
 // 4. test_param_ranges
 //    ---------------------------------------------------------------------------
-static int test_param_ranges()
-{
+static int test_param_ranges() {
     MambaPluginState state;
     clap_plugin_t plugin = makeMockPlugin(&state);
 
-    const auto* params = static_cast<const clap_plugin_params_t*>(
-        mamba_get_extension(&plugin, CLAP_EXT_PARAMS));
+    const auto *params = static_cast<const clap_plugin_params_t *>(mamba_get_extension(&plugin, CLAP_EXT_PARAMS));
     TEST_ASSERT(params != nullptr, "params extension available");
 
     clap_param_info_t info;
@@ -197,13 +193,11 @@ static int test_param_ranges()
 // ---------------------------------------------------------------------------
 // 5. test_param_value_to_text
 //    ---------------------------------------------------------------------------
-static int test_param_value_to_text()
-{
+static int test_param_value_to_text() {
     MambaPluginState state;
     clap_plugin_t plugin = makeMockPlugin(&state);
 
-    const auto* params = static_cast<const clap_plugin_params_t*>(
-        mamba_get_extension(&plugin, CLAP_EXT_PARAMS));
+    const auto *params = static_cast<const clap_plugin_params_t *>(mamba_get_extension(&plugin, CLAP_EXT_PARAMS));
 
     char buf[256];
 
@@ -236,13 +230,11 @@ static int test_param_value_to_text()
 // ---------------------------------------------------------------------------
 // 6. test_param_text_to_value
 //    ---------------------------------------------------------------------------
-static int test_param_text_to_value()
-{
+static int test_param_text_to_value() {
     MambaPluginState state;
     clap_plugin_t plugin = makeMockPlugin(&state);
 
-    const auto* params = static_cast<const clap_plugin_params_t*>(
-        mamba_get_extension(&plugin, CLAP_EXT_PARAMS));
+    const auto *params = static_cast<const clap_plugin_params_t *>(mamba_get_extension(&plugin, CLAP_EXT_PARAMS));
 
     double val = -1.0;
 
@@ -275,8 +267,7 @@ static int test_param_text_to_value()
 // ---------------------------------------------------------------------------
 // 7. test_state_save_load_roundtrip
 //    ---------------------------------------------------------------------------
-static int test_state_save_load_roundtrip()
-{
+static int test_state_save_load_roundtrip() {
     MambaPluginState saveState;
     clap_plugin_t savePlugin = makeMockPlugin(&saveState);
 
@@ -313,8 +304,7 @@ static int test_state_save_load_roundtrip()
 // ---------------------------------------------------------------------------
 // 8. test_crossfade_step_calculation
 //    ---------------------------------------------------------------------------
-static int test_crossfade_step_calculation()
-{
+static int test_crossfade_step_calculation() {
     // The formula in mamba_activate: crossfadeStep = 1.0f / (0.05f * sampleRate)
     // 50ms crossfade at 44100 Hz
     const float sampleRate = 44100.0f;
@@ -322,14 +312,12 @@ static int test_crossfade_step_calculation()
 
     TEST_ASSERT(crossfadeStep > 0.0f, "crossfadeStep is positive");
     TEST_ASSERT(crossfadeStep < 0.001f, "crossfadeStep < 1 ms worth of samples");
-    TEST_ASSERT(std::fabs(crossfadeStep - 0.0004535147f) < 1e-7f,
-                "crossfadeStep at 44.1 kHz is ~0.0004535");
+    TEST_ASSERT(std::fabs(crossfadeStep - 0.0004535147f) < 1e-7f, "crossfadeStep at 44.1 kHz is ~0.0004535");
 
     // At 48000 Hz
     const float step48k = 1.0f / (0.05f * 48000.0f);
     const float expectedStep48k = 1.0f / 2400.0f;
-    TEST_ASSERT(std::fabs(step48k - expectedStep48k) < 1e-9f,
-                "crossfadeStep at 48 kHz is correct");
+    TEST_ASSERT(std::fabs(step48k - expectedStep48k) < 1e-9f, "crossfadeStep at 48 kHz is correct");
 
     TEST_PASS("crossfade step calculation");
     return 0;
@@ -338,13 +326,11 @@ static int test_crossfade_step_calculation()
 // ---------------------------------------------------------------------------
 // 9. test_latency_reporting
 //    ---------------------------------------------------------------------------
-static int test_latency_reporting()
-{
+static int test_latency_reporting() {
     MambaPluginState state;
     clap_plugin_t plugin = makeMockPlugin(&state);
 
-    const auto* latency = static_cast<const clap_plugin_latency_t*>(
-        mamba_get_extension(&plugin, CLAP_EXT_LATENCY));
+    const auto *latency = static_cast<const clap_plugin_latency_t *>(mamba_get_extension(&plugin, CLAP_EXT_LATENCY));
     TEST_ASSERT(latency != nullptr, "latency extension available");
 
     uint32_t samples = latency->get(&plugin);
@@ -357,13 +343,12 @@ static int test_latency_reporting()
 // ---------------------------------------------------------------------------
 // 10. test_audio_ports
 //    ---------------------------------------------------------------------------
-static int test_audio_ports()
-{
+static int test_audio_ports() {
     MambaPluginState state;
     clap_plugin_t plugin = makeMockPlugin(&state);
 
-    const auto* ports = static_cast<const clap_plugin_audio_ports_t*>(
-        mamba_get_extension(&plugin, CLAP_EXT_AUDIO_PORTS));
+    const auto *ports =
+        static_cast<const clap_plugin_audio_ports_t *>(mamba_get_extension(&plugin, CLAP_EXT_AUDIO_PORTS));
     TEST_ASSERT(ports != nullptr, "audio ports extension available");
 
     // Input ports
@@ -396,31 +381,30 @@ static int test_audio_ports()
 // ---------------------------------------------------------------------------
 // 11. test_deferred_task_queue
 //    ---------------------------------------------------------------------------
-static int test_deferred_task_queue()
-{
+static int test_deferred_task_queue() {
     SPSCQueue<int, 64> queue;
-    
+
     TEST_ASSERT(queue.empty(), "queue initially empty");
-    
+
     queue.push(42);
     TEST_ASSERT(!queue.empty(), "queue non-empty after push");
-    
+
     int val = 0;
     TEST_ASSERT(queue.pop(val), "pop succeeds");
     TEST_ASSERT(val == 42, "popped value matches");
     TEST_ASSERT(queue.empty(), "queue empty after pop");
-    
+
     for (int i = 0; i < 63; ++i) {
         TEST_ASSERT(queue.push(i), "push succeeds up to capacity");
     }
     TEST_ASSERT(!queue.push(64), "push fails at capacity");
-    
+
     for (int i = 0; i < 63; ++i) {
         TEST_ASSERT(queue.pop(val), "pop all items");
         TEST_ASSERT(val == i, "items in order");
     }
     TEST_ASSERT(queue.empty(), "queue empty after draining");
-    
+
     TEST_PASS("deferred task queue");
     return 0;
 }
@@ -431,8 +415,7 @@ static int test_deferred_task_queue()
 //     pops them. Verifies FIFO order under real concurrent contention and
 //     exercises the alignas(64) cache-line layout.
 // ---------------------------------------------------------------------------
-static int test_spsc_two_thread()
-{
+static int test_spsc_two_thread() {
     SPSCQueue<int, 64> queue;
     constexpr int N = 1000;
     std::atomic<bool> producerDone{false};
@@ -441,7 +424,8 @@ static int test_spsc_two_thread()
 
     std::thread producer([&]() {
         for (int i = 0; i < N; ++i) {
-            while (!queue.push(i)) { /* spin until space */ }
+            while (!queue.push(i)) { /* spin until space */
+            }
         }
         producerDone.store(true, std::memory_order_release);
     });
@@ -456,7 +440,7 @@ static int test_spsc_two_thread()
     producer.join();
     consumer.join();
 
-    TEST_ASSERT((int)consumed.size() == N, "all items consumed");
+    TEST_ASSERT((int) consumed.size() == N, "all items consumed");
     for (int i = 0; i < N; ++i) {
         if (consumed[i] != i) {
             TEST_ASSERT(false, "order violated");
@@ -472,8 +456,7 @@ static int test_spsc_two_thread()
 //     Push/pop more items than capacity to exercise the ring buffer's
 //     head/tail wrap-around. Capacity 64, push+pop 200 in 4 batches of 50.
 // ---------------------------------------------------------------------------
-static int test_spsc_wrap_around()
-{
+static int test_spsc_wrap_around() {
     SPSCQueue<int, 64> queue;
     constexpr int N = 200;
 
@@ -501,8 +484,7 @@ static int test_spsc_wrap_around()
 // ---------------------------------------------------------------------------
 // 14. test_plugin_descriptor_urls
 //    ---------------------------------------------------------------------------
-static int test_plugin_descriptor_urls()
-{
+static int test_plugin_descriptor_urls() {
     TEST_ASSERT(mamba_plugin_info.url != nullptr, "url not null");
     TEST_ASSERT(std::strlen(mamba_plugin_info.url) > 0, "url not empty");
 
@@ -520,32 +502,31 @@ static int test_plugin_descriptor_urls()
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
-int main()
-{
+int main() {
     std::printf("=== Mamba CLAP Plugin Tests ===\n\n");
 
     struct TestCase {
-        const char* name;
+        const char *name;
         int (*func)();
     } tests[] = {
-        { "plugin descriptor",          test_plugin_descriptor },
-        { "plugin info descriptor",     test_plugin_info_descriptor },
-        { "preset data packing",        test_preset_data_packing },
-        { "param ranges",               test_param_ranges },
-        { "param value to text",        test_param_value_to_text },
-        { "param text to value",        test_param_text_to_value },
-        { "state save/load roundtrip",  test_state_save_load_roundtrip },
-        { "crossfade step calculation", test_crossfade_step_calculation },
-        { "latency reporting",          test_latency_reporting },
-        { "audio ports",                test_audio_ports },
-        { "deferred task queue",        test_deferred_task_queue },
-        { "SPSC two-thread FIFO",       test_spsc_two_thread },
-        { "SPSC wrap-around",           test_spsc_wrap_around },
-        { "plugin descriptor URLs",     test_plugin_descriptor_urls },
+        {"plugin descriptor", test_plugin_descriptor},
+        {"plugin info descriptor", test_plugin_info_descriptor},
+        {"preset data packing", test_preset_data_packing},
+        {"param ranges", test_param_ranges},
+        {"param value to text", test_param_value_to_text},
+        {"param text to value", test_param_text_to_value},
+        {"state save/load roundtrip", test_state_save_load_roundtrip},
+        {"crossfade step calculation", test_crossfade_step_calculation},
+        {"latency reporting", test_latency_reporting},
+        {"audio ports", test_audio_ports},
+        {"deferred task queue", test_deferred_task_queue},
+        {"SPSC two-thread FIFO", test_spsc_two_thread},
+        {"SPSC wrap-around", test_spsc_wrap_around},
+        {"plugin descriptor URLs", test_plugin_descriptor_urls},
     };
 
     int failures = 0;
-    for (const auto& t : tests) {
+    for (const auto &t : tests) {
         std::printf("Test: %s\n", t.name);
         failures += t.func();
     }

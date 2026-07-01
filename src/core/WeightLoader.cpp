@@ -1,13 +1,15 @@
 // CLARA Mamba-3 Weight Loader — Flat binary version 2 implementation
 
 #include "core/WeightLoader.h"
+
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
 
 namespace clara::mamba3 {
 
@@ -15,8 +17,8 @@ WeightLoader::~WeightLoader() {
     unload();
 }
 
-bool WeightLoader::load(const char* filepath) {
-    unload();  // Release any previous data
+bool WeightLoader::load(const char *filepath) {
+    unload(); // Release any previous data
 
     // Open file
     int fd = ::open(filepath, O_RDONLY);
@@ -31,11 +33,11 @@ bool WeightLoader::load(const char* filepath) {
     mapped_size_ = static_cast<size_t>(st.st_size);
 
     // mmap the entire file
-    void* data = ::mmap(nullptr, mapped_size_, PROT_READ, MAP_PRIVATE, fd, 0);
+    void *data = ::mmap(nullptr, mapped_size_, PROT_READ, MAP_PRIVATE, fd, 0);
     ::close(fd);
     if (data == MAP_FAILED) return false;
 
-    mapped_data_ = static_cast<uint8_t*>(data);
+    mapped_data_ = static_cast<uint8_t *>(data);
 
     // Read header (first 64 bytes)
     static_assert(sizeof(WeightHeader) <= 64, "Header must fit in 64 bytes");
@@ -68,7 +70,7 @@ void WeightLoader::unload() {
     loaded_ = false;
 }
 
-const SSMWeights* WeightLoader::get_layer_weights(size_t layer) const {
+const SSMWeights *WeightLoader::get_layer_weights(size_t layer) const {
     if (!loaded_ || layer >= header_.n_layers) return nullptr;
     return &layer_weights_[layer];
 }
@@ -97,11 +99,11 @@ bool WeightLoader::validate_header() const {
 
 bool WeightLoader::setup_layer_pointers() {
     // Weight data starts after 64-byte header
-    const float* data = reinterpret_cast<const float*>(mapped_data_ + 64);
+    const float *data = reinterpret_cast<const float *>(mapped_data_ + 64);
     size_t offset = 0;
 
     for (size_t l = 0; l < header_.n_layers; ++l) {
-        SSMWeights& w = layer_weights_[l];
+        SSMWeights &w = layer_weights_[l];
 
         // Array 0: in_proj_w [IN_PROJ_DIM * D_MODEL]
         w.in_proj_w = data + offset;
@@ -164,4 +166,4 @@ bool WeightLoader::setup_layer_pointers() {
     return true;
 }
 
-}  // namespace clara::mamba3
+} // namespace clara::mamba3

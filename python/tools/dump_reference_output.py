@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Dump PerTrackProcessor forward pass outputs for validation.
+"""Dump PerTrackProcessor forward pass outputs for validation.
 
 Generates three files:
   - model_ref.bin:    Mamba-3 v3 flat binary weights
@@ -28,15 +27,14 @@ from pathlib import Path
 import numpy as np
 import torch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'training'))
-from train_mamba3 import PerTrackProcessor, Mamba3Config, export_weights
-
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "training"))
+from train_mamba3 import Mamba3Config, PerTrackProcessor, export_weights
 
 # ── Constants ───────────────────────────────────────────────────────────
 
 SAMPLE_RATE = 44100
-NUM_SAMPLES = 2048      # ~46ms at 44.1kHz
-COND_DIM    = 128
+NUM_SAMPLES = 2048  # ~46ms at 44.1kHz
+COND_DIM = 128
 
 
 def generate_sine(n_samples: int, freq: float = 440.0) -> torch.Tensor:
@@ -48,18 +46,20 @@ def generate_sine(n_samples: int, freq: float = 440.0) -> torch.Tensor:
 def write_bin(filepath: str, data: np.ndarray):
     """Write array as binary: uint32 N followed by N float32 samples."""
     flat = data.reshape(-1).astype(np.float32)
-    with open(filepath, 'wb') as f:
-        f.write(struct.pack('<I', len(flat)))
+    with open(filepath, "wb") as f:
+        f.write(struct.pack("<I", len(flat)))
         f.write(flat.tobytes())
     print(f"  Wrote {filepath} ({len(flat)} floats, {len(flat)*4:,} bytes)")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Dump PerTrackProcessor reference outputs for v3 export")
-    parser.add_argument('--output-dir', default='models',
-                        help='Output directory for reference files')
-    parser.add_argument('--seed', type=int, default=42)
+        description="Dump PerTrackProcessor reference outputs for v3 export"
+    )
+    parser.add_argument(
+        "--output-dir", default="models", help="Output directory for reference files"
+    )
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -75,14 +75,17 @@ def main():
     print(f"  R={cfg.R}, d_model={cfg.d_model}, n_layers={cfg.n_layers}")
 
     # ── Export weights ──
-    ckpt_path = output_dir / '_reference_checkpoint.pt'
-    torch.save({
-        'step': 0,
-        'model': model.state_dict(),
-        'cfg': cfg.__dict__,
-    }, ckpt_path)
+    ckpt_path = output_dir / "_reference_checkpoint.pt"
+    torch.save(
+        {
+            "step": 0,
+            "model": model.state_dict(),
+            "cfg": cfg.__dict__,
+        },
+        ckpt_path,
+    )
 
-    bin_path = output_dir / 'model_ref.bin'
+    bin_path = output_dir / "model_ref.bin"
     export_weights(str(ckpt_path), str(bin_path))
     os.remove(ckpt_path)
 
@@ -106,33 +109,33 @@ def main():
     model.eval()
     with torch.no_grad():
         # Add batch dim
-        audio_b = audio.unsqueeze(0)           # [1, NUM_SAMPLES]
-        crepe_b = crepe_probs                  # [1, T, 360]
+        audio_b = audio.unsqueeze(0)  # [1, NUM_SAMPLES]
+        crepe_b = crepe_probs  # [1, T, 360]
 
         out = model(audio_b, crepe_b, other_embs=None)
-        stft_out = out['output_stft']         # [1, T, F] complex
+        stft_out = out["output_stft"]  # [1, T, F] complex
 
     print(f"  Output STFT: {stft_out.shape}, finite={torch.isfinite(stft_out).all().item()}")
 
     # ── Write reference files ──
-    write_bin(str(output_dir / 'input_ref.bin'), audio.numpy())
-    write_bin(str(output_dir / 'output_ref.bin'), stft_out[0].numpy())
+    write_bin(str(output_dir / "input_ref.bin"), audio.numpy())
+    write_bin(str(output_dir / "output_ref.bin"), stft_out[0].numpy())
 
     # Write metadata
-    meta = output_dir / 'ref_metadata.txt'
-    with open(meta, 'w') as f:
+    meta = output_dir / "ref_metadata.txt"
+    with open(meta, "w") as f:
         f.write(f"sample_rate={SAMPLE_RATE}\n")
         f.write(f"num_samples={NUM_SAMPLES}\n")
         f.write(f"T_frames={T_frames}\n")
         f.write(f"n_fft={cfg.n_fft}\n")
         f.write(f"hop_length={cfg.hop_length}\n")
-        f.write(f"version=3 (PerTrackProcessor R=8)\n")
+        f.write("version=3 (PerTrackProcessor R=8)\n")
     print(f"  Wrote {meta}")
 
     print(f"\nDone. Reference files in {output_dir}/")
-    print(f"\nNOTE: C++ engine (R=4, time-domain) cannot bit-compare with this.")
-    print(f"      H3 (bit-exact Python↔C++) requires C++ engine R=8 update first.")
+    print("\nNOTE: C++ engine (R=4, time-domain) cannot bit-compare with this.")
+    print("      H3 (bit-exact Python↔C++) requires C++ engine R=8 update first.")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

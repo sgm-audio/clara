@@ -1,0 +1,51 @@
+# CLARA — Mamba Audio Suite C++ Formatting
+# Based on LLVM style with project-specific overrides
+BasedOnStyle: LLVM
+IndentWidth: 4
+UseTab: Never
+ColumnLimit: 120
+AccessModifierOffset: -4
+ConstructorInitializerIndentWidth: 4
+ContinuationIndentWidth: 4
+BreakBeforeBraces: Attach
+AllowShortIfStatementsOnASingleLine: Always
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortCaseLabelsOnASingleLine: false
+AlwaysBreakTemplateDeclarations: Yes
+BreakConstructorInitializers: BeforeColon
+ConstructorInitializerAllOnOneLineOrOnePerLine: false
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignTrailingComments: true
+AlignOperands: Align
+DerivePointerAlignment: false
+PointerAlignment: Right
+ReferenceAlignment: Right
+SpaceAfterCStyleCast: true
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+SpacesInAngles: false
+SpacesInContainerLiterals: true
+SpacesInParentheses: false
+SpacesBeforeTrailingComments: 1
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex:           '^<.*\.h(pp)?>'
+    Priority:        2
+  - Regex:           '^<.*>'
+    Priority:        3
+  - Regex:           '.*'
+    Priority:        1
+IndentCaseLabels: true
+IndentPPDirectives: AfterHash
+SortIncludes: CaseInsensitive
+SortUsingDeclarations: true
+# Namespace indentation: project uses none (comment markers used instead)
+NamespaceIndentation: None
+# Fix missing newline at EOF
+InsertNewlineAtEOF: true
+# Standard
+Standard: c++17
+StatementMacros:
+  - Q_UNUSED

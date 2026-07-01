@@ -153,7 +153,7 @@ python train_clara_export.py --checkpoint checkpoints_clara/phase1_identity_best
 ## TO-DO BEFORE LAUNCH
 
 - [ ] #1: Train complete run (e.g. python train_clara_launcher.py --phase identity)
-- [ ] #2: Or consider: temp fix for stft hipFFT? 
+- [ ] #2: Or consider: temp fix for stft hipFFT?
 - [ ] #3: Do not proceed to training yet. Save all steps to a file for next session.
 
 **Session was closed with training pipeline ready to launch but not yet started on 860M iGPU.**

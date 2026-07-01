@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-prep_dataset.py — Build unified training dataset via symlink farm.
+"""prep_dataset.py — Build unified training dataset via symlink farm.
 
 Accepts multiple sources (directories or pass-list .txt files), creates
 a flat directory of uniquely-named symlinks for training consumption.
@@ -23,8 +22,7 @@ import os
 import sys
 from pathlib import Path
 
-
-AUDIO_EXTS = {'.wav', '.flac', '.WAV', '.FLAC'}
+AUDIO_EXTS = {".wav", ".flac", ".WAV", ".FLAC"}
 
 
 def collect_files(source_label: str, source_path: str) -> list[tuple[str, Path]]:
@@ -37,13 +35,13 @@ def collect_files(source_label: str, source_path: str) -> list[tuple[str, Path]]
     src = Path(source_path).expanduser().resolve()
     files: list[tuple[str, Path]] = []
 
-    if src.is_file() and src.suffix == '.txt':
+    if src.is_file() and src.suffix == ".txt":
         # Pass list — one absolute path per line
         print(f"  [{source_label}] Reading pass list: {src}")
         with open(src) as f:
             for line in f:
                 line = line.strip()
-                if not line or line.startswith('#'):
+                if not line or line.startswith("#"):
                     continue
                 p = Path(line).expanduser().resolve()
                 if p.is_file() and p.suffix in AUDIO_EXTS:
@@ -64,23 +62,30 @@ def collect_files(source_label: str, source_path: str) -> list[tuple[str, Path]]
         print(f"  [{source_label}] {len(files)} files found")
 
     else:
-        print(f"  [{source_label}] WARNING: {src} is not a directory or .txt file — skipping",
-              file=sys.stderr)
+        print(
+            f"  [{source_label}] WARNING: {src} is not a directory or .txt file — skipping",
+            file=sys.stderr,
+        )
 
     return files
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description='Build unified training dataset via symlink farm')
-    parser.add_argument('--source', nargs=2, action='append', metavar=('LABEL', 'PATH'),
-                        dest='sources', required=True,
-                        help='Add a source: LABEL (short name) and PATH (dir or pass-list.txt). '
-                             'Repeat for multiple sources.')
-    parser.add_argument('--output', required=True,
-                        help='Output directory for symlink farm')
-    parser.add_argument('--dry-run', action='store_true',
-                        help='Collect files but do not create symlinks')
+    parser = argparse.ArgumentParser(description="Build unified training dataset via symlink farm")
+    parser.add_argument(
+        "--source",
+        nargs=2,
+        action="append",
+        metavar=("LABEL", "PATH"),
+        dest="sources",
+        required=True,
+        help="Add a source: LABEL (short name) and PATH (dir or pass-list.txt). "
+        "Repeat for multiple sources.",
+    )
+    parser.add_argument("--output", required=True, help="Output directory for symlink farm")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Collect files but do not create symlinks"
+    )
     args = parser.parse_args()
 
     # Collect all files from all sources
@@ -98,6 +103,7 @@ def main() -> None:
 
     # Count per source
     from collections import Counter
+
     source_counts: Counter = Counter()
     for label, _ in all_files:
         source_counts[label] += 1
@@ -115,7 +121,7 @@ def main() -> None:
             size_errors += 1
     if size_errors:
         print(f"  ({size_errors} files could not be stat'd for size)")
-    total_gb = total_size_bytes / (1024 ** 3)
+    total_gb = total_size_bytes / (1024**3)
     print(f"  Estimated source size: {total_gb:.1f} GB")
 
     if args.dry_run:
@@ -156,9 +162,9 @@ def main() -> None:
     if errors:
         print(f"Errors: {errors}")
     print(f"Output directory: {out}")
-    print(f"\nTrain command:")
+    print("\nTrain command:")
     print(f"  python train_mamba3.py --data {out} --device cuda")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

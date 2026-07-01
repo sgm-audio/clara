@@ -1330,3 +1330,85 @@ cd /var/home/sgm/Desktop/Dev/clara
 
 bash scripts/bootstrap_local.sh --train
 ```
+
+---
+
+## Session 2026-06-30
+
+**Duration:** ~2 hours
+**Objective:** Reorganize repo structure following industry best practices — consolidate docs, organize Python code, rename training scripts, clean stale CI.
+
+### ✅ Accomplished
+
+#### Phase 1: Documentation consolidation
+- Created `docs/adr/` — moved all 11 ADR files + ADR-WORKFLOW.md
+- Moved migration plans, roadmaps, audits to `docs/` (8 files)
+- Moved CHANGELOG.md, TODO.md, SESSION_SUMMARY to `docs/`
+- Moved personal files (resumes/cover letters) to `personal/`
+
+#### Phase 2: Python code organization
+- Created `python/training/` — moved training scripts from root: `train_clara_mamba3.py`, `train_clara_dataset.py`, `train_clara_loss.py`, `train_local_radeon.py`
+- Created `python/tools/` — moved all Python utilities from `scripts/` (11 files)
+- Moved `reference_forward.py` to `python/`, `clara_kaggle.ipynb` to `python/`
+- Scripts (`scripts/`) now bash-only (6 files)
+
+#### Phase 3: Training script renaming
+- `train_clara_mamba3.py` → `train_mamba3.py`
+- `train_clara_dataset.py` → `dataset.py`
+- `train_clara_loss.py` → `loss.py`
+- `train_clara_mamba3_kaggle.py` → `train_mamba3_kaggle.py`
+- Updated all Python imports (`from loss import ...`, `from dataset import ...`)
+- Fixed `sys.path.insert` paths in `python/tools/` scripts pointing to `../training/`
+
+#### Phase 4: Cross-reference updates
+- Updated 25+ files: AGENTS.md, README.md, docs/TRAINING.md, docs/TRAINING_QUICKSTART.md, docs/TRAINING_SETUP_CONTEXT.md, docs/TODO.md, shell scripts, Python docstrings/usage strings
+- Updated CMakeLists.txt test paths (`scripts/` → `python/tools/`)
+
+#### Phase 5: CI cleanup
+- Removed all ONNX Runtime references from `.github/workflows/ci.yml`
+- Removed model quality/shape/conditioning verification steps (Mamba-1 era)
+- Added Mamba-3 flat binary verification (`model.bin`)
+- Cleaned pip installs (removed `onnx onnxruntime`)
+
+#### Phase 6: Code review + fixes
+- Found and fixed 12 stale `scripts/` path references in docs, Python tools, bootstrap script, and shell scripts
+- Added `checkpoints/` to `.gitignore` to prevent training log commits
+- Removed accidentally committed checkpoint log files
+
+### 📁 Files Changed (56 files, 3 commits)
+
+| Commit | Description |
+|--------|-------------|
+| `890eca8` | refactor: reorganize repo structure, rename training scripts (main commit) |
+| `c429894` | fix: update stale scripts/ paths in docs, tools, bootstrap |
+| `ebae480` | Same (amended: removed checkpoint logs, added .gitignore rule) |
+
+### 🔨 Build Verification
+```
+cmake -B build -DBUILD_TESTING=ON  ✓
+cmake --build build --parallel      ✓  (6 targets)
+ctest --test-dir build              ✓  (3/3 passed)
+```
+
+### 📂 Final Structure
+```
+clara/
+├── AGENTS.md, README.md, SESSION_LOG.md, LICENSE
+├── .github/workflows/ci.yml         (cleaned)
+├── docs/                             (all documentation)
+│   ├── adr/                          (11 ADR files)
+│   ├── TRAINING.md, MAMBA3_MIGRATION_PLAN.md, ...
+├── python/
+│   ├── reference_forward.py
+│   ├── training/
+│   │   ├── train_mamba3.py
+│   │   ├── dataset.py
+│   │   ├── loss.py
+│   │   └── train_local_radeon.py
+│   └── tools/                        (11 utility scripts)
+├── scripts/                          (bash-only: run_train.sh, run_test.sh, ...)
+├── personal/                         (resumes, cover letters)
+├── src/                              (C++: core/, clap/, ara/)
+├── tests/                            (CTest suite)
+└── models/                           (flat binary weights)
+```
