@@ -23,7 +23,13 @@ static int test_model_dir_resolution_real() {
     // GetModuleHandleExA needs a real address to resolve the module path;
     // passing nullptr skips the platform path resolution and returns the
     // default "./models/" stub.
-    std::string dir = mambaResolveModelDir((void *) &ARAGetFactory);
+    // ponytail: use mambaResolveModulePath (mambaResolveModelDir was removed for
+    // being a near-duplicate). Pass a dummy model name and strip it from the result.
+    std::string dir = mambaResolveModulePath((void *) &ARAGetFactory, "model.bin");
+    // Strip the filename back to just the directory path
+    auto sep = dir.rfind('/');
+    if (sep == std::string::npos) sep = dir.rfind('\\');
+    if (sep != std::string::npos) dir.resize(sep + 1);
     TEST_ASSERT(!dir.empty(), "model dir is not empty");
 
     TEST_ASSERT(dir.find("models") != std::string::npos, "model dir contains 'models'");

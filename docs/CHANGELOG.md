@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.2.1 — 2026-07-01
+
+Pre-commit hooks, C++ formatting config, and GCC 16 compatibility fix.
+3/3 CTest pass, clang-tidy: 0 CRITICAL/HIGH issues.
+
+### Infrastructure
+- New: `.pre-commit-config.yaml` — hooks for clang-format, black, ruff (Python),
+  trailing-whitespace, end-of-file-fixer, mixed-line-ending, check-added-large-files,
+  check-merge-conflict, check-case-conflict
+- New: `.clang-format` — LLVM style, 4-space indent, 120-column limit,
+  right-aligned pointers/references, C++17 standard
+- New: `ruff.toml` — practical lint config (pycodestyle + pyflakes + pyupgrade),
+  excludes `archive/` directory
+- Updated: `README.md` + `AGENTS.md` — added Code Quality section with
+  pre-commit install/run instructions; fixed stale CI artifact references
+- Applied auto-formatting across 60 source, test, and archive files
+
+### Fixes
+- `src/core/SPSCQueue.hpp`: added missing `#include <cstddef>` for `size_t`
+  (GCC 16 removed transitive include from `<atomic>`; template failed to compile)
+
 ## In Progress — 2026-06-02
 
 ### CLARA-06: Latency Reporting Verification

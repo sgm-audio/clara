@@ -8,19 +8,17 @@
 #include <memory>
 #include <vector>
 
-using namespace clara::mamba3;
-
 class MambaPlaybackRenderer : public ARA::PlugIn::PlaybackRenderer {
 public:
     explicit MambaPlaybackRenderer(ARA::PlugIn::DocumentController *documentController);
     ~MambaPlaybackRenderer() noexcept override;
 
-    SsmInferenceCore *getEngine() noexcept {
+    clara::mamba3::SsmInferenceCore *getEngine() noexcept {
         return rtEngine_.get();
     }
 
 private:
-    std::unique_ptr<SsmInferenceCore> rtEngine_;
+    std::unique_ptr<clara::mamba3::SsmInferenceCore> rtEngine_;
 };
 
 class MambaDocumentController : public ARA::PlugIn::DocumentController {
@@ -33,14 +31,14 @@ public:
     std::atomic<float> intensity{0.5f};
 
     // Conditioning buffer (128-dim, shared across ARA engine + CLAP bridge)
-    float condBuffer[COND_DIM] = {};
+    float condBuffer[clara::mamba3::COND_DIM] = {};
 
     // Set by MambaPlaybackRenderer at construction time.
-    void setAraEngine(SsmInferenceCore *engine) noexcept {
+    void setAraEngine(clara::mamba3::SsmInferenceCore *engine) noexcept {
         araEngine_ = engine;
     }
 
-    SsmInferenceCore *getAraEngine() const noexcept {
+    clara::mamba3::SsmInferenceCore *getAraEngine() const noexcept {
         return araEngine_;
     }
 
@@ -92,7 +90,7 @@ protected:
 
 private:
     std::atomic<bool> contentDirty_{false};
-    SsmInferenceCore *araEngine_{nullptr};
+    clara::mamba3::SsmInferenceCore *araEngine_{nullptr};
 };
 
 class MambaEditorRenderer : public ARA::PlugIn::EditorRenderer {

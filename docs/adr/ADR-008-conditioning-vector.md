@@ -1,7 +1,7 @@
 # ADR-008: Conditioning Vector for Context-Aware Mamba SSM
 
-**Status:** Accepted
-**Date:** 2026-06-02
+**Status:** HISTORICAL — Superseded by ADR-013 (ConditionVector v2). Describes Mamba-1 era with `COND_DIM=8` and ONNX-integrated conditioning. Current architecture uses `COND_DIM=128` with CREPE f0, SemanticEncoder, CrossTrackAggregator, and CondMLP.
+**Date:** 2026-06-02 | **Superseded:** 2026-07-02
 
 ## Context
 

@@ -1,7 +1,6 @@
-// CLARA Mamba-3 CLAP Plugin — Phase 5 migration
+// CLARA CLAP Plugin — MambaSuiteClap.clap audio effect
 //
-// Replaces ONNX Runtime MambaInferenceEngine with SsmInferenceCore.
-// Per-channel engine instances, 128-dim conditioning, zero-latency.
+// Per-channel engine instances, 128-dim conditioning.
 
 #include "MambaClapPlugin.hpp"
 
@@ -19,6 +18,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <new>
+
+using namespace clara::mamba3;
 #include <cstdio>
 #include <cstring>
 #include <string>

@@ -16,12 +16,10 @@
 
 enum ParamId { PARAM_BYPASS = 0, PARAM_WET_DRY = 1, PARAM_INTENSITY = 2, PARAM_COUNT };
 
-using namespace clara::mamba3;
-
 struct MambaPluginState {
     // One engine per channel (stereo). SsmInferenceCore holds SSM state internally.
-    std::unique_ptr<SsmInferenceCore> engineL;
-    std::unique_ptr<SsmInferenceCore> engineR;
+    std::unique_ptr<clara::mamba3::SsmInferenceCore> engineL;
+    std::unique_ptr<clara::mamba3::SsmInferenceCore> engineR;
     const clap_host_t *host{nullptr};
     std::string modelPath;
 
@@ -48,11 +46,11 @@ struct MambaPluginState {
 
     // Atomic engine pointers for RT-safe access from audio thread.
     // The unique_ptrs own the engines; the atomics provide lock-free access.
-    std::atomic<SsmInferenceCore *> enginePtrL{nullptr};
-    std::atomic<SsmInferenceCore *> enginePtrR{nullptr};
+    std::atomic<clara::mamba3::SsmInferenceCore *> enginePtrL{nullptr};
+    std::atomic<clara::mamba3::SsmInferenceCore *> enginePtrR{nullptr};
 
     // Conditioning (shared across both channels)
-    float condBuffer[COND_DIM] = {};
+    float condBuffer[clara::mamba3::COND_DIM] = {};
 
     // Preset system: precomputed CLAP embeddings for instant recall.
     // Key = preset name hash, Value = 32-float embedding in cond slots 8-39.

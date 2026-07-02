@@ -1,4 +1,4 @@
-// CLARA Mamba-3 Inference Core — Multi-layer engine wrapper
+// CLARA PerTrackProcessor Inference Core — Multi-layer engine wrapper
 //
 // Phase 4 of the Mamba-1 → Mamba-3 migration.
 // Replaces MambaInferenceEngine (ONNX Runtime wrapper).

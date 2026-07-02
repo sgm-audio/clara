@@ -1,12 +1,13 @@
-// CLARA Mamba-3 ARA Controller — Phase 6 migration
+// CLARA ARA2 Controller — MambaSuiteARA companion library
 //
-// Replaces ONNX Runtime MambaInferenceEngine with SsmInferenceCore.
 // 128-dim conditioning, model.bin loading, musical context extraction.
 
 #include "MambaAraController.hpp"
 
 #include "core/ConditioningGenerator.hpp"
 #include "core/Platform.hpp"
+
+using namespace clara::mamba3;
 
 // -----------------------------------------------------------------------------
 // PlaybackRenderer

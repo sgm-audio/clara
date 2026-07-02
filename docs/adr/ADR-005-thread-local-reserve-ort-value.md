@@ -1,7 +1,7 @@
 # ADR-005: `thread_local` + `reserve()` for `Ort::Value` Vectors
 
-**Status:** Accepted (implemented)
-**Date:** 2026-05-30
+**Status:** HISTORICAL — ONNX Runtime removed in Phase 6 (2026-06). Superseded by custom C++ `SsmInferenceCore` which uses stack-allocated `alignas(64)` arrays.
+**Date:** 2026-05-30 | **Superseded:** 2026-06-16
 
 ## Context
 

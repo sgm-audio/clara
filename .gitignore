@@ -47,3 +47,6 @@ token-optimizer/
 # Personal docs — not project source
 SGM_*.md
 ScottMills_*.md
+.env*
+.env.*
+.agent_context/
