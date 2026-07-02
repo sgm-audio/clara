@@ -1,7 +1,7 @@
 # Mamba3 Drive Audit — Findings from `/run/media/sgm/01DCA22D5C1C2A50/mamba3/`
 
-**Date:** 2026-06-20
-**Status:** Complete — all transferable improvements identified and integrated into Clara where applicable.
+**Date:** 2026-06-20 | **Updated:** 2026-07-02
+**Status:** Complete. PerTrackProcessor adopted as canonical CLARA architecture (July 2026).
 
 ---
 
@@ -20,7 +20,7 @@ Two directories were audited on the external drive:
 
 ## 2. Six Improvements Identified
 
-### ✅ Already Present in Clara's `train_mamba3.py`
+### ✅ Already Present in Clara's `train_clara.py`
 
 | # | Improvement | Clara Status | Notes |
 |---|-------------|-------------|-------|
@@ -31,7 +31,7 @@ Two directories were audited on the external drive:
 | 5 | **Signal handler** (Ctrl+C) | ✅ Present | SIGINT handler saves `final.pt` before exit |
 | 6 | **Atomic checkpoint writes** | ✅ Present | Write to `.tmp` then `os.rename()` |
 
-**Conclusion:** All 6 training-loop improvements from the mamba3 drive are already present in Clara's `train_mamba3.py`. No porting needed.
+**Conclusion:** All 6 training-loop improvements from the mamba3 drive are already present in Clara's `train_clara.py`. No porting needed.
 
 ### 🟡 Adoptable Improvements (Not Yet in Clara)
 
@@ -95,7 +95,7 @@ The C++ engine processes audio in sub-blocks of ≤64 samples. Python training m
 
 **Resume from checkpoint:**
 ```python
-# Clara's train_mamba3.py already has:
+# Clara's train_clara.py already has:
 if args.resume:
     ckpt = torch.load(args.resume, map_location='cpu')
     model.load_state_dict(ckpt['model'])
@@ -139,7 +139,7 @@ else:
     si_sdr_weight = 0.1
 ```
 
-**Adoption plan:** Add to `train_mamba3.py` in Phase 2 when effect-specific training begins. Phase 0 (identity) doesn't need SI-SDR.
+**Adoption plan:** Add to `train_clara.py` in Phase 2 when effect-specific training begins. Phase 0 (identity) doesn't need SI-SDR.
 
 ### 4.3 CREPE f0 Extraction (Ported)
 
@@ -184,7 +184,7 @@ The mamba3 drive's `extract_crepe.py` uses:
 
 ## 7. Summary
 
-The mamba3 drive contained **one genuinely useful thing**: an improved `train.py` with all 6 training-loop improvements. These are already present in Clara's `train_mamba3.py` — no porting needed.
+The mamba3 drive contained **one genuinely useful thing**: an improved `train.py` with all 6 training-loop improvements. These are already present in Clara's `train_clara.py` — no porting needed.
 
 The remaining transferable items (CREPE extraction, smoke test, StemDataset) are infrastructure pieces that either have been ported or are planned for Phase 1/2.
 

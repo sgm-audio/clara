@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLARA Mamba-3 Training Pipeline — train_mamba3.py
+"""CLARA Mamba-3 Training Pipeline — train_clara.py
 =======================================================
 
 Mamba-3 MIMO R=8 architecture with complex poles, spectral domain processing,
@@ -21,8 +21,8 @@ Training: ROCm AMD 860M, bf16 AMP + fp32 SSM, gradient checkpointing.
 Export: Flat binary model.bin (Version 3 — complex pole weight format).
 
 Usage:
-  python train_mamba3.py --data ~/datasets/musdb18hq/train --device cuda --amp
-  python train_mamba3.py --export checkpoints/best.pt --output models/model.bin
+  python train_clara.py --data ~/datasets/musdb18hq/train --device cuda --amp
+  python train_clara.py --export checkpoints/best.pt --output models/model.bin
 """
 
 from __future__ import annotations

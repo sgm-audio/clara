@@ -1,8 +1,8 @@
 # CLARA Mamba-1 → Mamba-3 Migration Plan
 
-**Status:** Final — Build Phase Initiated
-**Date:** June 15, 2026
-**Architecture decision:** Replace Mamba-1 (SISO, ONNX Runtime, conv1d, 76K params) with Mamba-3 (multi-head MIMO R=4, trapezoidal SSM, RoPE, FiLM, custom C++ engine, 750K params)
+**Status:** Historical — Phases 0-6 Complete. PerTrackProcessor adopted July 2026.
+**Date:** June 15, 2026 | **Updated:** July 2, 2026
+**Note:** This document describes the ORIGINAL Mamba-3 R=4 time-domain architecture (~1.66M params). As of July 2026, CLARA has adopted the PerTrackProcessor (R=8, spectral-domain, ~4.26M params) as the canonical architecture. See ADR-011, ADR-012, ADR-013. This document is retained for historical reference of the original migration specifications.
 
 ---
 
@@ -154,7 +154,7 @@ Real-world estimate with 3× overhead: ~2.87 µs/sample. At 44.1kHz that's **~12
 | `src/core/MambaInferenceEngine.cpp` | `src/core/SsmInferenceCore.cpp` | Ort::Session → SSMBlock array |
 | `train_clara_export.py` | `scripts/export_mamba_weights.py` | ONNX → flat binary |
 | `export_mamba_onnx.py` | _(deleted)_ | Incompatible architecture |
-| `train_clara_parallel.py` | `train_mamba3.py` | Mamba-1 → Mamba-3 |
+| `train_clara_parallel.py` | `train_clara.py` | Mamba-1 → Mamba-3 |
 | `models/*.onnx` | `models/*.bin` | Weight format change |
 | `libonnxruntime.so` | _(not shipped)_ | Dependency eliminated |
 
@@ -591,7 +591,7 @@ Files modified: `MambaAraController.cpp`, `MambaAraPlaybackRenderer.cpp`
 Load CLAP text + audio encoders, preset system, transport-stop analysis
 
 ### Phase 8: Training Pipeline (5-7 days)
-File created: `train_mamba3.py`
+File created: `train_clara.py`
 
 ### Phase 9: Testing & Verification (3-5 days)
 Bit-exact Python↔C++, state continuity, stability, extreme values, real-time safety, benchmark
@@ -620,7 +620,7 @@ src/core/ConditionProcessor.cpp
 reference_forward.py
 scripts/export_mamba_weights.py
 scripts/validate_export.py
-train_mamba3.py
+train_clara.py
 ```
 
 ### Modified files

@@ -52,7 +52,7 @@ CREPE_HOP_MS = 10  # 10ms hop → 100 Hz frame rate
 CREPE_BINS = 360  # 20-cent resolution from C1 to B7
 
 MODEL_SR = 44100  # MUSDB18-HQ native rate
-MODEL_HOP = 512  # train_mamba3.py default hop_length
+MODEL_HOP = 512  # train_clara.py default hop_length
 # Model frame rate: 44100/512 ≈ 86.13 Hz
 
 # Stems that get real CREPE (pitched)

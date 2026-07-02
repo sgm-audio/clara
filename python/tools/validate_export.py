@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate Mamba-3 flat binary weight file (Version 2).
+"""Validate PerTrackProcessor flat binary weight file (Version 3).
 
 Reads a .bin file, checks header magic/version/dimensions,
 round-trips all arrays, and optionally compares against

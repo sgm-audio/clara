@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""CLARA Mamba-3 Reference Forward Pass — PyTorch bit-exact gold standard.
+"""CLARA Legacy Mamba-3 Reference Forward Pass — R=4 time-domain (PyTorch bit-exact).
 
 Implements the full 8-step Mamba-3 per-sample pipeline with multi-head MIMO R=4,
 trapezoidal SSM, RoPE, and FiLM conditioning. All intermediate values are
 dumped at predetermined checkpoints for bit-exact C++ comparison.
 
-Architecture:  d_model=128, d_inner=256, nheads=4, headdim=32,
+NOTE: This is the LEGACY R=4 time-domain reference. The canonical architecture
+is PerTrackProcessor (R=8, spectral-domain, complex poles) — see train_clara.py.
+
+Architecture:  d_model=128, d_inner=256, nheads=4, headdim=64,
                d_state=32, mimo_rank=4, n_layers=6, cond_dim=128
 
 Reference: MAMBA3_MIGRATION_PLAN.md SECTIONS B, C

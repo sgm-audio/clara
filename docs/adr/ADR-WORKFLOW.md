@@ -1,6 +1,8 @@
 # ADR Workflow — Drafting System
 
-This file serves as both a todo list and a prompting system for documenting architectural decisions in CLARA. Each ADR follows the lifecycle **Draft → Review → Revise → Accepted**.
+**Updated:** 2026-07-02 — Mamba-3 PerTrackProcessor era. See ADR-011 through ADR-013 for current architecture.
+
+This file serves as both a todo list and a prompting system for documenting architectural decisions in CLARA. Each ADR follows the lifecycle **Draft → Review → Revise → Accepted**. Historical ADRs from the Mamba-1 / ONNX Runtime era (ADR-005, ADR-008, ADR-009, ADR-010) are marked HISTORICAL.
 
 ## Status Legend
 

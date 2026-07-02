@@ -35,7 +35,7 @@ MIOPEN_FIND_MODE=5                  # exhaustive MIOpen kernel search, 1-2s init
 `HIP_VISIBLE_DEVICES` and `ROC_VISIBLE_DEVICES` must also be set for PyTorch to enumerate GPU 0.
 
 **Where these go:**
-- `train_mamba3.py` — hardcoded at top via `os.environ.setdefault()`
+- `train_clara.py` — hardcoded at top via `os.environ.setdefault()`
 - `scripts/bootstrap_local.sh` — `export` before any Python call
 - Any manual `python` / `torchrun` invocation
 
@@ -82,7 +82,7 @@ USE_ROCM=1 ROCM_HOME=/opt/rocm HIP_CLANG_PATH=$(which clang) \
 
 ```
 clara/                          # Main repo (this machine: /var/home/sgm/Desktop/Dev/clara)
-├── train_mamba3.py       # PRIMARY training script (PerTrackProcessor R=8)
+├── train_clara.py       # PRIMARY training script (PerTrackProcessor R=8)
 ├── loss.py         # Loss stack: MR-STFT + Mel-L1 + SI-SDR
 ├── dataset.py      # StemDataset + CachedMelDataset
 ├── scripts/
@@ -125,7 +125,7 @@ in_proj_dim: 1552
 
 ---
 
-## Training Script: train_mamba3.py
+## Training Script: train_clara.py
 
 ### CLI Flags (all verified present)
 ```
@@ -190,7 +190,7 @@ Conservative for 16GB UMA: `batch=2, accum=4` → effective=8
 ### MUSDB18-HQ Location
 `~/datasets/musdb18hq/train` (symlinked or actual)
 
-### StemDataset (used by train_mamba3.py)
+### StemDataset (used by train_clara.py)
 - Discovers tracks: `root/TrackName/{bass,drums,vocals,other,...}.wav`
 - Loads `.crepe.npy` + `.pitched.npy` if present, else **zeros (graceful degradation)**
 - On-the-fly STFT/mel computation (CPU, no GPU bottleneck for small batch)
@@ -212,7 +212,7 @@ Saves alongside each WAV:
 ### CachedMelDataset (alternative, not used by default)
 - Uses precomputed `.npz` chunks from `python/tools/precompute_features.py`
 - Faster DataLoader, different from StemDataset
-- **NOT used by `train_mamba3.py`** — only `StemDataset`
+- **NOT used by `train_clara.py`** — only `StemDataset`
 
 ---
 
@@ -229,7 +229,7 @@ bash scripts/bootstrap_local.sh --crepe-only  # extract CREPE only
 Sets ALL ROCm env vars, creates venv if needed, installs deps, runs smoke test,
 then launches training with conservative defaults:
 ```bash
-python3 train_mamba3.py \
+python3 train_clara.py \
   --data ~/datasets/musdb18hq/train \
   --save ./checkpoints_clara \
   --device cuda \
@@ -280,7 +280,7 @@ Expected output: **5/5 sections pass**
 
 ## Weight Export Format (Version 3)
 
-`train_mamba3.py --export checkpoints/best.pt --output models/model.bin`
+`train_clara.py --export checkpoints/best.pt --output models/model.bin`
 
 Version 3 (complex pole format, R=8):
 ```
@@ -309,7 +309,7 @@ Per-layer Mamba weights (18 arrays/layer):
 
 | File | Purpose |
 |------|---------|
-| `python/training/train_mamba3.py` | Main training script (PerTrackProcessor R=8) |
+| `python/training/train_clara.py` | Main training script (PerTrackProcessor R=8) |
 | `python/training/loss.py` | MR-STFT + Mel-L1 + SI-SDR + NT-Xent losses |
 | `python/training/dataset.py` | StemDataset, CachedMelDataset, make_dataloaders |
 | `scripts/bootstrap_local.sh` | Full setup + training launcher |
@@ -373,7 +373,7 @@ HSA_OVERRIDE_GFX_VERSION=11.0.0 HIP_VISIBLE_DEVICES=0 ROC_VISIBLE_DEVICES=0 \
 HSA_OVERRIDE_GFX_VERSION=11.0.0 HIP_VISIBLE_DEVICES=0 ROC_VISIBLE_DEVICES=0 \
   HSA_ENABLE_SDMA=0 PYTORCH_ALLOC_CONF=garbage_collection_threshold:0.8,max_split_size_mb=256 \
   MIOPEN_FIND_MODE=5 \
-  python3 train_mamba3.py \
+  python3 train_clara.py \
   --data ~/datasets/musdb18hq/train \
   --save ./checkpoints_clara \
   --device cuda \

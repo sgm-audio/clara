@@ -18,7 +18,7 @@
 ### Decisions
 
 - **Architecture port not in scope:** mamba3 drive's 3.9M params, spectral-domain, chunk_size=128 model is incompatible with Clara's 1.6M params, time-domain, chunk_size=64 engine
-- **Adopt existing improvements:** All 6 training-loop improvements from mamba3 drive already present in Clara's `train_mamba3.py`
+- **Adopt existing improvements:** All 6 training-loop improvements from mamba3 drive already present in Clara's `train_clara.py`
 - **Phase 2 focus:** Document conditioning work items (f0, SI-SDR, StemDataset, CLAP encoders) for future implementation
 - **Infrastructure first:** Created smoke test, environment setup, and CREPE extraction scripts as Phase 1 deliverables
 

@@ -226,7 +226,7 @@ class SI_SDR(nn.Module):
 bash scripts/extract_f0.sh ~/datasets/musdb18hq/train
 
 # Step 2: Train with f0 conditioning
-python train_mamba3.py \
+python train_clara.py \
   --data ~/datasets/musdb18hq/train \
   --device cuda \
   --steps 150000 \
@@ -239,7 +239,7 @@ python train_mamba3.py \
 **With multi-stem data:**
 ```bash
 # Using StemDataset (Phase 2.2)
-python train_mamba3.py \
+python train_clara.py \
   --data ~/datasets/musdb18hq/train \
   --device cuda \
   --steps 150000 \

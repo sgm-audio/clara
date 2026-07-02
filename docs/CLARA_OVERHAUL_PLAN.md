@@ -1,7 +1,7 @@
 # CLARA Mamba-3 Architecture & Training Overhaul Plan
 
-**Last updated:** 2026-06-22  
-**Status:** Plan — awaiting user direction  
+**Last updated:** 2026-06-22 | **Decision (2026-07-02):** PerTrackProcessor adopted as canonical.
+This document captures the planning phase. Execution is tracked in `docs/TODO.md`.
 **Source references:** `mamba3/model.py`, `mamba3/train.py`, `mamba3 BAZZITE/train.py`, `MAMBA3_TRAINING_GUIDE.md`, `MAMBA3_OPTIMIZED_TRAINING.md`, `MambaDAW/`, `Mamba Based/`
 
 ---
@@ -241,7 +241,7 @@ audio[L] → STFT → mag_sq[T,F]
 
 **Zero model changes. Deliverable: training script runs on 860M with current C++ engine.**
 
-### 2.1 ROCm Environment — `train_mamba3.py`
+### 2.1 ROCm Environment — `train_clara.py`
 
 ```python
 import os
@@ -1692,7 +1692,7 @@ ctest --test-dir build --output-on-failure
 
 ```
 Phase 1: Training Infrastructure [~2-3 hours]
-  ├── 1.1 ROCm environment       — 5 mins (edit train_mamba3.py)
+  ├── 1.1 ROCm environment       — 5 mins (edit train_clara.py)
   ├── 1.2 CLI flags              — 15 mins
   ├── 1.3 AMP implementation     — 30 mins
   ├── 1.4 Gradient checkpointing — 15 mins
@@ -1773,7 +1773,7 @@ Total engineering time: ~12-16 hours
 
 | File | Phase | Action | Summary |
 |------|-------|--------|---------|
-| `train_mamba3.py` | 1,2 | Rewrite | ROCm env, CLI redesign, AMP, DataLoader, training loop, phase strategy |
+| `train_clara.py` | 1,2 | Rewrite | ROCm env, CLI redesign, AMP, DataLoader, training loop, phase strategy |
 | `dataset.py` | 4 | Rewrite | StemDataset with CREPE, pitch-shift, cache; remove CachedMelDataset/AudioDataset |
 | `loss.py` | 2,5 | Split from train | NT-Xent, MR-STFT(4), Mel-L1(3), SI-SDR, TrackProcessorLoss |
 | `scripts/extract_crepe.py` | 4 | Create | torchcrepe extraction with resume support |

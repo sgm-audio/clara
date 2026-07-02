@@ -3,6 +3,10 @@
 Automatic session-to-session reference. Each section is one session.
 Last entry is most recent.
 
+> **RENAME NOTE (2026-07-02):** `train_mamba3.py` was renamed to `train_clara.py`.
+> `train_clara_kaggle.py` was renamed to `train_clara_kaggle.py`.
+> Historical entries below retain the original filenames for accuracy.
+
 ---
 
 ## Session 2026-06-04
@@ -1412,3 +1416,71 @@ clara/
 ├── tests/                            (CTest suite)
 └── models/                           (flat binary weights)
 ```
+
+---
+
+## Session 2026-07-02 — Comprehensive Portfolio Audit & Remediation
+
+**Duration:** ~5 hours
+**Objective:** Complete structural, organizational, and accuracy audit. Fix all misleading/stale claims. Clean repo for portfolio use.
+
+### ✅ Accomplished
+
+#### Phase 0: Training script rename
+- `python/training/train_mamba3.py` → `python/training/train_clara.py` (canonical PerTrackProcessor training)
+- `python/tools/train_mamba3_kaggle.py` → `python/tools/train_clara_kaggle.py`
+- Updated 22 files with references (all docs, scripts, Python imports)
+
+#### Phase 1: Documentation accuracy overhaul
+- **Parameter count fixed everywhere:** 757K → ~4.26M (PerTrackProcessor total), ~3.9M mamba core
+- **CMake preset names fixed:** `linux-release` → `default`, `windows-release` → `windows-msvc-release` in README.md, AGENTS.md. Added backward compat aliases to `CMakePresets.json`.
+- **Plugin naming fixed:** `Mamba<Effect>.clap` → `MambaSuiteClap.clap` (per-effect variants noted as planned)
+- **R=4 → R=8, time-domain → spectral-domain** in architecture descriptions (README.md, AGENTS.md)
+- **Stale ONNX references removed** from C++ file comments (SsmInferenceCore.h, MambaClapPlugin.cpp, MambaAraController.cpp)
+- **HEADDIM=32 → 64** fixed in reference_forward.py docstring + marked as legacy R=4 reference
+- **Migration plan** marked as historical with PerTrackProcessor transition note
+- **ARCHITECTURE_COMPARISON.md, CLARA_OVERHAUL_PLAN.md, MAMBA3_DRIVE_AUDIT.md** updated with adoption-decision headers
+
+#### Phase 2: ADR cleanup
+- **ADR-005, ADR-008, ADR-009, ADR-010** marked HISTORICAL/SUPERSEDED with transition dates
+- **ADR-011:** New — PerTrackProcessor Architecture (R=8, spectral, complex poles)
+- **ADR-012:** New — PerTrackProcessor Weight Format V3 (18 arrays/layer)
+- **ADR-013:** New — ConditionVector V2 (d_cond=128, CREPE/Semantic/Cross-Track/CondMLP)
+- **ADR-WORKFLOW.md:** Updated header for Mamba-3 era
+
+#### Phase 4: C++ code quality
+- **Removed dead code:** `ConditioningFrame.h` (entire file), `validate_config()` stub, `mambaResolveModelDir()` (39 lines)
+- **Fixed `using namespace` in headers:** MambaClapPlugin.hpp, MambaAraController.hpp → explicit `clara::mamba3::` qualification
+- **Version unified:** CMakeLists.txt 1.1.0 → 1.2.0 (matches plugin descriptors)
+
+#### Phase 5-7: Python cleanup, build, hygiene
+- Deleted duplicate `python/tools/train_local_radeon.py`
+- Cleaned all `__pycache__/` directories
+- Deleted stale `scripts/checkpoints/` (58MB)
+- Updated `.gitignore` (`.env*`, `.agent_context/`)
+- CMake preset aliases (`linux-release`, `windows-release`) added for backward compatibility
+- `validate_export.py` docstring fixed (Version 2 → Version 3)
+
+### Key Architecture Decision
+**Option B adopted:** PerTrackProcessor (R=8, spectral-domain, complex poles, ~4.26M params) is the canonical CLARA architecture. The C++ engine (currently R=4 time-domain) must be updated to match — tracked as H3 in TODO.md.
+
+### Confirmed Parameter Counts
+- **PerTrackProcessor total:** ~4,260,000 (~4.26M) — includes SemanticEncoder, F0Conditioner, CrossTrackAggregator, CondMLP
+- **PerTrackProcessor mamba core only:** ~3,900,000 (~3.9M)
+- **Legacy R=4 engine (model.bin on disk):** 1,662,384 (~1.66M) — NOT the canonical architecture
+
+### Remaining Work (Phase 3)
+- **C++ engine update to R=8 PerTrackProcessor** — H3 in TODO.md (MambaConfig.h, WeightLoader, SsmBlock, SsmInferenceCore). This is a 20-40hr C++ rewrite.
+- **Thread safety:** Retirement queue for model reload (use-after-free race)
+- **Portability:** WeightLoader Windows/macOS mmap paths
+- **CI:** macOS job, test fixes, -ffast-math reconsideration
+
+### Files Changed
+~35 files modified, 3 new ADRs created, 2 files deleted, 2 files renamed.
+
+### Verification
+- `grep -r "train_mamba3.py"` returns ZERO results in active docs/code
+- `grep -r "757K"` returns only historical context or TODO plan items
+- No `using namespace` in any header
+- No stale ONNX references in C++ comments
+- CMake presets backward-compatible with old names

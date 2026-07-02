@@ -48,7 +48,7 @@ bash scripts/setup_cloud.sh export      # Export only
 If interrupted, resume from checkpoint:
 
 ```bash
-python train_mamba3.py \
+python train_clara.py \
   --resume checkpoints_clara/checkpoint_050000.pt \
   --steps 100000 \
   --data ~/datasets/musdb18hq/train \
@@ -72,7 +72,7 @@ tail -f checkpoints_clara/train.log
 ### Export Weights
 
 ```bash
-python train_mamba3.py \
+python train_clara.py \
   --export checkpoints_clara/final.pt \
   --output models/model_trained.bin
 ```

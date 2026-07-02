@@ -2,7 +2,7 @@
 
 **Architecture:** Mamba-3 SSM with multi-head MIMO R=4  
 **Parameters:** 1,662,384  
-**Training script:** `python/training/train_mamba3.py`  
+**Training script:** `python/training/train_clara.py`  
 **Weight format:** Flat binary `model.bin` (version 2)  
 **Inference engine:** Custom C++ (`libMamba3Core.a`), no ONNX Runtime
 
@@ -111,7 +111,7 @@ Stage 2: Adversarial Fine-Tuning
 Stage 3: RLHF / Preference Optimization (post-MVP)
 ```
 
-**Only `python/training/train_mamba3.py` produces exportable weights.** Older scripts (`train_clara_parallel.py`, `train_clara_export.py`, `export_mamba_onnx.py`, `train_clara_now.py`) implement incompatible Mamba-1 architectures and should not be used.
+**Only `python/training/train_clara.py` produces exportable weights.** Older scripts (`train_clara_parallel.py`, `train_clara_export.py`, `export_mamba_onnx.py`, `train_clara_now.py`) implement incompatible Mamba-1 architectures and should not be used.
 
 ---
 
@@ -131,7 +131,7 @@ Stage 0 teaches the model general audio structure before any effect-specific tra
 ### Quick start
 
 ```bash
-python python/training/train_mamba3.py \
+python python/training/train_clara.py \
   --data ~/datasets/musdb18hq/train \
   --device cuda \
   --steps 100000 \
@@ -148,7 +148,7 @@ python python/tools/precompute_features.py \
   --output ~/datasets/musdb18hq/precomputed
 
 # Train using precomputed target features
-python python/training/train_mamba3.py \
+python python/training/train_clara.py \
   --precomputed ~/datasets/musdb18hq/precomputed \
   --cache \
   --device cuda \
@@ -230,7 +230,7 @@ Training expects mono WAV files at the target sample rate (default 44.1 kHz). Th
 **Fresh Stage 0 (on-the-fly STFT):**
 
 ```bash
-python python/training/train_mamba3.py \
+python python/training/train_clara.py \
   --data ~/datasets/musdb18hq/train \
   --device cuda \
   --steps 100000 \
@@ -247,7 +247,7 @@ python python/tools/precompute_features.py \
   --input ~/datasets/musdb18hq/train \
   --output ~/datasets/musdb18hq/precomputed
 
-python python/training/train_mamba3.py \
+python python/training/train_clara.py \
   --precomputed ~/datasets/musdb18hq/precomputed \
   --cache \
   --device cuda \
@@ -259,7 +259,7 @@ python python/training/train_mamba3.py \
 **Resume from checkpoint:**
 
 ```bash
-python python/training/train_mamba3.py \
+python python/training/train_clara.py \
   --resume checkpoints_clara/step_050000.pt \
   --precomputed ~/datasets/musdb18hq/precomputed \
   --cache \
@@ -270,7 +270,7 @@ python python/training/train_mamba3.py \
 **CPU smoke test:**
 
 ```bash
-python python/training/train_mamba3.py \
+python python/training/train_clara.py \
   --data ~/datasets/musdb18hq/train \
   --device cpu \
   --steps 10 \
@@ -279,7 +279,7 @@ python python/training/train_mamba3.py \
 
 ### Cloud Training (MI300X)
 
-See `python/training/train_mamba3.py` for training options. For the launch workflow:
+See `python/training/train_clara.py` for training options. For the launch workflow:
 
 ```bash
 # On the cloud VM
@@ -360,7 +360,7 @@ This writes `.npz` files containing:
 ### Training with precomputed data
 
 ```bash
-python python/training/train_mamba3.py \
+python python/training/train_clara.py \
   --precomputed ~/datasets/musdb18hq/precomputed \
   --cache \
   --device cuda \
@@ -376,7 +376,7 @@ python python/training/train_mamba3.py \
 ### Export to flat binary
 
 ```bash
-python python/training/train_mamba3.py \
+python python/training/train_clara.py \
   --export checkpoints_clara/final.pt \
   --output models/model_trained.bin
 ```
@@ -391,7 +391,7 @@ python python/tools/export_mamba_weights.py \
 Or export directly from the training script:
 
 ```bash
-python python/training/train_mamba3.py \
+python python/training/train_clara.py \
   --export checkpoints/final.pt \
   --output models/model.bin
 ```
@@ -453,7 +453,7 @@ Followed by the concatenated float32 weight arrays (13 per layer).
 | `cond_dim` | 128 | Conditioning vector size |
 | `in_proj_dim` | 1612 | Fused projection output size |
 
-### Training flags (`python/training/train_mamba3.py`)
+### Training flags (`python/training/train_clara.py`)
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -502,7 +502,7 @@ Followed by the concatenated float32 weight arrays (13 per layer).
 | OOM | Batch/clip too large | Reduce `--batch` or `--chunk-samples` |
 | Slow training | CPU STFT bottleneck | Use `--precomputed` + `--cache` |
 | Hang at warmup | MIOpen compilation deadlock | Already reduced to 1 chunk; kill and retry if persistent |
-| C++ load fails | Wrong weight format | Ensure export used version 2 format from `python/training/train_mamba3.py` |
+| C++ load fails | Wrong weight format | Ensure export used version 2 format from `python/training/train_clara.py` |
 | Python↔C++ mismatch >0.05 | Architecture divergence | Check that input/output projections and LayerNorm are stripped in Python |
 
 ---

@@ -6,8 +6,8 @@ No ONNX Runtime is used in the plugins. Weights are stored as a flat binary file
 
 ## Features
 
-- Real-time Mamba-3 SSM inference via custom C++ engine (~757K params)
-- Dedicated CLAP plugins per effect model (Saturator, Compressor, Denoiser, Transparent, etc.)
+- Real-time Mamba-3 PerTrackProcessor inference via custom C++ engine (~4.26M params, spectral-domain R=8)
+- CLAP plugin (`MambaSuiteClap.clap`) — per-effect model variants planned (Saturator, Compressor, etc.)
 - ARA 2.0 library with document controller, playback renderer, and host archive state persistence
 - Thread-safe deferred state reset via `std::atomic` — zero locks on the audio thread
 - Zero heap allocations on the audio thread after warm-up (`thread_local` + `reserve()` pattern)
@@ -25,7 +25,7 @@ DAW Host
 │   e.g. "Mamba Saturator.clap", "Mamba Compressor.clap"
 │   │
 │   ├── Audio In → SsmInferenceCore → Audio Out
-│   │              (6 layers, MIMO rank 4)
+│   │              (6 layers, MIMO rank 8)
 │   │
 │   └── Conditioning Vector (128 floats)
 │       [0-7: DAW context] [8-39: CLAP embedding]
@@ -41,9 +41,9 @@ Main Thread (non-RT) — Phase 2/3 features
 └── Preset system      → precomputed embeddings → cond slots 8-39  (planned)
 ```
 
-The inference engine lives in `src/core/` as the `Mamba3Core` static library, linked into both the CLAP and ARA targets. Each plugin loads its own `model.bin` (dedicated weights per task). CLAP text + audio encoders and the shared encoder library are Phase 2/3 features not yet implemented.
+The inference engine lives in `src/core/` as the `Mamba3Core` static library, linked into both the CLAP and ARA targets. The plugin loads `model.bin` (version 3 flat binary weights). Per-effect model variants are planned for Phase 2+.
 
-**Flat binary model contract:** one input file (`model.bin`, version 2) with a 64-byte header followed by 13 float32 arrays per layer. The engine reads weights at init and constructs `SSMBlock` objects with placement-new. Recurrent state is stack-allocated — no heap allocations on the audio thread.
+**Architecture:** PerTrackProcessor — R=8 MIMO spectral-domain with STFT frontend, complex-pole SSM, CREPE f0 conditioning, cross-track attention, CondMLP, and ISTFT decoder. See [`docs/TRAINING_SETUP_CONTEXT.md`](docs/TRAINING_SETUP_CONTEXT.md) for the complete architecture diagram.
 
 ## Build
 
@@ -66,9 +66,9 @@ cmake --build build --parallel && ctest --test-dir build --output-on-failure
 Cross-platform builds via CMake presets:
 
 ```bash
-cmake --preset linux-release      # Linux
-cmake --preset macos-release      # macOS
-cmake --preset windows-release    # Windows
+cmake --preset default             # Linux (Release)
+cmake --preset macos-release       # macOS
+cmake --preset windows-msvc-release  # Windows
 cmake --build --preset <preset>
 ```
 
@@ -82,14 +82,14 @@ cmake --install build --component ara         # ARA only
 
 Outputs in `build/plugins/`:
 
-- `Mamba<Effect>.clap` — CLAP audio effect (one per model)
+- `MambaSuiteClap.clap` — CLAP audio effect (per-effect variants planned)
 - `MambaSuiteARA.so` / `MambaSuiteARA.dylib` / `MambaSuiteARA.dll` — ARA2 library
 - `libMamba3Core.a` — static C++ engine
 - `models/*.bin` — flat binary weights
 
 ## Running
 
-Load `build/plugins/Mamba<Effect>.clap` in a CLAP-compatible host (Bitwig Studio, Carla, clap-host). The flat binary model must be present in `models/` adjacent to the plugin binary — the build system deploys it automatically.
+Load `build/plugins/MambaSuiteClap.clap` in a CLAP-compatible host (Bitwig Studio, Carla, clap-host). The flat binary model must be present in `models/` adjacent to the plugin binary — the build system deploys it automatically.
 
 ARA hosts (REAPER, Cubase) discover `MambaSuiteARA.so`. Audio processing is handled by the companion CLAP plugin (ARA 2.0 has no `renderSamples()` method).
 
@@ -97,7 +97,7 @@ Each plugin exposes three parameters: bypass (stepped, click-free via 50ms linea
 
 ## Model
 
-Architecture: Mamba-3 with multi-head MIMO R=4.
+Architecture: Mamba-3 PerTrackProcessor with multi-head MIMO R=8 (spectral-domain, complex poles).
 
 | Parameter    | Value | Notes                                            |
 |--------------|-------|--------------------------------------------------|
@@ -106,10 +106,10 @@ Architecture: Mamba-3 with multi-head MIMO R=4.
 | d_state      | 32    | SSM state dimension per channel                  |
 | nheads       | 4     | Parallel heads                                   |
 | headdim      | 64    | Per-head dimension (= d_inner / nheads)          |
-| mimo_rank    | 4     | Slots per head — sub/bass/mids/highs             |
+| mimo_rank    | 8     | Spectral bands per head (sub_bass through air + transient + centroid) |
 | d_inner      | 256   | 2× d_model expansion                             |
-| cond_dim     | 128   | DAW(8) + CLAP(32) + user knobs(32) + reserved(56)|
-| Total params | ~757K | Small enough for single-core RT at 48kHz         |
+| cond_dim     | 128   | f0(32) + semantic(128) + cross-track(64) + loudness(4) |
+| Total params | ~4.26M | ~3.9M mamba core + conditioning/encoder          |
 
 Each `SSMBlock` implements an 8-step per-sample pipeline: FiLM conditioning, fused `in_proj`, A/Δ preprocessing, RMSNorm on B/C, RoPE rotation, multi-head MIMO SSM recurrence (trapezoidal discretization), SiLU z-gating, output projection + D skip + residual, and periodic state normalization every 4096 samples.
 
@@ -119,13 +119,13 @@ See [`docs/TRAINING.md`](docs/TRAINING.md) for the complete training pipeline an
 
 ```bash
 # Stage 0: identity pretraining
-python python/training/train_mamba3.py --data ~/datasets/musdb18hq/train --device cuda --steps 100000
+python python/training/train_clara.py --data ~/datasets/musdb18hq/train --device cuda --steps 100000
 
 # Export to flat binary weights
-python python/training/train_mamba3.py --export checkpoints/final.pt --output models/model.bin
+python python/training/train_clara.py --export checkpoints/final.pt --output models/model.bin
 ```
 
-The only supported training script is `python/training/train_mamba3.py`. Older scripts (`train_clara_parallel.py`, `train_clara_export.py`, `export_mamba_onnx.py`, `train_clara_now.py`) produce incompatible architectures and should not be used.
+The canonical training script is `python/training/train_clara.py` (PerTrackProcessor, R=8, spectral-domain). Older scripts and the legacy R=4 time-domain model (`train_local_radeon.py`) are in `archive/`.
 
 ## Project Structure
 
@@ -141,9 +141,9 @@ The only supported training script is `python/training/train_mamba3.py`. Older s
 ├── python/
 │   ├── reference_forward.py          # PyTorch bit-exact gold standard
 │   ├── training/
-│   │   ├── train_mamba3.py     # Mamba-3 training script
-│   │   ├── dataset.py    # StemDataset + DataLoader
-│   │   └── loss.py       # MR-STFT + Mel-L1 + SI-SDR losses
+│   │   ├── train_clara.py          # PerTrackProcessor R=8 training
+│   │   ├── dataset.py               # StemDataset + DataLoader
+│   │   └── loss.py                   # MR-STFT + Mel-L1 + SI-SDR losses
 │   └── tools/
 │       ├── export_mamba_weights.py   # Flat binary weight export
 │       ├── validate_export.py        # Python↔C++ round-trip validation
@@ -187,7 +187,7 @@ The `clap_validator` test is resolved in this order:
 2. `cargo install clap-validator --locked` — fetches and builds from crates.io (requires Rust toolchain)
 3. Otherwise the test is registered but exits 77 (SKIP) at runtime; CTest reports it as skipped rather than failed.
 
-Tests require model files in `models/`. The CLAP plugin test and the validator test additionally require `Mamba<Effect>.clap` to be present at `build/plugins/Mamba<Effect>.clap` (built by the same `cmake --build` invocation).
+Tests require model files in `models/`. The CLAP plugin test and the validator test additionally require `MambaSuiteClap.clap` to be present at `build/plugins/MambaSuiteClap.clap` (built by the same `cmake --build` invocation).
 
 To build and run the full test suite (including the validator) in a single step:
 

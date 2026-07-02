@@ -1,126 +1,249 @@
-# CLARA TODO — Reality-Based Task List
+# CLARA TODO — Portfolio Audit Remediation
 
-**Last updated:** 2026-06-22
-**Context:** Model is R=8 PerTrackProcessor (spectral-domain, complex poles). Training is LOCAL on AMD AI 7 350 / Radeon 860M. C++ engine (SsmInferenceCore) is R=4 time-domain — fundamentally incompatible with PerTrackProcessor.
-
----
-
-## ✅ VERIFICATION CHECKLIST (Current — 2026-06-22)
-
-All checks pass (verified this session):
-
-| # | Check | Status |
-|---|-------|--------|
-| 1 | test_model.py — PerTrackProcessor smoke | ✅ fixed imports |
-| 2 | validate_export.py — v3 format | ✅ updated for R=8, 18 arrays |
-| 3 | dump_reference_output.py — PerTrackProcessor | ✅ rewritten for spectral model |
-| 4 | prep_dataset.py — dead train_clara_parallel.py ref | ✅ fixed |
-| 5 | bootstrap_local.sh | ✅ created for Radeon 860M |
+**Created:** 2026-07-02 (from comprehensive audit)
+**Architecture:** R=8 PerTrackProcessor (spectral, complex poles, ~4.26M params) — canonical
+**C++ engine:** R=4 time-domain Mamba-3 — needs rewrite to R=8 (H3)
 
 ---
 
-## 🔴 BLOCKING — Must Do Before Any Real Training
+## PHASE 0: Rename canonical training script + update all references [IN PROGRESS]
 
-### H3. C++ Engine Update for R=8 (complex poles, spectral domain)
+### 0.1 Rename files
+- [ ] `python/training/train_clara.py` → `python/training/train_clara.py`
+- [ ] `python/tools/train_clara_kaggle.py` → `python/tools/train_clara_kaggle.py`
 
-**Status:** Not started
-**Severity:** Blocking — PerTrackProcessor cannot run in C++ until engine is updated
+### 0.2 Update references in documentation (34 refs across 10+ files)
+- [ ] `README.md` (5 refs)
+- [ ] `AGENTS.md` (7 refs)
+- [ ] `docs/TRAINING.md` (14 refs)
+- [ ] `docs/TRAINING_QUICKSTART.md` (2 refs)
+- [ ] `docs/TRAINING_SETUP_CONTEXT.md` (5 refs)
+- [ ] `docs/MAMBA3_MIGRATION_PLAN.md` (3 refs)
+- [ ] `docs/PHASE2_ROADMAP.md` (2 refs)
+- [ ] `docs/CLARA_OVERHAUL_PLAN.md` (3 refs)
+- [ ] `docs/ARCHITECTURE_COMPARISON.md` (2 refs)
+- [ ] `docs/MAMBA3_DRIVE_AUDIT.md` (5 refs)
+- [ ] `docs/SESSION_SUMMARY_2026-06-21.md` (1 ref)
 
-PerTrackProcessor (R=8, spectral) is fundamentally different from the current C++ engine (R=4, time-domain). The C++ engine must first be updated to support R=8 SSM with complex poles before a trained PerTrackProcessor can be loaded as a plugin.
+### 0.3 Update shell scripts
+- [ ] `scripts/run_train.sh`
+- [ ] `scripts/bootstrap_local.sh`
 
-**Required changes to C++ engine:**
-1. Add R=8 support (MAX_MIMO_RANK=8, update SSMState, SSMBlock, WeightLoader)
-2. Add complex pole trapezoidal discretization (log_a_real, a_imag per head)
-3. Remove per-sample RoPE (PerTrackProcessor doesn't use RoPE)
-4. Add STFT frontend + ISTFT output wrapper (spectral domain model)
-5. Update WeightLoader for v3 format (18 arrays/layer, R8 extractor weights)
-6. Update validate_export.py for v3
-
-**Files needing changes:**
-- `src/core/MambaConfig.h` — MAX_MIMO_RANK=8, add complex pole params
-- `src/core/SsmBlock.cpp` — complex pole SSM recurrence
-- `src/core/WeightLoader.cpp` — v3 weight layout
-- `src/core/SsmInferenceCore.cpp` — add STFT/ISTFT wrapper
-
-### H5 ~~Cloud Bootstrap~~ → Local Bootstrap
-
-**Status:** ✅ Done — `scripts/bootstrap_local.sh` created
-**Was:** Cloud bootstrap for MI300X
-**Now:** Local bootstrap for AMD AI 7 350 / Radeon 860M
-
----
-
-## 🟡 MEDIUM — Needed for Quality Training
-
-### M1. Validation loop
-
-**File:** `train_mamba3.py`
-**Status:** Exists (run_validation fn) — needs real audio dataset to be fully useful
-
-### M2. Gradient checkpointing
-
-**File:** `train_mamba3.py`
-**Status:** Already ON for all Mamba layers (gradient_checkpointing=True)
-
-### M3. AMP (bf16, opt-in)
-
-**File:** `train_mamba3.py`
-**Status:** `--amp` flag exists, disable if bf16 NaNs occur on 860M
-
-### M4. Early stopping
-
-**File:** `train_mamba3.py`
-**Status:** Already implemented (--early-stop-patience)
+### 0.4 Update Python internal references
+- [ ] `python/tools/test_model.py` (any import refs)
+- [ ] `python/tools/validate_export.py` (any refs)
+- [ ] `python/training/loss.py` (import refs)
+- [ ] `python/training/dataset.py` (import refs)
 
 ---
 
-## 🟢 LOW — Post-MVP
+## PHASE 1: Documentation accuracy — fix every stale claim
 
-### L1. Real WAV dataset
+### 1.1 Fix parameter count (757K → ~4.26M PerTrackProcessor)
+- [ ] `README.md` lines 9, 112
+- [ ] `AGENTS.md` lines 16, 72, 77, 149, 155, 160
+- [ ] `docs/MAMBA3_MIGRATION_PLAN.md` lines 117, 284, 357
+- [ ] `docs/ARCHITECTURE_COMPARISON.md` line 37, 228
+- [ ] `docs/CLARA_OVERHAUL_PLAN.md` line 188
+- [ ] `docs/SESSION_SUMMARY_2026-06-21.md` line 20
 
-**Status:** AudioDataset exists, CachedMelDataset exists
-**Needs:** MUSDB18-HQ downloaded to ~/datasets/musdb18hq/train
+### 1.2 Fix CMake preset names in docs
+- [ ] `README.md`: `linux-release` → `default`, `windows-release` → `windows-msvc-release`
+- [ ] `AGENTS.md`: same
+- [ ] Add `linux-release`/`windows-release` aliases to `CMakePresets.json`
 
-### L2. CREPE f0 extraction + wiring
+### 1.3 Fix plugin naming (Mamba<Effect>.clap → MambaSuiteClap.clap)
+- [ ] `README.md` lines 3, 10, 24, 85, 92, 190
+- [ ] `AGENTS.md` lines 12, 59, 141
+- [ ] `docs/MAMBA3_MIGRATION_PLAN.md` lines 16, 353, 406-418, 687-709
+- [ ] `docs/CLARA_OVERHAUL_PLAN.md` lines 1602, 1607
 
-**File:** `python/tools/extract_crepe.py`
-**Status:** Ported from mamba3 drive, hop=256 for Clara's frame rate
-**Needs:** Wiring into PerTrackProcessor conditioning slots
+### 1.4 Fix migration plan stale references (MAMBA3_MIGRATION_PLAN.md)
+- [ ] `libmamba_core.so` (shared lib) → `libMamba3Core.a` (static)
+- [ ] `libmamba_clap.so` (600MB) → remove (CLAP encoder is future work)
+- [ ] Install layout with per-plugin dirs → update to single-plugin layout
+- [ ] `RingBuffer.h`, `DoubleBuffer.h` → `SPSCQueue.hpp`
+- [ ] `src/common/ConditioningGenerator.hpp` → `src/core/ConditionProcessor.h`
+- [ ] Training cost estimates → mark as estimated
 
-### L3. CLAP text encoder integration
+### 1.5 Clean stale ONNX references in C++ comments
+- [ ] `src/core/SsmInferenceCore.h:4`
+- [ ] `src/clap/MambaClapPlugin.cpp:3`
+- [ ] `src/ara/MambaAraController.cpp:3`
 
-**Status:** Phase 2/3 — needs trained model first
-
-### L4. ARA DAW context → conditioning
-
-**Status:** Phase 2 — needs trained model first
-
-### L5. GUI (CLAP_EXT_GUI)
-
-**Status:** Phase 2 — needs JUCE or pugl
-
----
-
-## Architecture Summary
-
-| Aspect | Python (train) | C++ (inference) |
-|--------|--------------|-----------------|
-| Model | PerTrackProcessor | SsmInferenceCore |
-| MIMO Rank | R=8 | R=4 |
-| Domain | Spectral (STFT→SSM→ISTFT) | Time-domain (per-sample) |
-| Poles | Complex (log_a_real, a_imag) | Real (dd_A) |
-| RoPE | None | Yes |
-| Export | v3 (18 arrays/layer) | v2 (13 arrays/layer) |
-| Compatible? | — | ❌ |
+### 1.6 Fix HEADDIM docstring in reference_forward.py
+- [ ] `python/reference_forward.py` line 8-9: `headdim=32` → `headdim=64`
 
 ---
 
-## ⏱️ NEXT ACTION
+## PHASE 2: ADR cleanup — mark obsolete, write replacements
 
-1. `bash scripts/bootstrap_local.sh` — setup + smoke test
-2. Download MUSDB18-HQ if not present
-3. **H3: Update C++ engine to R=8** (blocking for plugin deployment)
-4. Launch training: `bash scripts/run_train.sh`
-5. Export: `python train_mamba3.py --export checkpoints/best.pt --output models/model.bin`
+### 2.1 Mark as HISTORICAL/SUPERSEDED
+- [ ] `docs/adr/ADR-005-thread-local-reserve-ort-value.md` → HISTORICAL (ONNX Runtime removed)
+- [ ] `docs/adr/ADR-008-conditioning-vector.md` → HISTORICAL (Mamba-1, COND_DIM=8)
+- [ ] `docs/adr/ADR-009.md` → HISTORICAL (ONNX sub-block processing) + add descriptive filename
+- [ ] `docs/adr/ADR-010.md` → HISTORICAL (ONNX dual-path conditioning) + add descriptive filename
 
-(End of file - total 83 lines)
+### 2.2 Partial updates
+- [ ] `docs/adr/ADR-002` — replace MambaInferenceEngine refs with SsmInferenceCore/PerBandSSM
+- [ ] `docs/adr/ADR-004` — update ONNX Runtime deployment section
+- [ ] `docs/adr/ADR-001` — add note pointing to ADR-011
+
+### 2.3 Write new ADRs for PerTrackProcessor era
+- [ ] `docs/adr/ADR-011-per-track-processor-architecture.md` — R=8, spectral, complex poles
+- [ ] `docs/adr/ADR-012-per-track-processor-weight-format.md` — V3, 18 arrays/layer
+- [ ] `docs/adr/ADR-013-condition-vector-v2.md` — d_cond=128, FiLM via CondMLP
+
+### 2.4 Update ADR-WORKFLOW.md
+- [ ] Fix filename mismatches for ADR-004, ADR-005
+- [ ] Remove ONNX Runtime references
+- [ ] Remove MambaInferenceEngine/MambaCore references
+- [ ] Add ADR-011, 012, 013 to backlog
+- [ ] Remove completed drafting prompts for ADR-003, 004, 005
+
+---
+
+## PHASE 3: C++ engine update to R=8 PerTrackProcessor [BLOCKING]
+
+### 3.1 `src/core/MambaConfig.h`
+- [ ] MAX_MIMO_RANK: 4 → 8
+- [ ] Add MAX_COMPLEX_POLES, MAX_R8_BANDS constants
+- [ ] WEIGHT_VERSION: 2 → 3
+- [ ] WEIGHTS_PER_LAYER: 13 → 18
+- [ ] Update MAX_IN_PROJ_DIM for R=8
+- [ ] Add STFT config constants (n_fft=2048, hop_length=512, n_mels=128)
+- [ ] Update HEADER layout comment for v3
+- [ ] Update static_assert checks
+
+### 3.2 `src/core/WeightLoader.h/cpp`
+- [ ] New header struct for v3 (R8 extractor weights, n_fft, hop_length)
+- [ ] 18 arrays per layer layout
+- [ ] Frontend weights (R8FeatureExtractor)
+- [ ] Update validate_header() for R=8, v3 dimensions
+- [ ] Update setup_layer_pointers()
+- [ ] Windows portability (#ifdef _WIN32 CreateFileMapping/MapViewOfFile)
+- [ ] Verify macOS mmap path
+
+### 3.3 `src/core/SsmBlock.h/cpp`
+- [ ] Add complex pole state (log_a_real, a_imag per head per band)
+- [ ] Rewrite SSM recurrence: complex trapezoidal
+- [ ] Remove RoPE rotation
+- [ ] PerBandSSM: iterate over R=8 bands
+- [ ] Update SSMState struct
+
+### 3.4 `src/core/SsmInferenceCore.h/cpp`
+- [ ] Add STFT frontend (Hann window, FFT)
+- [ ] Add mel filterbank
+- [ ] Add R8FeatureExtractor
+- [ ] Add ISTFT output
+- [ ] Frame-based processing (remove per-sample)
+- [ ] Update latency: 0 → n_fft/2
+
+### 3.5 Tests
+- [ ] Update test_mamba3.cpp for R=8 spectral domain
+- [ ] Generate new model_ref.bin in v3 format
+- [ ] Generate new input_ref.bin, output_ref.bin
+- [ ] Update test_clap_plugin.cpp expected latency
+
+### 3.6 Model regeneration
+- [ ] Export v3 weights: `python train_clara.py --export checkpoints/best.pt --output models/model.bin`
+- [ ] Smoke test: build + ctest pass
+
+---
+
+## PHASE 4: C++ code quality
+
+### 4.1 Thread safety fix (H1)
+- [ ] Add retirement queue for old engines during model reload
+- [ ] Atomic counter for audio thread completion signaling
+- [ ] Remove redundant seq_cst fence (L5)
+
+### 4.2 Remove dead code
+- [ ] Delete `src/core/ConditioningFrame.h` (entire file, never used)
+- [ ] Delete `src/core/MambaConfig.cpp:10-16` (validate_config stub, never called)
+- [ ] Delete `src/core/Platform.hpp:68-106` (mambaResolveModelDir, 39 lines, never called)
+- [ ] Delete empty for-loop in SsmBlock.cpp:141-148
+- [ ] Delete or wire up SSMBlock::process_block() stub
+
+### 4.3 Portability fixes
+- [ ] `using namespace` in headers → explicit qualification (MambaClapPlugin.hpp, MambaAraController.hpp)
+- [ ] `strcmp` → `std::strcmp` (6 occurrences in MambaClapPlugin.cpp)
+- [ ] `strncpy` → add explicit null-termination (7 occurrences)
+- [ ] WeightLoader POSIX-only → add #ifdef _WIN32 path
+
+### 4.4 Version unification
+- [ ] CMakeLists.txt: VERSION 1.1.0 → 1.2.0 (or generate version.h via configure_file)
+- [ ] Verify CLAP descriptor and ARA factory match
+
+### 4.5 Miscellaneous
+- [ ] Fix "64 bytes" comment in WeightLoader.cpp (actual is 52)
+- [ ] Fix chunked-vs-per-sample comment in SsmInferenceCore.cpp
+- [ ] Verify MAMBA_PROJECT_URL in Platform.hpp
+
+---
+
+## PHASE 5: Python code cleanup
+
+### 5.1 Remove duplicates
+- [ ] Delete `python/tools/train_local_radeon.py` (keep `python/training/train_local_radeon.py`)
+
+### 5.2 Fix missing dependencies
+- [ ] `CachedMelDataset` — implement or remove import from train_local_radeon.py, train_clara_kaggle.py
+- [ ] `psutil` — add to requirements or wrap in try/except with warning
+
+### 5.3 Fix validate_export.py
+- [ ] Docstring says "Version 2" → "Version 3" (code already expects V3)
+
+### 5.4 Clean stale artifacts
+- [ ] `find . -type d -name __pycache__ -exec rm -rf {} +`
+- [ ] `rm -rf scripts/checkpoints/`
+
+---
+
+## PHASE 6: Build system & CI
+
+### 6.1 CMake presets
+- [ ] Add `linux-release` → inherits `default` (backwards compat)
+- [ ] Add `windows-release` → inherits `windows-msvc-release` (backwards compat)
+
+### 6.2 CI improvements
+- [ ] Add macos-14 build job
+- [ ] Add macos-14 test job
+- [ ] Test job: download build artifact instead of rebuilding
+- [ ] test-windows: add Python validation (validate_export.py)
+- [ ] Pin clap-validator to a version
+
+### 6.3 CMakeLists.txt fixes
+- [ ] generate_reference_outputs: remove ALL target, make test dependency
+- [ ] test_clap_plugin: link Mamba3Core static lib instead of recompiling source
+- [ ] Reconsider -ffast-math for test builds (may break bit-exact equivalence)
+
+---
+
+## PHASE 7: Repo hygiene
+
+### 7.1 .gitignore additions
+- [ ] Add `.env*` and `.env.*`
+- [ ] Add `.agent_context/`
+
+### 7.2 Cleanup
+- [ ] Commit or discard docs/CHANGELOG.md unstaged changes
+- [ ] `rm -rf build/` (stale ONNX Runtime artifacts)
+- [ ] Rebuild from clean: `cmake -B build -DBUILD_TESTING=ON`
+
+---
+
+## PHASE 8: Final verification
+
+- [ ] `grep -r "train_clara.py" --include="*.md" --include="*.py" --include="*.sh"` returns ZERO results
+- [ ] `grep -r "757K\|757,032" --include="*.md" --include="*.py"` returns ZERO results (except historical ADRs)
+- [ ] `grep -r "linux-release" --include="*.md"` returns ZERO results (except preset alias docs)
+- [ ] `cmake --preset default` builds successfully
+- [ ] `cmake -B build -DBUILD_TESTING=ON && cmake --build build --parallel && ctest --test-dir build` passes
+- [ ] Python smoke test passes
+- [ ] train_clara.py --export produces valid v3 model.bin
+- [ ] C++ engine loads exported model.bin
+- [ ] No `using namespace` in any .h/.hpp file
+- [ ] No dead code files (ConditioningFrame.h, validate_config, mambaResolveModelDir)
+- [ ] CI passes on ubuntu-22.04, macos-14, windows-2022
+- [ ] validate_export.py models/model.bin passes

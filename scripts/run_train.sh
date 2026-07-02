@@ -103,7 +103,7 @@ mkdir -p "${CKPT_DIR}"
 LOGFILE="${CKPT_DIR}/train.log"
 
 echo "======================================================================"
-echo " Command: python train_mamba3.py ${ARGS[*]}"
+echo " Command: python train_clara.py ${ARGS[*]}"
 echo " Log:     ${LOGFILE}"
 echo " Monitor: watch -n 2 rocm-smi --showtemp --showpower --showuse --showmemuse"
 echo "======================================================================"
@@ -111,7 +111,7 @@ echo ""
 
 # ── Launch ────────────────────────────────────────────────────────────────
 echo "=== CLARA Training Start: $(date) ===" | tee -a "${LOGFILE}"
-python "${SCRIPT_DIR}/python/training/train_mamba3.py" "${ARGS[@]}" 2>&1 | tee -a "${LOGFILE}"
+python "${SCRIPT_DIR}/python/training/train_clara.py" "${ARGS[@]}" 2>&1 | tee -a "${LOGFILE}"
 EXIT_CODE=$?
 echo "=== CLARA Training End: $(date) (exit=${EXIT_CODE}) ===" | tee -a "${LOGFILE}"
 

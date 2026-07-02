@@ -42,7 +42,7 @@ export HSA_ENABLE_SDMA=0
 export PYTORCH_ALLOC_CONF=garbage_collection_threshold:0.8,max_split_size_mb:256
 export MIOPEN_FIND_MODE=5
 
-TRAIN_CMD="python train_mamba3.py \
+TRAIN_CMD="python train_clara.py \
   --data ~/datasets/musdb18hq/train \
   --save ${CHECKPOINT_DIR} \
   --device cuda"

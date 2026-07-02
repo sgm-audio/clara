@@ -41,7 +41,7 @@ EXIT_CODE=$?
 if [ $EXIT_CODE -eq 0 ]; then
     echo "======================================================================"
     echo " Smoke test PASSED — proceed to training"
-    echo "   python python/training/train_mamba3.py --data /path/to/musdb18hq --device cuda"
+    echo "   python python/training/train_clara.py --data /path/to/musdb18hq --device cuda"
     echo "======================================================================"
 else
     echo "======================================================================"

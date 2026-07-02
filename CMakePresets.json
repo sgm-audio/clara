@@ -99,6 +99,26 @@
         "lhs": "${hostSystemName}",
         "rhs": "Windows"
       }
+    },
+    {
+      "name": "linux-release",
+      "inherits": "default",
+      "description": "Alias for 'default' preset (backward compatibility)",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "windows-release",
+      "inherits": "windows-msvc-release",
+      "description": "Alias for 'windows-msvc-release' preset (backward compatibility)",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
     }
   ],
   "buildPresets": [

@@ -1,12 +1,14 @@
 # Architecture Comparison — Clara Mamba-3 vs mamba3 Drive PerTrackProcessor
 
-**Date:** 2026-06-20
+**Date:** 2026-06-20 | **Updated:** 2026-07-02
+**Decision (2026-07-02):** PerTrackProcessor adopted as canonical architecture (Option B).
+C++ engine being updated to R=8. See `docs/TODO.md` for the H3 work item.
 
 ---
 
 ## TL;DR
 
-These are **different models**. The mamba3 drive's `PerTrackProcessor` (3.9M params, spectral domain, chunk_size=128) is incompatible with Clara's time-domain Mamba-3 (1.6M params, no STFT, chunk_size=64). No architecture port is planned.
+These were **different models**. The mamba3 drive's `PerTrackProcessor` (3.9M params, spectral domain, chunk_size=128) was incompatible with Clara's original time-domain Mamba-3 (1.66M params, no STFT, chunk_size=64). **As of July 2026, PerTrackProcessor has been adopted as the canonical CLARA architecture.**
 
 ---
 
@@ -161,7 +163,7 @@ class PerTrackProcessor(nn.Module):
 
 | Aspect | Clara | mamba3 Drive |
 |--------|-------|-------------|
-| Script | `train_mamba3.py` (1,258 lines) | `train.py` (1,164 lines) |
+| Script | `train_clara.py` (1,258 lines) | `train.py` (1,164 lines) |
 | Dataset | MUSDB18-HQ (WAV) | MUSDB18-HQ (WAV) |
 | Loss | MSE + Multi-Resolution STFT | MSE + Multi-Resolution STFT + SI-SDR |
 | Optimizer | AdamW | AdamW |
@@ -188,7 +190,7 @@ class PerTrackProcessor(nn.Module):
 
 4. **No benefit** — Clara's 1.6M time-domain model is designed for zero-latency real-time processing. The mamba3 drive's 3.9M spectral model has higher latency (STFT window) and higher compute cost.
 
-5. **Already has all improvements** — The 6 training-loop improvements from the mamba3 drive are already in Clara's `train_mamba3.py`.
+5. **Already has all improvements** — The 6 training-loop improvements from the mamba3 drive are already in Clara's `train_clara.py`.
 
 ---
 

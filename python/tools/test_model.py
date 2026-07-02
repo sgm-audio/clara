@@ -245,7 +245,7 @@ def main():
     if passed == total:
         print(f"\n  {PASS} Ready to train:")
         print(
-            "     HSA_OVERRIDE_GFX_VERSION=11.0.0 HIP_VISIBLE_DEVICES=0 ROC_VISIBLE_DEVICES=0 python train_mamba3.py --data ~/datasets/musdb18hq/train --device cuda"
+            "     HSA_OVERRIDE_GFX_VERSION=11.0.0 HIP_VISIBLE_DEVICES=0 ROC_VISIBLE_DEVICES=0 python train_clara.py --data ~/datasets/musdb18hq/train --device cuda"
         )
     else:
         print(f"\n  {FAIL} Fix failures first")

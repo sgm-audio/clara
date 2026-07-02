@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLARA Mamba-3 Training Pipeline — train_mamba3_kaggle.py
+"""CLARA Mamba-3 Training Pipeline — train_clara_kaggle.py
 
 Phase 8: Trains the 757K-param Mamba-3 model for real-time audio processing.
 Matches reference_forward.py architecture bit-for-bit.
@@ -12,13 +12,13 @@ Stage 1 (per-effect): Supervised training for saturation/compression/denoising.
 
 Usage:
     # Stage 0: identity pretraining
-    python train_mamba3.py --data ~/datasets/musdb18hq/train --device cuda --steps 100000
+    python train_clara.py --data ~/datasets/musdb18hq/train --device cuda --steps 100000
 
     # Export weights after training
-    python train_mamba3.py --export checkpoints/final.pt --output models/model_trained.bin
+    python train_clara.py --export checkpoints/final.pt --output models/model_trained.bin
 
     # Resume from checkpoint
-    python train_mamba3.py --resume checkpoints/step_050000.pt --steps 100000
+    python train_clara.py --resume checkpoints/step_050000.pt --steps 100000
 """
 
 import argparse
