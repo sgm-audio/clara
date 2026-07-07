@@ -2,7 +2,9 @@
 
 **Current state (July 2026):** C++ engine is R=4 time-domain Mamba-3 (shipping). C++ engine rewrite to R=8 PerTrackProcessor (H3) is the next milestone. Training pipeline has both R=4 (`train_local_radeon.py`) and R=8 (`train_clara.py`) trainers. No ONNX Runtime dependency.
 
-**Current build:** `cmake -B build -DBUILD_TESTING=ON && cmake --build build --parallel && ctest --test-dir build` — 3/3 tests pass.
+**Incubator checklist:** `docs/INCUBATOR_CHECKLIST.md` — the agent MUST read this file at session start and execute any pending items before doing other work. It contains the post-reboot build, training, and DAW test steps.
+
+**Current build:** `cmake -B build -DBUILD_TESTING=ON && cmake --build build --parallel && ctest --test-dir build` — 4/4 tests pass.
 
 **Migration plan:** `docs/MAMBA3_MIGRATION_PLAN.md` — complete architecture, model config, C++ engine spec, training pipeline, product roadmap, risk register, and phase-by-phase implementation plan.
 

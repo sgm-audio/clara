@@ -1680,3 +1680,56 @@ python3 python/tools/validate_export.py models/model_trained.bin
 2. **Phase 4: MinGW cross-compile** — toolchain file, Windows VST3 build
 3. **Training** — must be run interactively (ROCm background deadlock). User can run `python3 train_local_radeon.py --warmup-chunk 64 --steps 100000` in a terminal
 4. **DAW load test** — user reboots to Windows, copies VST3, loads in Ableton
+
+---
+
+## Session 2026-07-07 (continued) — Native GUI + MinGW Toolchain
+
+**Duration:** ~2 hours
+**Objective:** Phase 3 (native framebuffer GUI), Phase 4 (MinGW cross-compile)
+
+### ✅ Accomplished
+
+**Phase 3 — Native framebuffer GUI (CLAP_EXT_GUI):**
+- Created `src/gui/MambaNativeGUI.hpp` with:
+  - `MambaPixelBuffer` — shared RGBA8 pixel buffer with software 2D drawing primitives (fillRect, fillGradient, drawSlider, drawLevelMeter)
+  - `MambaNativeGUIState` — platform window handles, mouse state, drag tracking
+  - Full CLAP_EXT_GUI interface: is_api_supported, create, destroy, show, hide, set_parent, get_size, etc.
+  - Per-platform blit: X11 (XPutImage) on Linux, Win32 GDI (BitBlt + CreateDIBSection) on Windows
+  - Mouse input: hit-testing on slider tracks, click+drag for param changes
+  - Timer callback for level meter redraws
+- Registered `CLAP_EXT_GUI` in `mamba_get_extension()`
+- Added `nativeGUI` pointer to `MambaPluginState`
+- Linked X11 on Linux for CLAP plugin and test targets
+
+**Phase 4 — MinGW cross-compile toolchain:**
+- Installed `mingw64-gcc-c++` via rpm-ostree (requires reboot)
+- Created `cmake/toolchains/mingw64.cmake` with static linking flags
+- Build command after reboot: `cmake -B build-windows -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw64.cmake -DBUILD_TESTING=OFF && cmake --build build-windows --target MambaSuite_as_vst3 --parallel`
+
+### 📁 Files Changed (7 files, 1 commit)
+
+| File | Change |
+|------|--------|
+| `src/gui/MambaNativeGUI.hpp` | NEW — full CLAP_EXT_GUI implementation with software framebuffer |
+| `cmake/toolchains/mingw64.cmake` | NEW — MinGW cross-compile toolchain |
+| `src/clap/MambaClapPlugin.hpp` | Add nativeGUI pointer, forward declare MambaNativeGUIState |
+| `src/clap/MambaClapPlugin.cpp` | Register CLAP_EXT_GUI extension |
+| `CMakeLists.txt` | Link X11 on Linux for CLAP target |
+| `tests/CMakeLists.txt` | Link X11 for test_clap_plugin |
+
+### 🔢 Key Numbers
+- Native GUI: **~350 lines** (shared drawing + platform blits + CLAP interface)
+- MinGW toolchain: **~20 lines**
+- C++ tests: **4/4 pass** (test_mamba3, test_clap_plugin, test_ara_controller, clap_validator)
+
+### 🧱 What's Left
+1. **Reboot** to activate MinGW toolchain, then build Windows VST3
+2. **Training** — run interactively in terminal (ROCm background deadlock):
+   ```bash
+   HSA_OVERRIDE_GFX_VERSION=11.0.0 ~/micromamba/envs/rocm_torch/bin/python3 \
+     python/training/train_local_radeon.py \
+     --data /run/media/sgm/Data/datasets/musdb18hq/train \
+     --steps 100000 --chunk-samples 2048 --warmup-chunk 64
+   ```
+3. **DAW load test** — reboot to Windows, copy VST3, load in Ableton
