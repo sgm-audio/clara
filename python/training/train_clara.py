@@ -899,10 +899,11 @@ def train(args):
     print(f"  in_proj_dim: {cfg.in_proj_dim}")
     print(f"  STFT: n_fft={cfg.n_fft}, hop={cfg.hop_length}")
 
-    # Gradient checkpointing on all Mamba layers
-    for layer in model.mamba_layers:
-        layer.gradient_checkpointing = True
-    print("  Gradient checkpointing: ON")
+    # Gradient checkpointing disabled.
+    # ponytail: torch.checkpoint with use_reentrant=False leaks memory
+    # (25GB RSS in 10 steps on real data). Model is 81 MB peak without it.
+    # Also incompatible with AMP on ROCm (CheckpointError).
+    print("  Gradient checkpointing: OFF (disabled — memory leak)")
 
     # ── Losses ──
     task_loss = TrackProcessorLoss(cfg.sample_rate).to(device)
@@ -1132,13 +1133,17 @@ def train(args):
 
                 else:
                     # Phase 3: Cross-track conditioned
+                    # ponytail: no_grad for other-stem emb extraction — autograd
+                    # would track 4× model passes simultaneously (OOM). We only
+                    # backprop through the target pass.
                     K = other_stems.shape[1]
                     other_embs_list = []
-                    for k in range(K):
-                        stem_k = other_stems[:, k, :]
-                        crepe_k = other_crepe[:, k, :T_frames, :]
-                        out_k = model(stem_k, crepe_k, other_embs=None)
-                        other_embs_list.append(out_k["track_emb"])
+                    with torch.no_grad():
+                        for k in range(K):
+                            stem_k = other_stems[:, k, :]
+                            crepe_k = other_crepe[:, k, :T_frames, :]
+                            out_k = model(stem_k, crepe_k, other_embs=None)
+                            other_embs_list.append(out_k["track_emb"].detach())
                     other_embs = torch.stack(other_embs_list, dim=1)
                     out = model(target, target_crepe, other_embs=other_embs)
                     loss_dict = task_loss(out["output_stft"], target, model)

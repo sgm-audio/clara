@@ -56,11 +56,24 @@ FetchContent_MakeAvailable(clap)
 FetchContent_Declare(
     ara_sdk
     GIT_REPOSITORY https://github.com/Celemony/ARA_SDK.git
-    GIT_TAG 1ca0b0aa65a73e932daa4a9402387a8afa5afd17
+    GIT_TAG releases/2.3.0
 )
 FetchContent_MakeAvailable(ara_sdk)
 
-
+# 3. Fetch clap-wrapper (for VST3 + AU builds)
+# We only declare it here; add_subdirectory is used later for the VST3 target.
+set(CLAP_SDK_ROOT ${clap_SOURCE_DIR} CACHE INTERNAL "CLAP SDK root for clap-wrapper")
+set(CLAP_WRAPPER_DOWNLOAD_DEPENDENCIES ON CACHE INTERNAL "Auto-download VST3 SDK")
+FetchContent_Declare(
+    clap_wrapper
+    GIT_REPOSITORY https://github.com/free-audio/clap-wrapper.git
+    GIT_TAG v0.9.1
+)
+# Populate without MakeAvailable to avoid running its CMakeLists.txt twice
+FetchContent_GetProperties(clap_wrapper)
+if(NOT clap_wrapper_POPULATED)
+    FetchContent_Populate(clap_wrapper)
+endif()
 
 # Common include directories
 set(COMMON_INCLUDES
@@ -165,8 +178,39 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(MambaSuiteARA PRIVATE pthread dl)
 endif()
 
+# --- VST3 Wrapper (via clap-wrapper) ---
+# Wraps the built MambaSuiteClap.clap into a native VST3 for Ableton Live etc.
+set(CLAP_WRAPPER_OUTPUT_NAME "MambaSuite" CACHE STRING "VST3 output name")
+set(CLAP_WRAPPER_BUNDLE_IDENTIFIER "com.clara.mambasuite" CACHE STRING "macOS bundle ID")
+set(CLAP_WRAPPER_BUNDLE_VERSION "${PROJECT_VERSION}" CACHE STRING "Bundle version")
+set(CLAP_WRAPPER_BUILD_STANDALONE OFF CACHE BOOL "Skip standalone target")
+set(CLAP_WRAPPER_BUILD_AUV2 OFF CACHE BOOL "Skip AUv2 target for now")
+
+# clap-wrapper creates MambaSuite_as_vst3 in its own subdirectory scope.
+# Suppress GCC 16 warnings in clap-wrapper's bundled fmt library (older fmt + GCC 16)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-dangling-reference -Wno-tautological-compare")
+add_subdirectory(${clap_wrapper_SOURCE_DIR} build/clap_wrapper_build EXCLUDE_FROM_ALL)
+
+# Set output directory and model deploy via global properties
+set_property(TARGET MambaSuite_as_vst3 PROPERTY
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins)
+set_property(TARGET MambaSuite_as_vst3 PROPERTY
+    CXX_VISIBILITY_PRESET hidden)
+set_property(TARGET MambaSuite_as_vst3 PROPERTY
+    POSITION_INDEPENDENT_CODE ON)
+
+# Deploy models via install rule (works across directory boundaries)
+if(EXISTS ${CMAKE_SOURCE_DIR}/models)
+    install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
+        DESTINATION ${CMAKE_BINARY_DIR}/plugins/MambaSuite.vst3/Contents/Resources/models
+        COMPONENT vst3
+        FILES_MATCHING PATTERN "*.bin"
+    )
+endif()
+
 # Strip release builds (Unix linker flag — generator-expr for multi-config support)
 target_link_options(MambaSuiteClap PRIVATE $<$<AND:$<PLATFORM_ID:Linux,Darwin>,$<CONFIG:Release>>:-s>)
+target_link_options(MambaSuite_as_vst3 PRIVATE $<$<AND:$<PLATFORM_ID:Linux,Darwin>,$<CONFIG:Release>>:-s>)
 target_link_options(MambaSuiteARA PRIVATE $<$<AND:$<PLATFORM_ID:Linux,Darwin>,$<CONFIG:Release>>:-s>)
 
 # ---------------------------------------------------------------------------
@@ -221,7 +265,7 @@ add_subdirectory(tests)
 if(BUILD_TESTING)
     add_custom_target(clara_test
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-        DEPENDS MambaSuiteClap MambaSuiteARA
+        DEPENDS MambaSuiteClap MambaSuite_as_vst3 MambaSuiteARA
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         COMMENT "Running CTest (unit tests + clap-validator)"
     )

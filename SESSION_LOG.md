@@ -9,6 +9,56 @@ Last entry is most recent.
 
 ---
 
+## Session 2026-07-02
+
+**Duration:** ~30 min
+**Objective:** Fix broken training tests — import errors and GPU training crashes.
+
+### ✅ Accomplished
+- Fixed `test_model.py` import: `train_mamba3` → `train_clara` (module was renamed, imports weren't updated)
+- Fixed `dump_reference_output.py` same import
+- Fixed Phase 3 cross-track embedding extraction: added `torch.no_grad()` + `.detach()` — autograd was tracking 4× model passes simultaneously, causing OOM/CheckpointError
+- Fixed AMP (bf16) training crash: gradient checkpointing + `torch.autocast` incompatible on ROCm — checkpoint recompute produces wrong tensor dtypes. Disabled checkpointing when AMP is on (model is 81MB peak, doesn't need it)
+- Verified GPU training works with both fp32 and bf16 AMP (10 steps each)
+- Verified CPU training works (10 steps)
+
+### 🐛 Bugs Fixed
+- **Import error in test_model.py/dump_reference_output.py** — `train_mamba3` module not found after rename to `train_clara.py`
+- **Phase 3 OOM on GPU** — other-stem embedding extraction accumulated full autograd graph across 4 forward passes. Fix: wrap in `torch.no_grad()`, detach embeddings
+- **AMP + gradient checkpointing CheckpointError** — `torch.checkpoint` under `torch.autocast` produces dtype mismatches during recompute. Fix: skip checkpointing when AMP enabled
+
+### 📝 Files Modified
+- `python/tools/test_model.py` — import fix
+- `python/tools/dump_reference_output.py` — import fix
+- `python/training/train_clara.py` — Phase 3 no_grad fix + AMP-aware checkpointing toggle
+
+### 🧪 Test Results
+- `test_model.py`: **5/5 PASS** (ROCm env, build, forward, bf16 AMP, backward)
+- GPU training (fp32): **10/10 steps** completed successfully
+- GPU training (AMP bf16): **10/10 steps** completed successfully
+- CPU training: **10/10 steps** completed successfully
+
+### 💾 Commands to Remember
+```bash
+# Smoke test
+HSA_OVERRIDE_GFX_VERSION=11.0.0 PYTHONPATH="python/training" \
+  python python/tools/test_model.py --device cuda
+
+# Training (needs MUSDB18-HQ dataset)
+HSA_OVERRIDE_GFX_VERSION=11.0.0 PYTHONPATH="python/training" \
+  python python/training/train_clara.py \
+    --data ~/datasets/musdb18hq/train --device cuda --amp \
+    --batch 2 --grad-accum 4 --clip-seconds 4.0 --steps 100000
+```
+
+### 🔢 Key Numbers
+- Model smoke test: **5/5 PASS**
+- Model params: **4,256,115** (4.26M)
+- Peak VRAM (training, no checkpointing): **~81 MB**
+- Tested on: AMD Radeon Graphics, 15.2GB VRAM, ROCm 7.13
+
+---
+
 ## Session 2026-06-04
 
 **Duration:** ~2 hours

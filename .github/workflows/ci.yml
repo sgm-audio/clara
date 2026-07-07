@@ -89,12 +89,16 @@ jobs:
         run: |
           python3 python/tools/validate_export.py
 
+      - name: Build VST3 wrapper
+        run: cmake --build build --target MambaSuite_as_vst3 --parallel $(nproc)
+
       - name: Upload plugins artifact
         uses: actions/upload-artifact@v4
         with:
           name: mamba-plugins-${{ github.sha }}
           path: |
             build/plugins/MambaSuiteClap.clap
+            build/plugins/MambaSuite.so
             build/plugins/MambaSuiteARA.so
             build/plugins/models/
           if-no-files-found: error

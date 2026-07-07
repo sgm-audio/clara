@@ -28,7 +28,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "training"))
-from train_mamba3 import Mamba3Config, PerTrackProcessor, export_weights
+from train_clara import Mamba3Config, PerTrackProcessor, export_weights
 
 # ── Constants ───────────────────────────────────────────────────────────
 
