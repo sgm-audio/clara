@@ -3,6 +3,11 @@
 #include "../core/SPSCQueue.hpp"
 #include "../core/SsmInferenceCore.h"
 
+// Forward declare webview state (defined in MambaWebviewGUI.hpp, included in .cpp)
+namespace clara::mamba3 {
+struct MambaWebviewState;
+}
+
 #include <clap/clap.h>
 #include <clap/ext/render.h>
 #include <clap/ext/state-context.h>
@@ -10,6 +15,7 @@
 #include <clap/ext/tail.h>
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -61,6 +67,13 @@ struct MambaPluginState {
     };
     std::vector<PresetEntry> presets; // indexed by preset ID
     int activePreset = -1;            // -1 = none active
+
+    // Webview GUI state (heap-allocated to avoid header dependency)
+    clara::mamba3::MambaWebviewState *webviewState{nullptr};
+
+    // Level meter (written on audio thread, read on main thread)
+    std::atomic<float> peakIn{0.0f};
+    std::atomic<float> peakOut{0.0f};
 };
 
 extern "C" const clap_plugin_descriptor_t mamba_plugin_info;

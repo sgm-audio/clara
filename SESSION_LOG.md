@@ -1534,3 +1534,95 @@ clara/
 - No `using namespace` in any header
 - No stale ONNX references in C++ comments
 - CMake presets backward-compatible with old names
+
+---
+
+## Session 2026-07-06 — Incubator-Testable State
+
+**Duration:** ~4 hours
+**Objective:** Audit project for completeness and get it to a state a leader at a tech incubator could test in Ableton Live.
+
+### ✅ Accomplished
+
+**Pre-checks (3):**
+1. Confirmed `train_clara.py` trains R=8 V3 (PerTrackProcessor, spectral, 4.26M params) — incompatible with current C++ engine
+2. Found `train_local_radeon.py` as the only R=4 V2 training pipeline (Mamba-3, time-domain, 1.66M params) — matches C++ engine
+3. Verified clap-wrapper v0.9.1 integration approach — uses `add_subdirectory` with `CLAP_SDK_ROOT` pointing to fetched CLAP SDK
+
+**Stage 1 — Documentation honesty pass:**
+- Rewrote `README.md` to accurately describe the R=4 time-domain engine as shipping, R=8 PerTrackProcessor as next milestone
+- Added "Status — what works right now" table for incubator leader
+- Fixed all stale R=8 spectral-domain claims, param counts (4.26M→1.66M), and conditioning vector layout
+- Rewrote `AGENTS.md` to match — current engine is R=4 V2, target is R=8 V3
+
+**Stage 2 — Train R=4 V2 model:**
+- Fixed `train_local_radeon.py` export key names (`B_norm_weight`→`B_norm_w`, `C_norm_weight`→`C_norm_w`)
+- Fixed `validate_export.py` to accept V2 format (version=2, 13 arrays/layer, R=4)
+- Trained on MUSDB18-HQ (217 files, 13.3 hours) for 6000 steps at ~11 step/s on local 860M ROCm
+- Loss: 15.9→0.35 (identity reconstruction)
+- Exported `model_trained.bin` (V2, 6.6MB, 1,662,384 params)
+- C++ engine loads and processes: all 7 test_mamba3 checks pass (init, silence, sine, conditioning, deterministic, state continuity, long stability)
+
+**Stage 3 — VST3 target via clap-wrapper:**
+- Added clap-wrapper v0.9.1 as FetchContent dependency
+- Created `MambaSuite_as_vst3` target producing `MambaSuite.so` (1.6MB, VST3 binary)
+- Suppressed GCC 16 warnings in clap-wrapper's bundled fmt library
+- VST3 binary exports `GetPluginFactory` — loadable in Ableton Live
+- Updated CI to build and upload VST3 artifact
+
+**Stage 5 — Cleanup:**
+- Removed stale `libonnxruntime.so` from build artifacts
+- All 4 CTest tests pass: `test_mamba3`, `test_clap_plugin`, `test_ara_controller`, `clap_validator`
+- Model export validation passes: `validate_export.py models/model_trained.bin` → ✅
+
+### 📁 Files Changed (14 files, 1 commit)
+
+| File | Change |
+|------|--------|
+| `README.md` | Rewritten for R=4 reality, added status table, VST3 instructions |
+| `AGENTS.md` | Rewritten for R=4 current / R=8 planned |
+| `CMakeLists.txt` | Added clap-wrapper FetchContent + VST3 target, updated ARA SDK tag |
+| `.github/workflows/ci.yml` | Added VST3 build step, upload VST3 artifact |
+| `python/training/train_local_radeon.py` | Fixed export key names (B_norm_w/C_norm_w) |
+| `python/tools/validate_export.py` | Accept V2 format (version=2, 13 arrays, R=4) |
+| `models/model.bin` | Updated to trained model |
+| `models/model_trained.bin` | New trained model (6000 steps, loss 0.35) |
+
+### 🐛 Bugs Fixed
+- **Export key mismatch:** `train_local_radeon.py` expected `B_norm_weight`/`C_norm_weight` but model has `B_norm_w`/`C_norm_w` — export crashed with KeyError
+- **validate_export.py V2 rejection:** Expected V3 (version=3, R=8) only — now accepts V2 (version=2, R=4) with correct array layout
+- **clap-wrapper GCC 16 incompatibility:** Bundled fmt library has `-Wdangling-reference` and `-Wtautological-compare` errors on GCC 16 — suppressed with `-Wno-*` flags
+
+### 🔢 Key Numbers
+- Model params: **1,662,384** (R=4 V2, time-domain)
+- Training steps: **6,000** (loss 0.35, identity reconstruction)
+- Training speed: **~11 step/s** (ROCm 860M, chunk_samples=64)
+- C++ tests: **4/4 pass** (test_mamba3, test_clap_plugin, test_ara_controller, clap_validator)
+- VST3 binary: **1.6 MB** (MambaSuite.so, exports GetPluginFactory)
+- CLAP binary: **137 KB** (MambaSuiteClap.clap)
+- ARA binary: **762 KB** (MambaSuiteARA.so)
+- Model export: **6.6 MB** (V2, 13 arrays/layer × 6 layers)
+
+### 💾 Verified Commands
+```bash
+# Build everything
+cmake -B build -DBUILD_TESTING=ON
+cmake --build build --parallel
+cmake --build build --target MambaSuite_as_vst3 --parallel
+
+# Deploy model
+cp models/model_trained.bin build/plugins/models/model.bin
+
+# Run tests
+ctest --test-dir build --output-on-failure
+
+# Validate export
+python3 python/tools/validate_export.py models/model_trained.bin
+```
+
+### 🧱 Remaining Gaps (for incubator leader to know)
+1. **No GUI** — generic host editor with 3 sliders (bypass, wet/dry, intensity)
+2. **Model quality limited** — 6000 steps of identity training on 64-sample chunks. Audible but not musically useful
+3. **No DAW load test** — engine works in tests, needs Ableton Live validation
+4. **macOS/Windows builds** — CMake presets defined, not tested
+5. **R=8 PerTrackProcessor** — C++ engine rewrite is the next milestone (H3 in TODO.md)

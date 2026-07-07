@@ -6,6 +6,8 @@
 
 #include "core/ConditioningGenerator.hpp"
 #include "core/Platform.hpp"
+#include "gui/MambaNativeGUI.hpp"
+#include "gui/MambaWebviewGUI.hpp"
 
 #include <clap/ext/audio-ports.h>
 #include <clap/ext/latency.h>
@@ -425,6 +427,23 @@ static clap_process_status mamba_process(const clap_plugin_t *plugin, const clap
         std::memcpy(process->audio_outputs[0].data32[ch], process->audio_outputs[0].data32[0],
                     numSamples * sizeof(float));
 
+    // Level meter (RMS over current block, smoothed)
+    float peakInVal = 0.0f, peakOutVal = 0.0f;
+    for (uint32_t ch = 0; ch < processChans; ++ch) {
+        for (uint32_t s = 0; s < numSamples; ++s) {
+            float in = process->audio_inputs[0].data32[ch][s];
+            float out = process->audio_outputs[0].data32[ch][s];
+            peakInVal = std::max(peakInVal, std::abs(in));
+            peakOutVal = std::max(peakOutVal, std::abs(out));
+        }
+    }
+    // Smooth with exponential moving average
+    const float alpha = 0.3f;
+    float prevIn = state->peakIn.load(std::memory_order_relaxed);
+    float prevOut = state->peakOut.load(std::memory_order_relaxed);
+    state->peakIn.store(prevIn + alpha * (peakInVal - prevIn), std::memory_order_relaxed);
+    state->peakOut.store(prevOut + alpha * (peakOutVal - prevOut), std::memory_order_relaxed);
+
     return CLAP_PROCESS_CONTINUE;
 }
 
@@ -452,7 +471,7 @@ static const clap_plugin_audio_ports_t mamba_audio_ports_extension = {clap_audio
 // Extensions
 // -----------------------------------------------------------------------------
 
-const void *mamba_get_extension(const clap_plugin_t *, const char *extensionId) {
+const void *mamba_get_extension(const clap_plugin_t *plugin, const char *extensionId) {
     if (strcmp(extensionId, CLAP_EXT_STATE) == 0) return &mamba_state_extension;
     if (strcmp(extensionId, CLAP_EXT_STATE_CONTEXT) == 0) return &mamba_state_context_extension;
     if (strcmp(extensionId, CLAP_EXT_PARAMS) == 0) return &mamba_params_extension;
@@ -460,6 +479,16 @@ const void *mamba_get_extension(const clap_plugin_t *, const char *extensionId) 
     if (strcmp(extensionId, CLAP_EXT_AUDIO_PORTS) == 0) return &mamba_audio_ports_extension;
     if (strcmp(extensionId, CLAP_EXT_RENDER) == 0) return &mamba_render_extension;
     if (strcmp(extensionId, CLAP_EXT_TAIL) == 0) return &mamba_tail_extension;
+    if (strcmp(extensionId, CLAP_EXT_WEBVIEW) == 0) {
+        // Store host webview extension for sending messages
+        auto *state = (MambaPluginState *) plugin->plugin_data;
+        if (state && state->host) {
+            if (!state->webviewState) state->webviewState = new MambaWebviewState();
+            state->webviewState->hostWebview =
+                (const clap_host_webview_t *) state->host->get_extension(state->host, CLAP_EXT_WEBVIEW);
+        }
+        return &mamba_webview_extension;
+    }
     return nullptr;
 }
 
@@ -495,6 +524,16 @@ static void mamba_on_main_thread(const clap_plugin_t *plugin) {
                 // Future: ARA bridge updates condBuffer from musical context
                 break;
         }
+    }
+
+    // Send level meter data to webview (if open)
+    auto *wv = state->webviewState;
+    if (wv && wv->webviewOpen && wv->hostWebview && wv->hostWebview->send) {
+        float peakIn = state->peakIn.load(std::memory_order_relaxed);
+        float peakOut = state->peakOut.load(std::memory_order_relaxed);
+        char buf[128];
+        int n = std::snprintf(buf, sizeof(buf), R"({"type":"level","input":%.4f,"output":%.4f})", peakIn, peakOut);
+        if (n > 0 && n < (int) sizeof(buf)) wv->hostWebview->send(state->host, buf, (uint32_t) n);
     }
 }
 

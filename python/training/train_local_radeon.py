@@ -582,10 +582,20 @@ def train(args):
     print(f"  AMP: {'OFF (NaN-safe for RDNA 3.5)' if not use_amp else amp_dtype}")
     print(f"  chunk_samples={args.chunk_samples}, num_workers=0")
 
-    # GPU warmup — skip; ROCm STFT compilation is slow and can hang.
-    # First real training step will trigger compilation, then subsequent steps
-    # will be fast. If first step is slow, that's expected — it's not a bug.
-    if device.type == "cuda":
+    # GPU warmup — run 1 step at --warmup-chunk to trigger MIOpen compilation
+    # before the main training loop. This prevents the first real step from
+    # hanging on ROCm. The warmup step uses a tiny chunk size (default 64)
+    # which compiles quickly, then the main loop uses --chunk-samples.
+    if args.warmup_chunk > 0 and device.type == "cuda":
+        print(f"  GPU warmup: 1 step at chunk_samples={args.warmup_chunk}")
+        torch.cuda.empty_cache()
+        warmup_audio = torch.randn(args.batch, args.warmup_chunk, device=device)
+        warmup_cond = torch.randn(args.batch, cfg.cond_dim, device=device) * 0.1
+        with torch.no_grad():
+            _ = model(warmup_audio, warmup_cond)
+        torch.cuda.empty_cache()
+        print("  GPU warmup complete — MIOpen kernels compiled")
+    elif device.type == "cuda":
         print("  Skipping GPU warmup (first training step triggers STFT compilation)")
 
     while step < args.steps:
@@ -791,6 +801,12 @@ def main():
         type=int,
         default=2048,
         help="Audio chunk length in samples (44100 Hz × seconds)",
+    )
+    parser.add_argument(
+        "--warmup-chunk",
+        type=int,
+        default=0,
+        help="Run 1 warmup step at this chunk size before main training (triggers MIOpen compilation)",
     )
     parser.add_argument(
         "--num-workers", type=int, default=0, help="DataLoader workers (0 = safe for ROCm)"
