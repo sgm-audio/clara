@@ -1626,3 +1626,57 @@ python3 python/tools/validate_export.py models/model_trained.bin
 3. **No DAW load test** — engine works in tests, needs Ableton Live validation
 4. **macOS/Windows builds** — CMake presets defined, not tested
 5. **R=8 PerTrackProcessor** — C++ engine rewrite is the next milestone (H3 in TODO.md)
+
+---
+
+## Session 2026-07-07 — Webview GUI, Training Prep, Native GUI Stub
+
+**Duration:** ~3 hours
+**Objective:** Phase 1 (training prep), Phase 2 (webview GUI), Phase 3 (native GUI stub)
+
+### ✅ Accomplished
+
+**Phase 1 — Training prep:**
+- Added `--warmup-chunk` flag to `train_local_radeon.py` — runs 1 warmup step at a small chunk size to trigger MIOpen compilation before the main training loop
+- Verified warmup trick works at chunk_samples=2048 (no hang)
+- 100K-step training blocked by ROCm background-process GPU deadlock — `nohup`/`setsid` processes hang during dataset loading. The dataset loads fine interactively (34s for 217 files). The deadlock is specific to background processes on this ROCm + Bazzite setup.
+- **Workaround:** Training must be run interactively (in a terminal, not backgrounded)
+
+**Phase 2 — CLAP webview GUI:**
+- Created `src/gui/MambaWebviewGUI.hpp` with:
+  - Inline HTML/CSS/JS page (dark theme, 3 sliders, level meter, model info)
+  - `get_uri()` returns `data:text/html,` with URL-encoded HTML
+  - `get_resource()` returns false (all resources inline)
+  - `receive()` parses JSON messages from webview, updates plugin atomics
+  - `MambaWebviewState` struct with host webview callback pointer
+- Wired into `MambaClapPlugin.cpp`:
+  - Register `CLAP_EXT_WEBVIEW` extension in `mamba_get_extension()`
+  - Level meter computation in `process()` (RMS, EMA-smoothed)
+  - Webview level meter updates in `mamba_on_main_thread()`
+- Builds clean, all 4 CTest tests pass
+
+**Phase 3 — Native GUI stub:**
+- Created `src/gui/MambaNativeGUI.hpp` with CLAP_EXT_GUI include
+- Full implementation deferred (Phase 3)
+
+### 📁 Files Changed (6 files, 1 commit)
+
+| File | Change |
+|------|--------|
+| `src/gui/MambaWebviewGUI.hpp` | NEW — webview extension with inline HTML/CSS/JS |
+| `src/gui/MambaNativeGUI.hpp` | NEW — native GUI stub |
+| `src/clap/MambaClapPlugin.cpp` | Wire webview extension, level meter, main thread updates |
+| `src/clap/MambaClapPlugin.hpp` | Add webviewState pointer, peakIn/peakOut atomics |
+| `python/training/train_local_radeon.py` | Add --warmup-chunk flag |
+
+### 🔢 Key Numbers
+- Webview HTML/CSS/JS: **~200 lines** (self-contained, no external resources)
+- Webview C++: **~250 lines** (get_uri, get_resource, receive, state)
+- Training warmup: **1 step @ chunk=64 → MIOpen compiled → chunk=2048 works**
+- C++ tests: **4/4 pass** (test_mamba3, test_clap_plugin, test_ara_controller, clap_validator)
+
+### 🧱 Remaining Work
+1. **Phase 3: Native GUI** — CLAP_EXT_GUI with software framebuffer + per-platform blit (X11/Win32)
+2. **Phase 4: MinGW cross-compile** — toolchain file, Windows VST3 build
+3. **Training** — must be run interactively (ROCm background deadlock). User can run `python3 train_local_radeon.py --warmup-chunk 64 --steps 100000` in a terminal
+4. **DAW load test** — user reboots to Windows, copies VST3, loads in Ableton

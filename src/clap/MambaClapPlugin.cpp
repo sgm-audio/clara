@@ -479,6 +479,7 @@ const void *mamba_get_extension(const clap_plugin_t *plugin, const char *extensi
     if (strcmp(extensionId, CLAP_EXT_AUDIO_PORTS) == 0) return &mamba_audio_ports_extension;
     if (strcmp(extensionId, CLAP_EXT_RENDER) == 0) return &mamba_render_extension;
     if (strcmp(extensionId, CLAP_EXT_TAIL) == 0) return &mamba_tail_extension;
+    if (strcmp(extensionId, CLAP_EXT_GUI) == 0) return &mamba_native_gui_extension;
     if (strcmp(extensionId, CLAP_EXT_WEBVIEW) == 0) {
         // Store host webview extension for sending messages
         auto *state = (MambaPluginState *) plugin->plugin_data;

@@ -124,7 +124,7 @@ target_link_libraries(MambaSuiteClap
     Mamba3Core
 )
 if(UNIX AND NOT APPLE)
-    target_link_libraries(MambaSuiteClap PRIVATE pthread dl)
+    target_link_libraries(MambaSuiteClap PRIVATE pthread dl X11)
 endif()
 
 # --- ARA Plugin ---

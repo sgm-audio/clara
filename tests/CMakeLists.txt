@@ -82,7 +82,7 @@ target_include_directories(test_clap_plugin PRIVATE
 )
 target_link_libraries(test_clap_plugin PRIVATE Mamba3Core)
 if(UNIX AND NOT APPLE)
-    target_link_libraries(test_clap_plugin PRIVATE pthread dl)
+    target_link_libraries(test_clap_plugin PRIVATE pthread dl X11)
 endif()
 target_compile_definitions(test_clap_plugin PRIVATE
     TEST_MODEL_DIR="${CMAKE_SOURCE_DIR}/models"
