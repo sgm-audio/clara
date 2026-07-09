@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(MambaAudioSuite VERSION 1.2.0 LANGUAGES CXX)
+project(MambaAudioSuite VERSION 1.2.0 LANGUAGES C CXX)
 
 # CTest must be enabled at the top level (before any add_subdirectory) for
 # `enable_testing()` to register tests from subdirectories. Guarded by
@@ -7,13 +7,6 @@ project(MambaAudioSuite VERSION 1.2.0 LANGUAGES CXX)
 # the user opts in (cmake -DBUILD_TESTING=ON).
 if(BUILD_TESTING)
     enable_testing()
-endif()
-
-# ponytail: CMake 4.3.3 + GCC 16 workaround — CMAKE_C_COMPILE_OBJECT not
-# auto-detected for C language when ARA SDK's ARADebug.c triggers C compilation.
-# Remove when CMake >= 4.3.4 or when the C language path is removed.
-if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0" AND NOT DEFINED CMAKE_C_COMPILE_OBJECT)
-    set(CMAKE_C_COMPILE_OBJECT "<CMAKE_C_COMPILER> <DEFINES> <INCLUDES> <FLAGS> -o <OBJECT> -c <SOURCE>")
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -187,8 +180,12 @@ set(CLAP_WRAPPER_BUILD_STANDALONE OFF CACHE BOOL "Skip standalone target")
 set(CLAP_WRAPPER_BUILD_AUV2 OFF CACHE BOOL "Skip AUv2 target for now")
 
 # clap-wrapper creates MambaSuite_as_vst3 in its own subdirectory scope.
-# Suppress GCC 16 warnings in clap-wrapper's bundled fmt library (older fmt + GCC 16)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-dangling-reference -Wno-tautological-compare")
+# Suppress GCC 16 warnings in clap-wrapper's bundled fmt library (older fmt + GCC 16).
+# GCC-only flags: MSVC/Clang reject or ignore them, and this variable is
+# directory-scoped so it reaches every target, not just clap-wrapper.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-dangling-reference -Wno-tautological-compare")
+endif()
 add_subdirectory(${clap_wrapper_SOURCE_DIR} build/clap_wrapper_build EXCLUDE_FROM_ALL)
 
 # Set output directory and model deploy via global properties
