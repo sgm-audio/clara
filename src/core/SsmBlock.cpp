@@ -19,11 +19,11 @@ inline float softplus(float x) {
     // log(1 + exp(x)), numerically stable
     if (x > 20.0f) return x;
     if (x < -20.0f) return std::exp(x);
-    return std::log1pf(std::expf(x));
+    return std::log1p(std::exp(x));
 }
 
 inline float sigmoid(float x) {
-    return 1.0f / (1.0f + std::expf(-x));
+    return 1.0f / (1.0f + std::exp(-x));
 }
 
 inline float rsqrt(float x) {

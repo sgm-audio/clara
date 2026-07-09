@@ -2,10 +2,12 @@
 
 #include "core/WeightLoader.h"
 
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
+#ifndef _WIN32
+#    include <fcntl.h>
+#    include <sys/mman.h>
+#    include <sys/stat.h>
+#    include <unistd.h>
+#endif
 
 #include <cstdio>
 #include <cstdlib>
@@ -20,6 +22,30 @@ WeightLoader::~WeightLoader() {
 bool WeightLoader::load(const char *filepath) {
     unload(); // Release any previous data
 
+#ifdef _WIN32
+    // ponytail: read-into-heap on Windows — model is ~6MB loaded once at init;
+    // switch to CreateFileMapping only if load time ever matters.
+    FILE *f = std::fopen(filepath, "rb");
+    if (f == nullptr) return false;
+    if (std::fseek(f, 0, SEEK_END) != 0) {
+        std::fclose(f);
+        return false;
+    }
+    long file_size = std::ftell(f);
+    if (file_size <= 0 || std::fseek(f, 0, SEEK_SET) != 0) {
+        std::fclose(f);
+        return false;
+    }
+    mapped_size_ = static_cast<size_t>(file_size);
+    void *data = std::malloc(mapped_size_);
+    if (data == nullptr || std::fread(data, 1, mapped_size_, f) != mapped_size_) {
+        std::free(data);
+        std::fclose(f);
+        mapped_size_ = 0;
+        return false;
+    }
+    std::fclose(f);
+#else
     // Open file
     int fd = ::open(filepath, O_RDONLY);
     if (fd < 0) return false;
@@ -36,6 +62,7 @@ bool WeightLoader::load(const char *filepath) {
     void *data = ::mmap(nullptr, mapped_size_, PROT_READ, MAP_PRIVATE, fd, 0);
     ::close(fd);
     if (data == MAP_FAILED) return false;
+#endif
 
     mapped_data_ = static_cast<uint8_t *>(data);
 
@@ -61,7 +88,11 @@ bool WeightLoader::load(const char *filepath) {
 
 void WeightLoader::unload() {
     if (mapped_data_ != nullptr) {
+#ifdef _WIN32
+        std::free(mapped_data_);
+#else
         ::munmap(mapped_data_, mapped_size_);
+#endif
         mapped_data_ = nullptr;
         mapped_size_ = 0;
     }
