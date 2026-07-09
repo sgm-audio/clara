@@ -188,6 +188,13 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 add_subdirectory(${clap_wrapper_SOURCE_DIR} build/clap_wrapper_build EXCLUDE_FROM_ALL)
 
+# GCC 16 false positive in clap-wrapper's vendored sha1.cpp (stringop-overflow
+# under inlining at -O3); clap-wrapper adds -Werror unconditionally, so demote
+# just this diagnostic on its interface target.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND TARGET clap-wrapper-compile-options)
+    target_compile_options(clap-wrapper-compile-options INTERFACE -Wno-error=stringop-overflow)
+endif()
+
 # Set output directory and model deploy via global properties
 set_property(TARGET MambaSuite_as_vst3 PROPERTY
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins)

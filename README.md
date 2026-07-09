@@ -61,6 +61,12 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
+The default build produces the CLAP plugin and ARA library. The VST3 wrapper is a separate target (it pulls in the VST3 SDK):
+
+```bash
+cmake --build build --target MambaSuite_as_vst3 --parallel
+```
+
 Debug build with tests:
 
 ```bash
@@ -85,24 +91,24 @@ cmake --install build --component clap        # CLAP only
 cmake --install build --component ara         # ARA only
 ```
 
-Outputs in `build/plugins/`:
+Outputs:
 
-- `MambaSuiteClap.clap` — CLAP audio effect
-- `MambaSuite.vst3` — VST3 wrapper (loadable in Ableton Live, Cubase, REAPER, etc.)
-- `MambaSuiteARA.so` / `MambaSuiteARA.dylib` / `MambaSuiteARA.dll` — ARA2 library
-- `libMamba3Core.a` — static C++ engine
-- `models/*.bin` — flat binary weights
+- `build/plugins/MambaSuiteClap.clap` — CLAP audio effect
+- `build/Release/MambaSuite.vst3` — VST3 bundle (loadable in Ableton Live, Cubase, REAPER, etc.; built by the `MambaSuite_as_vst3` target)
+- `build/plugins/MambaSuiteARA.so` / `.dylib` / `.dll` — ARA2 library
+- `build/libMamba3Core.a` — static C++ engine
+- `build/plugins/models/*.bin` — flat binary weights
 
 ## Running
 
-**Ableton Live (VST3):** Copy `build/plugins/MambaSuite.vst3` to your VST3 plugin folder:
+**Ableton Live (VST3):** Copy the `build/Release/MambaSuite.vst3` bundle to your VST3 plugin folder:
 - Linux: `~/.vst3/` or `/usr/lib/vst3/`
 - macOS: `~/Library/Audio/Plug-Ins/VST3/`
 - Windows: `C:\Program Files\Common Files\VST3\`
 
 **CLAP hosts (Bitwig Studio, Carla, clap-host):** Load `build/plugins/MambaSuiteClap.clap` directly.
 
-The flat binary model must be present in `models/` adjacent to the plugin binary — the build system deploys it automatically.
+The flat binary model must be present in `models/` adjacent to the plugin binary. The build deploys it automatically for the CLAP (`build/plugins/models/`); the VST3 bundle does **not** yet embed it — copy `build/plugins/models/` next to the `.so` inside the bundle (`Contents/x86_64-linux/`) after installing.
 
 ARA hosts (REAPER, Cubase) discover `MambaSuiteARA.so`. Audio processing is handled by the companion CLAP plugin (ARA 2.0 has no `renderSamples()` method).
 
