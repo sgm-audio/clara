@@ -1,8 +1,12 @@
 # CLARA — Mamba Audio Suite
 
+[![CI](https://github.com/SGM-Studios/clara/actions/workflows/ci.yml/badge.svg)](https://github.com/SGM-Studios/clara/actions/workflows/ci.yml)
+
 C++17 audio plugin that runs a Mamba-3 SSM (Selective State Space Model) via a custom C++ inference engine. Ships as a CLAP plugin (`MambaSuiteClap.clap`) and an ARA 2.0 extension library (`MambaSuiteARA.so`), both sharing a single inference core. Supports Linux (stable), macOS and Windows (in progress).
 
 No ONNX Runtime is used. Weights are stored as a flat binary file (`model.bin`) and loaded via mmap at init.
+
+**Start here:** [Build the plugin](#build) · [Train a model](#training) ([`docs/TRAINING.md`](docs/TRAINING.md) reference, [`docs/TRAIN_GUIDE.md`](docs/TRAIN_GUIDE.md) for the R=8 target arch) · [Run in a DAW](#running)
 
 ## Status — what works right now
 
@@ -48,7 +52,7 @@ The inference engine lives in `src/core/` as the `Mamba3Core` static library, li
 
 ## Build
 
-Dependencies fetched automatically via `FetchContent`: CLAP SDK (`29ffcc27`), ARA SDK (`1ca0b0aa`), and clap-wrapper (`v0.9.1`). No manual dependency installation required. ONNX Runtime is **not** used.
+Dependencies fetched automatically via `FetchContent`: CLAP SDK (`29ffcc27`), ARA SDK (`releases/2.3.0`), and clap-wrapper (`v0.9.1`). No manual dependency installation required. ONNX Runtime is **not** used.
 
 Release build:
 
@@ -169,7 +173,9 @@ The canonical PerTrackProcessor R=8 training script is `python/training/train_cl
 │   └── setup_local.sh                # Local ROCm env setup
 ├── LICENSE                           # Apache 2.0
 ├── .github/workflows/ci.yml          # CI pipeline
-├── models/                           # Flat binary model files
+├── models/                           # Flat binary weights: model.bin = briefly-trained identity
+│                                     #   autoencoder; *_ref.bin = seed-42 test fixtures (regenerated
+│                                     #   by tests/CMakeLists.txt if deleted)
 ├── src/
 │   ├── core/                         # Mamba3Core: SsmInferenceCore, SsmBlock, WeightLoader
 │   ├── clap/                         # CLAP plugin entry + extensions
@@ -198,7 +204,7 @@ ctest --test-dir build --output-on-failure
 The `clap_validator` test is resolved in this order:
 
 1. `find_program(clap-validator)` — local install on `PATH`
-2. `cargo install clap-validator --locked` — fetches and builds from crates.io (requires Rust toolchain)
+2. `cargo install --git https://github.com/free-audio/clap-validator --locked` — builds from git master (the last tagged release doesn't compile on current Rust; requires Rust toolchain)
 3. Otherwise the test is registered but exits 77 (SKIP) at runtime; CTest reports it as skipped rather than failed.
 
 Tests require model files in `models/`. The CLAP plugin test and the validator test additionally require `MambaSuiteClap.clap` to be present at `build/plugins/MambaSuiteClap.clap` (built by the same `cmake --build` invocation).

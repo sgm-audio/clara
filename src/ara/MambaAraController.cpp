@@ -249,7 +249,7 @@ const char *MambaFactoryConfig::getInformationURL() const noexcept {
 }
 
 const char *MambaFactoryConfig::getVersion() const noexcept {
-    return "1.2.0";
+    return "0.1.0";
 }
 
 const char *MambaFactoryConfig::getDocumentArchiveID() const noexcept {

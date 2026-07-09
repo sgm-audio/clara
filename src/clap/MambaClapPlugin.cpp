@@ -42,7 +42,7 @@ const clap_plugin_descriptor_t mamba_plugin_info = {
     MAMBA_PROJECT_URL,
     nullptr,
     nullptr,
-    "1.2.0",
+    "0.1.0",
     "Real-time Mamba-3 SSM audio processor with ARA2 integration",
     mamba_features,
 };

@@ -122,10 +122,13 @@ platforms and runs CTest.
 
 ## Python side (training / export)
 
-Canonical training entry point — **all other training scripts
+Two live training scripts: `python/training/train_local_radeon.py` trains the
+**current shipping R=4 time-domain engine** (and exports `model.bin`);
+`python/training/train_clara.py` is the canonical script for the **R=8
+PerTrackProcessor target architecture**. Everything else
 (`train_clara_parallel.py`, `train_clara_export.py`, `export_mamba_onnx.py`,
-`train_clara_now.py`, `train_local_radeon.py`) are dead/legacy, do not use
-them**:
+`train_clara_now.py`) lives in `archive/mamba1-onnx-era/` — dead Mamba-1 code,
+do not use:
 
 ```bash
 python python/training/train_clara.py --data ~/datasets/musdb18hq/train --device cuda --steps 100000

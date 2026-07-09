@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(MambaAudioSuite VERSION 1.2.0 LANGUAGES C CXX)
+project(MambaAudioSuite VERSION 0.1.0 LANGUAGES C CXX)
 
 # CTest must be enabled at the top level (before any add_subdirectory) for
 # `enable_testing()` to register tests from subdirectories. Guarded by
