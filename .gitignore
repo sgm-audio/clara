@@ -1,0 +1,17 @@
+# Build artifacts
+build/
+cmake-build-*/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Model weights (regenerable large binaries)
+*.onnx
+*.onnx.data
+
+# OS
+.DS_Store
+Thumbs.db
