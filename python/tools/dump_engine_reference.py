@@ -40,6 +40,11 @@ import torch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "training"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from export_mamba_weights import (  # noqa: E402
+    BYTES_PER_LAYER,
+    FLOATS_PER_LAYER,
+    export_weights,
+)
 from reference_forward import (  # noqa: E402
     COND_DIM,
     D_INNER,
@@ -48,16 +53,11 @@ from reference_forward import (  # noqa: E402
     HEADDIM,
     IN_PROJ_DIM,
     MIMO_RANK,
-    NHEADS,
     N_LAYERS,
+    NHEADS,
     NUM_ROPE_ANGLES,
     ReferenceMamba3Engine,
     SSMWeights,
-)
-from export_mamba_weights import (  # noqa: E402
-    BYTES_PER_LAYER,
-    FLOATS_PER_LAYER,
-    export_weights,
 )
 
 SAMPLE_RATE = 44100
@@ -215,7 +215,7 @@ def main() -> int:
     cond = torch.zeros(COND_DIM)
     for idx, value in COND_VALUES.items():
         cond[idx] = value
-    print(f"  conditioning: " + ", ".join(f"cond[{i}]={v}" for i, v in COND_VALUES.items()))
+    print("  conditioning: " + ", ".join(f"cond[{i}]={v}" for i, v in COND_VALUES.items()))
 
     t = torch.arange(args.samples, dtype=torch.float32) / SAMPLE_RATE
     audio = torch.sin(2.0 * torch.pi * DEFAULT_FREQ * t) * 0.5
@@ -225,8 +225,10 @@ def main() -> int:
         out = engine.process_block(audio, cond)
 
     print(f"  input:  {args.samples} samples, {DEFAULT_FREQ} Hz sine")
-    print(f"  output: std={out.std().item():.6f} max={out.abs().max().item():.6f} "
-          f"finite={torch.isfinite(out).all().item()}")
+    print(
+        f"  output: std={out.std().item():.6f} max={out.abs().max().item():.6f} "
+        f"finite={torch.isfinite(out).all().item()}"
+    )
 
     write_bin(output_dir / "input_ref.bin", audio.numpy())
     write_bin(output_dir / "output_ref.bin", out.numpy())
