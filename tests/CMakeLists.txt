@@ -44,6 +44,12 @@ target_compile_definitions(test_mamba3 PRIVATE
     TEST_MODEL_DIR="${CMAKE_SOURCE_DIR}/models"
 )
 add_test(NAME test_mamba3 COMMAND test_mamba3 "${CMAKE_SOURCE_DIR}/models/model.bin")
+# Exit code 77 means "cannot test" (no model file) — report it as a skip rather
+# than a failure. Without this property CTest treats 77 as a test failure.
+set_tests_properties(test_mamba3 PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300
+)
 
 # --- Generate Python reference outputs for C++ comparison ---
 # Runs once, dumps input_ref.bin + output_ref.bin next to model.bin.
