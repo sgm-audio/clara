@@ -54,18 +54,75 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(ara_sdk)
 
 # 3. Fetch clap-wrapper (for VST3 + AU builds)
+#
+# Optional: the VST3 target is the Ableton path but pulls in clap-wrapper, CPM and
+# the VST3 SDK. Set -DCLARA_BUILD_VST3=OFF to build the CLAP plugin, ARA library
+# and tests without any of that (useful on restricted networks / minimal CI).
+option(CLARA_BUILD_VST3 "Build the VST3 wrapper via clap-wrapper (fetches VST3 SDK)" ON)
+
 # We only declare it here; add_subdirectory is used later for the VST3 target.
 set(CLAP_SDK_ROOT ${clap_SOURCE_DIR} CACHE INTERNAL "CLAP SDK root for clap-wrapper")
 set(CLAP_WRAPPER_DOWNLOAD_DEPENDENCIES ON CACHE INTERNAL "Auto-download VST3 SDK")
-FetchContent_Declare(
-    clap_wrapper
-    GIT_REPOSITORY https://github.com/free-audio/clap-wrapper.git
-    GIT_TAG v0.9.1
-)
-# Populate without MakeAvailable to avoid running its CMakeLists.txt twice
-FetchContent_GetProperties(clap_wrapper)
-if(NOT clap_wrapper_POPULATED)
-    FetchContent_Populate(clap_wrapper)
+
+# clap-wrapper downloads the VST3 SDK through CPM, whose bootstrap fetches
+# CPM.cmake from a GitHub *release asset*. That fails in environments where git
+# works but release-asset downloads are blocked. clap-wrapper skips CPM entirely
+# when VST3_SDK_ROOT is set, so fetch the same SDK revision it would have fetched,
+# via git, and point it there. Set -DVST3_SDK_ROOT=/path/to/sdk to use your own.
+if(CLARA_BUILD_VST3 AND VST3_SDK_ROOT STREQUAL "")
+    FetchContent_Declare(
+        clara_vst3sdk
+        GIT_REPOSITORY https://github.com/steinbergmedia/vst3sdk.git
+        GIT_TAG v3.7.6_build_18
+        GIT_SUBMODULES base public.sdk pluginterfaces
+        GIT_SHALLOW FALSE
+    )
+    FetchContent_GetProperties(clara_vst3sdk)
+    if(NOT clara_vst3sdk_POPULATED)
+        message(STATUS "CLARA: fetching VST3 SDK v3.7.6_build_18 via git (bypasses clap-wrapper's CPM bootstrap)")
+        FetchContent_Populate(clara_vst3sdk)
+    endif()
+    if(EXISTS "${clara_vst3sdk_SOURCE_DIR}/public.sdk")
+        set(VST3_SDK_ROOT "${clara_vst3sdk_SOURCE_DIR}" CACHE PATH "VST3 SDK root for clap-wrapper" FORCE)
+    else()
+        message(WARNING "CLARA: VST3 SDK fetch incomplete; clap-wrapper will fall back to CPM")
+    endif()
+endif()
+
+if(CLARA_BUILD_VST3)
+    FetchContent_Declare(
+        clap_wrapper
+        GIT_REPOSITORY https://github.com/free-audio/clap-wrapper.git
+        GIT_TAG v0.9.1
+    )
+    # Populate without MakeAvailable to avoid running its CMakeLists.txt twice
+    FetchContent_GetProperties(clap_wrapper)
+    if(NOT clap_wrapper_POPULATED)
+        FetchContent_Populate(clap_wrapper)
+    endif()
+
+    # clap-wrapper's bootstrap stub calls file(DOWNLOAD ... EXPECTED_HASH) on
+    # every configure, so seeding the cache file above is not enough: if the
+    # download host is unreachable the configure aborts even though the file is
+    # already present. Wrap that call in an existence guard. This is idempotent
+    # (the guard is only inserted when the unguarded pattern is found) and is a
+    # no-op on any clap-wrapper revision that already guards it.
+    set(_clara_cpm_stub "${clap_wrapper_SOURCE_DIR}/cmake/external/CPM.cmake")
+    if(EXISTS "${_clara_cpm_stub}")
+        file(READ "${_clara_cpm_stub}" _clara_stub_src)
+        if(NOT _clara_stub_src MATCHES "if\(NOT EXISTS \$\{CPM_DOWNLOAD_LOCATION\}\)")
+            string(REPLACE
+                "file(DOWNLOAD\n     https://github.com/cpm-cmake/CPM.cmake/releases/download/v\${CPM_DOWNLOAD_VERSION}/CPM.cmake\n     \${CPM_DOWNLOAD_LOCATION} EXPECTED_HASH SHA256=\${CPM_HASH_SUM}\n)"
+                "if(NOT EXISTS \${CPM_DOWNLOAD_LOCATION})\n  file(DOWNLOAD\n     https://github.com/cpm-cmake/CPM.cmake/releases/download/v\${CPM_DOWNLOAD_VERSION}/CPM.cmake\n     \${CPM_DOWNLOAD_LOCATION} EXPECTED_HASH SHA256=\${CPM_HASH_SUM}\n  )\nendif()"
+                _clara_stub_patched "${_clara_stub_src}")
+            if(NOT _clara_stub_patched STREQUAL _clara_stub_src)
+                file(WRITE "${_clara_cpm_stub}" "${_clara_stub_patched}")
+                message(STATUS "CLARA: guarded clap-wrapper's CPM download (offline-tolerant bootstrap)")
+            else()
+                message(STATUS "CLARA: clap-wrapper CPM stub has an unexpected shape; leaving it alone")
+            endif()
+        endif()
+    endif()
 endif()
 
 # Common include directories
@@ -186,7 +243,9 @@ set(CLAP_WRAPPER_BUILD_AUV2 OFF CACHE BOOL "Skip AUv2 target for now")
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-dangling-reference -Wno-tautological-compare")
 endif()
-add_subdirectory(${clap_wrapper_SOURCE_DIR} build/clap_wrapper_build EXCLUDE_FROM_ALL)
+if(CLARA_BUILD_VST3)
+    add_subdirectory(${clap_wrapper_SOURCE_DIR} build/clap_wrapper_build EXCLUDE_FROM_ALL)
+endif()
 
 # GCC 16 false positive in clap-wrapper's vendored sha1.cpp (stringop-overflow
 # under inlining at -O3); clap-wrapper adds -Werror unconditionally, so demote
@@ -195,27 +254,31 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND TARGET clap-wrapper-compile-options)
     target_compile_options(clap-wrapper-compile-options INTERFACE -Wno-error=stringop-overflow)
 endif()
 
-# Set output directory and model deploy via global properties
-set_property(TARGET MambaSuite_as_vst3 PROPERTY
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins)
-set_property(TARGET MambaSuite_as_vst3 PROPERTY
-    CXX_VISIBILITY_PRESET hidden)
-set_property(TARGET MambaSuite_as_vst3 PROPERTY
-    POSITION_INDEPENDENT_CODE ON)
-
-# Deploy models via install rule (works across directory boundaries)
-if(EXISTS ${CMAKE_SOURCE_DIR}/models)
-    install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
-        DESTINATION ${CMAKE_BINARY_DIR}/plugins/MambaSuite.vst3/Contents/Resources/models
-        COMPONENT vst3
-        FILES_MATCHING PATTERN "*.bin"
-    )
-endif()
-
 # Strip release builds (Unix linker flag — generator-expr for multi-config support)
 target_link_options(MambaSuiteClap PRIVATE $<$<AND:$<PLATFORM_ID:Linux,Darwin>,$<CONFIG:Release>>:-s>)
-target_link_options(MambaSuite_as_vst3 PRIVATE $<$<AND:$<PLATFORM_ID:Linux,Darwin>,$<CONFIG:Release>>:-s>)
 target_link_options(MambaSuiteARA PRIVATE $<$<AND:$<PLATFORM_ID:Linux,Darwin>,$<CONFIG:Release>>:-s>)
+
+# --- VST3 target configuration (only when the wrapper is enabled) ---
+if(CLARA_BUILD_VST3)
+    # Set output directory and model deploy via global properties
+    set_property(TARGET MambaSuite_as_vst3 PROPERTY
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins)
+    set_property(TARGET MambaSuite_as_vst3 PROPERTY
+        CXX_VISIBILITY_PRESET hidden)
+    set_property(TARGET MambaSuite_as_vst3 PROPERTY
+        POSITION_INDEPENDENT_CODE ON)
+
+    target_link_options(MambaSuite_as_vst3 PRIVATE $<$<AND:$<PLATFORM_ID:Linux,Darwin>,$<CONFIG:Release>>:-s>)
+
+    # Deploy models via install rule (works across directory boundaries)
+    if(EXISTS ${CMAKE_SOURCE_DIR}/models)
+        install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
+            DESTINATION ${CMAKE_BINARY_DIR}/plugins/MambaSuite.vst3/Contents/Resources/models
+            COMPONENT vst3
+            FILES_MATCHING PATTERN "*.bin"
+        )
+    endif()
+endif()
 
 # ---------------------------------------------------------------------------
 # Per-target post-build deploy (multi-config safe)
@@ -267,9 +330,13 @@ add_subdirectory(tests)
 # is enabled.
 # ---------------------------------------------------------------------------
 if(BUILD_TESTING)
+    set(_clara_test_deps MambaSuiteClap MambaSuiteARA)
+    if(CLARA_BUILD_VST3)
+        list(APPEND _clara_test_deps MambaSuite_as_vst3)
+    endif()
     add_custom_target(clara_test
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-        DEPENDS MambaSuiteClap MambaSuite_as_vst3 MambaSuiteARA
+        DEPENDS ${_clara_test_deps}
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         COMMENT "Running CTest (unit tests + clap-validator)"
     )
