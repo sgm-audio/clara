@@ -20,7 +20,7 @@ real time and the shipped weights are an untrained fixture.**
 
 | Capability | Status |
 |---|---|
-| Builds on Linux (CLAP + VST3 + ARA) | ✅ requires `libx11-dev` (native GUI) and CMake ≥ 3.14 |
+| Builds on Linux (CLAP + VST3 + ARA) | ✅ clean-container verified (`cmake` + `g++` only; `libx11-dev` optional, X11 auto-detected) |
 | Weights present in a fresh clone | ✅ committed to Git (6.6 MB) — LFS removed, see [`models/README.md`](models/README.md) |
 | Engine tests (`test_mamba3`) | ✅ 21 checks pass, incl. Python↔C++ equivalence and a drift guard |
 | Python↔C++ equivalence | ✅ within float32 noise floor: 1.0–1.8e-3 abs / 5–9e-4 relative on a 2.14 peak |
@@ -28,10 +28,10 @@ real time and the shipped weights are an untrained fixture.**
 | **Real-time capable** | ❌ **~0.26 ms/sample → ~1,250% of one core per 48 kHz mono stream** |
 | Numerical stability | ⚠️ float32 output drifts ~2% vs a float64 oracle within 12 ms; see *Stability* below |
 | Trained model | ❌ `model.bin` is an untrained random fixture; the trained blobs were lost with the LFS budget |
-| GUI | ✅ native `CLAP_EXT_GUI` (X11/Win32 framebuffer) + `CLAP_EXT_WEBVIEW` |
+| GUI | ✅ native `CLAP_EXT_GUI` (X11/Win32 framebuffer) + `CLAP_EXT_WEBVIEW`; auto-disabled when X11 headers are absent |
 | ARA real-time conditioning | 🟡 scaffolding only — no host content reader |
 | macOS / Windows builds | 🟡 presets defined; not verified in this environment |
-| CI | 🟡 clap-validator download fixed, `libx11-dev` added; needs a run to confirm green |
+| CI | 🟡 clap-validator download fixed; the CLAP plugin now builds without X11, so the Windows job no longer needs a cross-GUI; needs a run to confirm green |
 
 ## Performance (measured, not estimated)
 
@@ -67,26 +67,43 @@ less saturating state) is tracked in [`docs/TODO.md`](docs/TODO.md).
 ## Build
 
 Dependencies are fetched by CMake `FetchContent`: CLAP SDK (`29ffcc27`), ARA SDK
-(`2.3.0`), clap-wrapper (`v0.9.1`). On Ubuntu the build also needs `libx11-dev`
-(the native GUI talks to Xlib directly) and `unzip`/`wget` are only needed for
-the optional clap-validator.
+(`2.3.0`), clap-wrapper (`v0.9.1`), and — for the VST3 target — the Steinberg
+VST3 SDK (`v3.7.6_build_18`). Only a C++20 toolchain, CMake ≥ 3.14, `git` and a
+network connection to GitHub are required:
 
 ```bash
-sudo apt-get install -y cmake g++ libx11-dev      # Debian/Ubuntu
+sudo apt-get install -y cmake g++                 # Debian/Ubuntu
 
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
+cmake --build build --parallel                    # CLAP + ARA + tests
 ```
 
 > With CMake 4.x, pass `-DCMAKE_POLICY_VERSION_MINIMUM=3.5`: clap-wrapper's
 > bundled dependencies still declare `cmake_minimum_required` values below 3.5.
 
-The default build produces the CLAP plugin and ARA library. The VST3 wrapper is a
-separate target:
+Two build knobs matter on restricted machines:
+
+- **`libx11-dev` is optional.** The native framebuffer editor talks to Xlib
+  directly. CMake detects X11 and, when it is absent, defines
+  `CLARA_NO_NATIVE_GUI` and compiles the editor out — the CLAP plugin, ARA
+  library and all tests still build, the plugin just advertises no GUI extension
+  and hosts show their generic editor. Install `libx11-dev` to get the editor.
+- **`-DCLARA_BUILD_VST3=OFF`** skips clap-wrapper and the VST3 SDK entirely
+  (the CLAP plugin, ARA library and tests need neither).
+
+The VST3 wrapper is a separate target, because the SDK is large:
 
 ```bash
 cmake --build build --target MambaSuite_as_vst3 --parallel
 ```
+
+clap-wrapper normally pulls the VST3 SDK through CPM, whose bootstrap downloads
+`CPM.cmake` from a **GitHub release asset** — a class of URL that some CI
+sandboxes and corporate networks block even when `git clone` works. CLARA avoids
+that bootstrap: it fetches the same SDK revision by git and passes it to
+clap-wrapper as `VST3_SDK_ROOT`, so no release-asset download happens. If you
+already have an SDK checkout, skip the fetch with
+`-DVST3_SDK_ROOT=/path/to/vst3sdk`.
 
 Debug build with tests:
 
@@ -104,6 +121,7 @@ Outputs:
 - `build/plugins/MambaSuiteClap.clap` — CLAP audio effect
 - `build/Release/MambaSuite.vst3` — VST3 bundle (`MambaSuite_as_vst3` target)
 - `build/plugins/MambaSuiteARA.so` — ARA2 library
+- `build/tests/test_*` — unit tests (`-DBUILD_TESTING=ON`)
 - `build/libMamba3Core.a` — static engine
 - `build/plugins/models/*.bin` — weights, deployed next to the binary
 

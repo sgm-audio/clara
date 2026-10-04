@@ -12,8 +12,12 @@ measurements. `docs/TODO.md` — open work (stability, compute budget, H3).
 `models/README.md` — what the weight files are and what was lost.
 
 **Build:** `cmake -B build -DBUILD_TESTING=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5 && cmake --build build --parallel && ctest --test-dir build`
-— needs `libx11-dev`. With tests: `test_mamba3` (21 checks), `test_perf_budget`,
-`test_clap_plugin`, `test_ara_controller`, `clap_validator` (SKIPs without the binary).
+— needs only `cmake`, `g++` and git access. `libx11-dev` is optional: without it
+CMake defines `CLARA_NO_NATIVE_GUI` and the plugin builds without the native
+editor (hosts use their generic one). `-DCLARA_BUILD_VST3=OFF` skips
+clap-wrapper and the VST3 SDK; `-DVST3_SDK_ROOT=/path` reuses an SDK checkout.
+Tests: `test_mamba3` (21 checks), `test_perf_budget`, `test_clap_plugin`,
+`test_ara_controller`, `clap_validator` (SKIPs without the binary).
 
 C++17 audio plugin producing `MambaSuiteClap.clap`, `MambaSuite.vst3` (clap-wrapper)
 and `MambaSuiteARA.so`.

@@ -11,7 +11,7 @@ nothing to do with polish.
 - [x] CLAP plugin: `MambaSuiteClap.clap` — 3 params (bypass, wet/dry, intensity)
 - [x] VST3 wrapper: `MambaSuite.vst3` via clap-wrapper — loadable in Ableton Live
 - [x] ARA 2.0 extension: `MambaSuiteARA.so` — scaffolding only
-- [x] GUIs: `CLAP_EXT_WEBVIEW` (inline HTML) and `CLAP_EXT_GUI` (native framebuffer, X11/Win32)
+- [x] GUIs: `CLAP_EXT_WEBVIEW` (inline HTML) and `CLAP_EXT_GUI` (native framebuffer, X11/Win32; auto-disabled with `CLARA_NO_NATIVE_GUI` when X11 headers are absent)
 - [x] Engine tests pass, including Python↔C++ equivalence (`test_mamba3`, 21 checks)
 - [x] Compute-budget test (`test_perf_budget`) and drift guard (`test_numeric_sensitivity`)
 - [x] Weights committed to Git — a fresh clone is runnable without LFS
@@ -64,7 +64,7 @@ ls -la build-windows/plugins/MambaSuite.so
 **Expected output:** `build-windows/plugins/MambaSuite.so` — a Windows PE executable (VST3 binary).
 
 **Known issues to fix if build fails:**
-- `X11/Xlib.h` not found on MinGW: the native GUI code has `#if defined(_WIN32)` guards, but verify the include chain doesn't pull in X11 headers on Windows
+- ~~`X11/Xlib.h` not found on MinGW~~ — resolved 2026-10-04: CMake now probes for X11 and defines `CLARA_NO_NATIVE_GUI` when it is absent, so a cross-build without X11 headers compiles the plugin without the native editor instead of failing
 - `dlfcn.h` not found: `Platform.hpp` has `#if defined(_WIN32)` guards for this
 - `-s` link flag: MSVC doesn't support `-s`; the generator expression `$<$<PLATFORM_ID:Linux,Darwin>:-s>` should handle this
 - clap-wrapper VST3 SDK download: may need `CLAP_WRAPPER_DOWNLOAD_DEPENDENCIES=ON` (already set)

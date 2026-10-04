@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.1.2 — 2026-10-04
+
+Build portability. A fresh clone previously could not be configured at all in an
+environment that permits `git clone` but blocks GitHub *release-asset* downloads.
+
+### Fixed
+
+- **Configure failed fetching `CPM.cmake`.** clap-wrapper bootstraps CPM by
+  downloading `CPM.cmake` from a release asset (`file(DOWNLOAD … EXPECTED_HASH)`,
+  `SSL connect error 35` here). CLARA now fetches the same VST3 SDK revision by
+  git (`v3.7.6_build_18`) and passes it as `VST3_SDK_ROOT`; clap-wrapper skips CPM
+  entirely when that is set. `-DVST3_SDK_ROOT=/path/to/sdk` reuses an existing
+  checkout instead of fetching.
+- **`libx11-dev` is no longer required.** The native editor includes
+  `X11/Xlib.h` directly, so a headless machine could not build the CLAP plugin at
+  all (and the MinGW cross-build in the release checklist could never work). CMake
+  now probes for X11 and defines `CLARA_NO_NATIVE_GUI` when it is missing; the
+  plugin compiles without the editor and hosts fall back to their generic UI.
+- **New `-DCLARA_BUILD_VST3=OFF`** builds the CLAP plugin, ARA library and tests
+  without clap-wrapper or the VST3 SDK.
+
+### Verification
+
+- Fresh clone, clean container, no flags beyond the CMake 4.x policy shim:
+  configure, build and `ctest` all succeed — **4/4 tests pass**, including
+  `test_clap_plugin`, which now genuinely builds and instantiates the plugin
+  (previously it could not compile here and was reported as *Not Run*).
+- All three plugin artefacts build: `MambaSuiteClap.clap`, `MambaSuiteARA.so`,
+  `MambaSuite.vst3`.
+- Zero-allocation guarantee re-proved on the refactored engine: 0 heap
+  allocations across 4,096 `process_block()` samples (`LD_PRELOAD` counter).
+
 ## v0.1.1 — 2026-10-04
 
 Correctness, reproducibility and performance pass, after an external review that

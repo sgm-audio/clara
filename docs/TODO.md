@@ -13,6 +13,14 @@ list immediately below, and the measurements behind it are in
 - [x] `WeightLoader` rejects files whose size does not exactly match the declared payload
 - [x] `test_mamba3` validates fixture sizes before allocating (no more `std::bad_alloc`)
 - [x] CI: pinned clap-validator asset, `libx11-dev`, model-pointer check
+- [x] **Fresh clone builds with no manual steps** (verified 2026-10-04): the VST3
+      SDK is fetched by git and handed to clap-wrapper as `VST3_SDK_ROOT`, so
+      clap-wrapper's CPM bootstrap — which downloads `CPM.cmake` from a GitHub
+      *release asset* and breaks in sandboxes that only allow `git` — never runs.
+      `-DCLARA_BUILD_VST3=OFF` skips the VST3 path entirely.
+- [x] **X11 no longer mandatory**: the native editor is compiled out
+      (`CLARA_NO_NATIVE_GUI`) when the X11 headers are missing, so plugins and all
+      four tests build on a headless container; the MinGW/X11 worry is gone too.
 - [x] `test_python_reference` replaces the impossible "bit-exact" comparison
 - [x] README / AGENTS / INCUBATOR_CHECKLIST synced with reality
 
