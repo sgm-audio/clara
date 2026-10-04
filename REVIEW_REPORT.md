@@ -44,8 +44,9 @@ are listed as High below.
 
 ## Changes Applied
 
-Seven commits on `arena/01a105e2-clara` (this report is the eighth), each verified with a build (`cmake --build`, no warnings) and the full test suite
-(`ctest`, 4/4 PASS). All are present in the final branch; the review tooling sandbox was reset mid-session, so the same change set was recommitted in the same logical grouping.
+Seven change commits on `arena/01a105e2-clara` (the report and its corrections follow them). Each was verified with a build
+(`cmake --build`, no warnings) and the full suite (`ctest`, 4/4 PASS), and the branch tip was re-verified after the report's
+own corrections: build 0 warnings/errors, `ctest` 4/4 PASS.
 
 | Commit | Theme | Content |
 |---|---|---|
