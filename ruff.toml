@@ -1,7 +1,12 @@
 line-length = 100
 target-version = "py313"
 
-# Exclude archived Mamba-1 / ONNX-era code
+# Exclude archived Mamba-1 / ONNX-era code.
+# force-exclude makes the exclusion apply to paths passed explicitly on the
+# command line too — which is how pre-commit invokes ruff. Without it the
+# exclude list only applies to directory scans, and the archived files (20
+# findings) fail the hook.
+force-exclude = true
 exclude = ["archive/"]
 
 [format]

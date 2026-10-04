@@ -40,6 +40,40 @@ list immediately below, and the measurements behind it are in
       blobs were lost with the LFS budget; retrain and regenerate the reference
       fixtures (`python/tools/dump_engine_reference.py`).
 
+### P1.5 — packaging & CI (found during the 2026-10-04 review)
+
+- [ ] **CI is not running.** Every run created since 2026-10-04 (pushes,
+      `pull_request`, scheduled CodeQL) concludes `startup_failure` with 0 jobs
+      and `path=BuildFailed`; the last run that executed anything was
+      2026-07-10. `.github/workflows/ci.yml` parses as YAML, is registered
+      `active` and is byte-identical to `main`, so this is a repository/account
+      level condition (Actions spending limit/billing, or Actions disabled) —
+      needs someone with admin rights, not a workflow edit. Until then every CI
+      claim in `CHANGELOG.md`/README is unverified.
+- [ ] **VST3 wrapper cannot find the CLAP as built.** clap-wrapper derives the
+      CLAP file name from the wrapper binary stem (`MambaSuite` →
+      `MambaSuite.clap`); the build produces `MambaSuiteClap.clap`. Reproduced:
+      `GetPluginFactory()` returns `nullptr` with only the built name present,
+      and works as soon as the same binary is also reachable as
+      `MambaSuite.clap`. Fix options: rename the CLAP target/output to
+      `MambaSuite.clap`, or install a copy/symlink under the expected name in
+      the VST3 bundle.
+- [ ] **Install components are broken** (see README *Install*):
+      `--component clap` exits 1 (the bare `.clap` file collides with the
+      `.clap` bundle dir it is installed next to), and `--component vst3`
+      ignores `--prefix` and writes into the build tree. `--component ara`
+      works.
+- [ ] **`-ffast-math` and NaN/Inf checks.** Release builds compile with
+      `-ffast-math` (`-ffinite-math-only`), so `std::isfinite`/`std::isnan` are
+      folded to constants; the param entry points and the test suite now use the
+      bit-level `mambaIsFinite` (`src/core/Platform.hpp`) instead. If more
+      non-finite guards are added, they must use that helper.
+- [ ] **Stale personal files at the repository root** (proposed): `SESSION_LOG.md`
+      (104 KB), `omo-config.json` (unreferenced agent-tool config) and the
+      tracked-but-ignored `.agent_context/nrinstruct.md` (session notes from
+      2026-06-04 describing the old architecture). Move them under `docs/` or
+      untrack them.
+
 ### P2 — product evidence
 
 - [ ] One flagship effect, trained, with a same-loudness A/B in a real DAW

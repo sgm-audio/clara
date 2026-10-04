@@ -258,7 +258,10 @@ step_train() {
     export MIOPEN_FIND_MODE=5
 
     # Build command — conservative batch=2 for 16GB UMA, effective batch=8 via grad accum 4
-    CMD=("${VENV_DIR}/bin/python3" "${SCRIPT_DIR}/train_clara.py"
+    # SCRIPT_DIR is the repository root, and the training script lives under
+    # python/training/ (this used to point at ${SCRIPT_DIR}/train_clara.py,
+    # which does not exist).
+    CMD=("${VENV_DIR}/bin/python3" "${SCRIPT_DIR}/python/training/train_clara.py"
         --data "${DATA_DIR}"
         --save "${CHECKPOINT_DIR}"
         --device cuda
