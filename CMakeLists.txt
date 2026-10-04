@@ -69,7 +69,7 @@ set(CLAP_WRAPPER_DOWNLOAD_DEPENDENCIES ON CACHE INTERNAL "Auto-download VST3 SDK
 # works but release-asset downloads are blocked. clap-wrapper skips CPM entirely
 # when VST3_SDK_ROOT is set, so fetch the same SDK revision it would have fetched,
 # via git, and point it there. Set -DVST3_SDK_ROOT=/path/to/sdk to use your own.
-if(CLARA_BUILD_VST3 AND VST3_SDK_ROOT STREQUAL "")
+if(CLARA_BUILD_VST3 AND "${VST3_SDK_ROOT}" STREQUAL "")
     FetchContent_Declare(
         clara_vst3sdk
         GIT_REPOSITORY https://github.com/steinbergmedia/vst3sdk.git
@@ -101,26 +101,6 @@ if(CLARA_BUILD_VST3)
         FetchContent_Populate(clap_wrapper)
     endif()
 
-    # clap-wrapper's bootstrap stub calls file(DOWNLOAD ... EXPECTED_HASH) on
-    # every configure, so seeding the cache file above is not enough: if the
-    # download host is unreachable the configure aborts even though the file is
-    # already present. Wrap that call in an existence guard. This is idempotent
-    # (the guard is only inserted when the unguarded pattern is found) and is a
-    # no-op on any clap-wrapper revision that already guards it.
-    set(_clara_cpm_stub "${clap_wrapper_SOURCE_DIR}/cmake/external/CPM.cmake")
-    if(EXISTS "${_clara_cpm_stub}")
-        file(READ "${_clara_cpm_stub}" _clara_stub_src)
-        if(NOT _clara_stub_src MATCHES "if\(NOT EXISTS \$\{CPM_DOWNLOAD_LOCATION\}\)")
-            string(REPLACE
-                "file(DOWNLOAD\n     https://github.com/cpm-cmake/CPM.cmake/releases/download/v\${CPM_DOWNLOAD_VERSION}/CPM.cmake\n     \${CPM_DOWNLOAD_LOCATION} EXPECTED_HASH SHA256=\${CPM_HASH_SUM}\n)"
-                "if(NOT EXISTS \${CPM_DOWNLOAD_LOCATION})\n  file(DOWNLOAD\n     https://github.com/cpm-cmake/CPM.cmake/releases/download/v\${CPM_DOWNLOAD_VERSION}/CPM.cmake\n     \${CPM_DOWNLOAD_LOCATION} EXPECTED_HASH SHA256=\${CPM_HASH_SUM}\n  )\nendif()"
-                _clara_stub_patched "${_clara_stub_src}")
-            if(NOT _clara_stub_patched STREQUAL _clara_stub_src)
-                file(WRITE "${_clara_cpm_stub}" "${_clara_stub_patched}")
-                message(STATUS "CLARA: guarded clap-wrapper's CPM download (offline-tolerant bootstrap)")
-            else()
-                message(STATUS "CLARA: clap-wrapper CPM stub has an unexpected shape; leaving it alone")
-            endif()
         endif()
     endif()
 endif()
