@@ -92,7 +92,9 @@ Ordered by impact. Each is recorded in `docs/TODO.md` §P1.5 where it is actiona
 
 1. **CI is dead — needs a repository admin, not a patch (High).** Every run created since 2026-10-04 (three pushes, both
    `pull_request` runs, scheduled CodeQL) concluded `startup_failure` with 0 jobs and `path=BuildFailed`; the last run that
-   executed was 2026-07-10 (`workflow_dispatch`). `.github/workflows/ci.yml` parses as YAML (PyYAML), yamllint-clean except the
+   executed was 2026-07-10 (`workflow_dispatch`). Still true at the time of writing: the pushes to `arena/01a105e2-clara` and the
+   `pull_request` run opened by PR #2 (2026-10-04 18:43–18:45Z) also concluded `startup_failure` with 0 jobs, while all four
+   workflows report `active`. `.github/workflows/ci.yml` parses as YAML (PyYAML), yamllint-clean except the
    document-start rule, has no tabs/dup keys/CRLF, is registered `active`, and is byte-identical to `main`. All workflows failing
    at once with zero jobs points to Actions spending limit/billing or Actions disabled for the repo. **Check** Settings →
    Billing → Actions and Settings → Actions → General. Until this is fixed, every CI claim in `CHANGELOG.md` (v0.1.1/v0.1.2:
@@ -135,6 +137,12 @@ pending) and a CI section explaining the unverified state; those are status labe
 
 No other label was found wrong: the README status table's claims (`21 checks`, `1,250% of one core`, untrained fixture) were each
 re-verified against the tree and kept.
+
+No GitHub label needed correction: the repository has zero issues, and the only merged PR (#1) carries no labels at all, so
+there was no mislabelling to fix. All four workflows (`CI`, `CodeQL`, `Dependency Graph`, `Security Risk Assessment`) are
+registered `active` — which is exactly why their uniform `startup_failure` is an account-level condition rather than a
+configuration one (see Finding 1). Confirmation at the time of writing: the pushes for this branch and the `pull_request`
+event opened by PR #2 also produced `startup_failure` runs with 0 jobs.
 
 ---
 
