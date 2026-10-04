@@ -1,22 +1,27 @@
 # CLARA Training Quick Start — Morning Guide
 
-## One Command Does Everything (Cloud)
+## One Command Does Everything (local)
+
+<!-- STATUS: in progress — this section used to document `scripts/setup_cloud.sh`,
+     which is not in the repository. The flags below were re-checked against
+     `python/training/train_clara.py`; the rest of this file was not. -->
 
 ```bash
-cd ~/Desktop/Dev/clara
-bash scripts/setup_cloud.sh all
+bash scripts/setup_local.sh     # create venv_rocm + install ROCm PyTorch/deps (once)
+bash scripts/run_test.sh        # smoke-test the training stack before a long run
+bash scripts/run_train.sh [DATA_DIR]   # train; auto-resumes from checkpoints_clara/
 ```
 
-That's it. Downloads MUSDB18-HQ (21GB), extracts it, precomputes features, runs training.
+`scripts/bootstrap_local.sh` chains dataset download, feature extraction, smoke
+test and training on a Radeon APU (`--train`, `--smoke`, `--crepe-only`).
 
 ## What It Does
 
-1. **system** — Install deps + ROCm PyTorch
-2. **repo** — Clone/pull CLARA repo
-3. **datasets** — Download MUSDB18-HQ via aria2c
-4. **precompute** — Precompute mel + STFT features (eliminates CPU bottleneck)
-5. **train** — Stage 0 identity training (100K steps, --precomputed --cache)
-6. **export** — Export + validate model.bin
+1. **system** — Install deps + ROCm PyTorch (`scripts/setup_local.sh`)
+2. **datasets** — Download/verify MUSDB18-HQ
+3. **precompute** — Extract CREPE/mel features (removes the CPU bottleneck)
+4. **train** — Identity training, 100K steps by default
+5. **export** — `python/training/train_clara.py --export <ckpt> --output models/model.bin`
 
 ## Local Setup (Ubuntu / ROCm)
 
@@ -48,7 +53,7 @@ bash scripts/setup_cloud.sh export      # Export only
 If interrupted, resume from checkpoint:
 
 ```bash
-python train_clara.py \
+python python/training/train_clara.py \
   --resume checkpoints_clara/checkpoint_050000.pt \
   --steps 100000 \
   --data ~/datasets/musdb18hq/train \
@@ -72,7 +77,7 @@ tail -f checkpoints_clara/train.log
 ### Export Weights
 
 ```bash
-python train_clara.py \
+python python/training/train_clara.py \
   --export checkpoints_clara/final.pt \
   --output models/model_trained.bin
 ```
@@ -100,14 +105,19 @@ ctest --test-dir build --output-on-failure
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--data` | required | Path to MUSDB18-HQ `train/` directory |
+| `--data` | required (except `--export`) | Path to MUSDB18-HQ `train/` |
+| `--save` | `./checkpoints` | Checkpoint directory |
+| `--resume` | none | Resume from a checkpoint path |
 | `--steps` | 100000 | Total training steps |
 | `--batch` | 4 | Batch size (reduce if OOM) |
-| `--grad-accum` | 4 | Gradient accumulation steps |
-| `--clip-seconds` | 0.5 | Audio clip duration (0.5=faster, 2.0=better) |
-| `--lr` | 1e-3 | Learning rate |
-| `--cache` | off | RAM pre-cache dataset (~20GB) |
-| `--resume` | None | Resume from checkpoint path |
+| `--grad-accum` | 1 | Gradient accumulation (`effective_batch = batch × accum`) |
+| `--lr` | 3e-4 | Learning rate |
+| `--clip-seconds` | 4.0 | Audio clip duration in seconds |
+| `--amp` | off | bf16 AMP (fp32 SSM core stays fp32) |
+| `--precomputed` | none | Deprecated — `StemDataset` loads `.crepe.npy` automatically |
+| `--cache-limit` | 16 | Dataset cache limit (there is no `--cache` flag) |
+| `--val-every` / `--ckpt-every` / `--log-every` | 2000 / 1000 / 50 | Reporting + checkpoint cadence |
+| `--early-stop-patience` | 10 | Validation checks without improvement before stopping |
 
 ## Success Criteria
 

@@ -35,7 +35,7 @@ EXTRA_ARGS=("$@")
 # ── Verify prerequisites ─────────────────────────────────────────────────
 if [ ! -f "${VENV}/bin/activate" ]; then
     echo "ERROR: Virtual environment not found at ${VENV}/bin/activate"
-    echo "Create it first: python -m venv ${VENV} && source ${VENV}/bin/activate && pip install -r requirements.txt"
+    echo "Create it first: bash scripts/setup_local.sh   # venv_rocm + ROCm PyTorch (there is no requirements.txt)"
     exit 1
 fi
 

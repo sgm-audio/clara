@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <string>
 
@@ -58,6 +60,16 @@ inline std::string mambaResolveModulePath(void *funcAddr, const char *modelFile)
         base = "./";
 
     return base + "models/" + modelFile;
+}
+
+// Release builds use -ffast-math, which implies -ffinite-math-only: the
+// compiler may then fold std::isfinite()/std::isnan() to a constant, so they
+// cannot be used to reject Inf/NaN. Inspect the IEEE-754 exponent bits instead.
+inline bool mambaIsFinite(double value) {
+    uint64_t bits = 0;
+    static_assert(sizeof(bits) == sizeof(value), "double is expected to be 64-bit IEEE-754");
+    std::memcpy(&bits, &value, sizeof(bits));
+    return ((bits >> 52) & 0x7FFull) != 0x7FFull;
 }
 
 inline bool mambaFileExists(const std::string &path) {

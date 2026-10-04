@@ -8,6 +8,7 @@
 //   5. State continuity (consecutive blocks use accumulated state)
 
 #include "core/MambaConfig.h"
+#include "core/Platform.hpp"
 #include "core/SsmInferenceCore.h"
 
 #include <algorithm>
@@ -46,7 +47,9 @@ static int failures = 0;
 
 static bool all_finite(const float *data, size_t n) {
     for (size_t i = 0; i < n; ++i) {
-        if (!std::isfinite(data[i])) return false;
+        // mambaIsFinite, not std::isfinite: Release builds use -ffast-math,
+        // which folds std::isfinite() away and makes these checks vacuous.
+        if (!mambaIsFinite(data[i])) return false;
     }
     return true;
 }
@@ -357,8 +360,7 @@ static void test_python_reference(const std::string &model_path) {
         ++failures;
         return;
     }
-    if (std::fopen(ref_input.c_str(), "rb") == nullptr ||
-        std::fopen(ref_output.c_str(), "rb") == nullptr) {
+    if (std::fopen(ref_input.c_str(), "rb") == nullptr || std::fopen(ref_output.c_str(), "rb") == nullptr) {
         std::printf("  SKIP: reference fixtures not found in %s — generate with:\n", dir.c_str());
         std::printf("        python3 python/tools/dump_engine_reference.py --model %s\n", model_path.c_str());
         return;
@@ -393,8 +395,8 @@ static void test_python_reference(const std::string &model_path) {
     // Per-sample comparison. The tolerance is loose enough for float32 vs
     // float32 (different summation orders) but tight enough to catch any real
     // divergence in the 8-step pipeline. Measured max diff with the shipped
-    // fixture is ~1e-6; the previous threshold here was 0.05, which would have
-    // accepted an entirely wrong model.
+    // fixture is ~1.5e-3 (the number this test prints); the previous threshold
+    // here was 0.05, which would have accepted an entirely wrong model.
     float max_diff = 0.0f;
     int max_diff_idx = 0;
     for (size_t i = 0; i < N; ++i) {
@@ -407,7 +409,8 @@ static void test_python_reference(const std::string &model_path) {
 
     // Relative error against the reference peak, for an interpretable number
     float ref_peak = 0.0f;
-    for (size_t i = 0; i < N; ++i) ref_peak = std::max(ref_peak, std::fabs(ref_out[i]));
+    for (size_t i = 0; i < N; ++i)
+        ref_peak = std::max(ref_peak, std::fabs(ref_out[i]));
     const float rel_err = (ref_peak > 0.0f) ? max_diff / ref_peak : max_diff;
 
     std::printf("  INFO: max sample diff = %.3e at index %d (%.3e relative to peak %.6f)\n", (double) max_diff,
@@ -467,10 +470,12 @@ static void test_numeric_sensitivity(const std::string &model_path) {
     CHECK(all_finite(out_a.data(), N), "output finite under 1-ULP input perturbation");
 
     float peak = 0.0f;
-    for (size_t i = 0; i < N; ++i) peak = std::max(peak, std::fabs(out_a[i]));
+    for (size_t i = 0; i < N; ++i)
+        peak = std::max(peak, std::fabs(out_a[i]));
 
     float worst = 0.0f;
-    for (size_t i = 0; i < N; ++i) worst = std::max(worst, std::fabs(out_a[i] - out_b[i]));
+    for (size_t i = 0; i < N; ++i)
+        worst = std::max(worst, std::fabs(out_a[i] - out_b[i]));
 
     std::printf("  INFO: output peak = %.4f\n", (double) peak);
     std::printf("  INFO: 1-ULP input perturbation -> max divergence %.3e (%.3f%% of peak) over %zu samples\n",
@@ -498,9 +503,11 @@ int main(int argc, char **argv) {
     if (!f) {
         std::printf("\nSKIP: model file not found: %s\n", model_path.c_str());
         std::printf("Generate one with:\n");
-        std::printf("  python3 python/tools/export_mamba_weights.py --output %s --seed 42\n",
-                    model_path.c_str());
-        return 0;
+        std::printf("  python3 python/tools/export_mamba_weights.py --output %s --seed 42\n", model_path.c_str());
+        // 77 is CTest's SKIP code (SKIP_RETURN_CODE is set for this test in
+        // tests/CMakeLists.txt). Returning 0 here reported a missing model as a
+        // *passing* test, which hid a broken checkout.
+        return 77;
     }
     std::fclose(f);
     if (is_lfs_pointer(model_path)) {

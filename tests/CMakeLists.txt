@@ -44,6 +44,12 @@ target_compile_definitions(test_mamba3 PRIVATE
     TEST_MODEL_DIR="${CMAKE_SOURCE_DIR}/models"
 )
 add_test(NAME test_mamba3 COMMAND test_mamba3 "${CMAKE_SOURCE_DIR}/models/model.bin")
+# Exit code 77 means "cannot test" (no model file) — report it as a skip rather
+# than a failure. Without this property CTest treats 77 as a test failure.
+set_tests_properties(test_mamba3 PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300
+)
 
 # --- Generate Python reference outputs for C++ comparison ---
 # Runs once, dumps input_ref.bin + output_ref.bin next to model.bin.
@@ -146,7 +152,7 @@ add_test(NAME test_ara_controller COMMAND test_ara_controller)
 # CLAP validator integration test
 #
 # Runs clap-validator (https://github.com/free-audio/clap-validator) against
-# the built MambaSuiteClap.clap. Required categories covered by the standard
+# the built MambaSuite.clap. Required categories covered by the standard
 # clap-validator suite: audio-ports, params, state, latency.
 #
 # Resolution order:
@@ -182,9 +188,9 @@ else()
 endif()
 
 # Use $<TARGET_FILE:MambaSuiteClap> so the plugin path resolves correctly
-# for both single-config (Ninja, Unix Makefiles: plugins/MambaSuiteClap.clap)
+# for both single-config (Ninja, Unix Makefiles: plugins/MambaSuite.clap)
 # and multi-config (Visual Studio, Xcode, Ninja Multi-Config:
-# plugins/$<CONFIG>/MambaSuiteClap.clap) generators.
+# plugins/$<CONFIG>/MambaSuite.clap) generators.
 
 # 1. Local install on PATH
 find_program(CLAP_VALIDATOR_EXE
@@ -257,3 +263,24 @@ else()
         "Install clap-validator (https://github.com/free-audio/clap-validator) "
         "or Rust + cargo to enable this test.")
 endif()
+
+# ---------------------------------------------------------------------------
+# Install-layout regression test
+#
+# Installs every component into a scratch prefix and checks the result: exit
+# codes, --prefix handling, the .clap name (it must match the VST3 wrapper's
+# stem) and models/model.bin sitting next to the installed plugin. See
+# tests/install_check.cmake for what each check guards.
+# ---------------------------------------------------------------------------
+add_test(
+    NAME test_install_layout
+    COMMAND ${CMAKE_COMMAND}
+        -DBUILD_DIR=${CMAKE_BINARY_DIR}
+        -DCLAP_OUTPUT_NAME=${CLAP_WRAPPER_OUTPUT_NAME}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/install_check.cmake
+)
+set_tests_properties(test_install_layout PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT          180
+    LABELS           "install;packaging"
+)

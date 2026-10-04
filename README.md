@@ -1,9 +1,9 @@
 # CLARA — Mamba Audio Suite
 
-[![CI](https://github.com/SGM-Studios/clara/actions/workflows/ci.yml/badge.svg)](https://github.com/SGM-Studios/clara/actions/workflows/ci.yml)
+[![CI](https://github.com/sgm-audio/clara/actions/workflows/ci.yml/badge.svg)](https://github.com/sgm-audio/clara/actions/workflows/ci.yml)
 
 C++17 audio plugin that runs a Mamba-3 SSM (Selective State Space Model) through a
-custom C++ inference engine. Ships as a CLAP plugin (`MambaSuiteClap.clap`), a VST3
+custom C++ inference engine. Ships as a CLAP plugin (`MambaSuite.clap`), a VST3
 wrapper (`MambaSuite.vst3`, via clap-wrapper) and an ARA 2.0 extension library
 (`MambaSuiteARA.so`), all sharing one inference core. Linux is the tested platform;
 macOS and Windows presets exist but are not verified.
@@ -31,7 +31,8 @@ real time and the shipped weights are an untrained fixture.**
 | GUI | ✅ native `CLAP_EXT_GUI` (X11/Win32 framebuffer) + `CLAP_EXT_WEBVIEW`; auto-disabled when X11 headers are absent |
 | ARA real-time conditioning | 🟡 scaffolding only — no host content reader |
 | macOS / Windows builds | 🟡 presets defined; not verified in this environment |
-| CI | 🟡 clap-validator download fixed; the CLAP plugin now builds without X11, so the Windows job no longer needs a cross-GUI; needs a run to confirm green |
+| CI | 🔴 **not running**: every run since 2026-10-04 ends in `startup_failure` with 0 jobs (workflow parses and is registered active, so this is account/repo-level, not a YAML error) — see *CI/CD* below |
+| VST3 in a host | 🟡 **loads now, still not DAW-tested**: build output renamed to `MambaSuite.clap` so clap-wrapper's name match succeeds — `GetPluginFactory()` verified, see *Running* |
 
 ## Performance (measured, not estimated)
 
@@ -68,18 +69,28 @@ less saturating state) is tracked in [`docs/TODO.md`](docs/TODO.md).
 
 Dependencies are fetched by CMake `FetchContent`: CLAP SDK (`29ffcc27`), ARA SDK
 (`2.3.0`), clap-wrapper (`v0.9.1`), and — for the VST3 target — the Steinberg
-VST3 SDK (`v3.7.6_build_18`). Only a C++20 toolchain, CMake ≥ 3.14, `git` and a
-network connection to GitHub are required:
+VST3 SDK (`v3.7.6_build_18`). Only a C++17 toolchain, CMake ≥ 3.14, `git` and a
+network connection to GitHub are required (the project is built with
+`CMAKE_CXX_STANDARD 17`; the VST3 SDK is the only dependency that would accept
+a newer standard):
 
 ```bash
 sudo apt-get install -y cmake g++                 # Debian/Ubuntu
 
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel                    # CLAP + ARA + tests
+cmake --build build --parallel                    # CLAP + ARA (+ VST3 wrapper)
 ```
 
-> With CMake 4.x, pass `-DCMAKE_POLICY_VERSION_MINIMUM=3.5`: clap-wrapper's
-> bundled dependencies still declare `cmake_minimum_required` values below 3.5.
+Tests are opt-in: add `-DBUILD_TESTING=ON` to the configure line, otherwise no
+test targets exist and `build/tests/` is empty.
+
+> CI passes `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` on every configure. With the
+> pinned dependency revisions it is **not required** — verified 2026-10-04: a
+> fresh configure (all four dependencies fetched) succeeds on CMake 4.4.3
+> without it, because clap-wrapper v0.9.1 builds the VST3 SDK from a source glob
+> rather than `add_subdirectory`, so the SDK's
+> `cmake_minimum_required(VERSION 3.4.3)` files are never processed. Passing it
+> is harmless, and it protects against older clap-wrapper/dependency pins.
 
 Two build knobs matter on restricted machines:
 
@@ -113,12 +124,32 @@ cmake --build build --parallel && ctest --test-dir build --output-on-failure
 ```
 
 Install (default prefix `/usr/local`), cross-platform presets, and the `clara_test`
-aggregate target work as before: `cmake --preset macos-release`,
-`cmake --install build --component clap`, `cmake --build build --target clara_test`.
+aggregate target: `cmake --preset macos-release`, `cmake --build build --target clara_test`.
+
+`cmake --install <build> [--prefix <dir>] [--component clap|vst3|ara]` installs,
+prefix-relative, on Linux:
+
+```
+lib/clap/MambaSuite.clap              the CLAP plugin (bare DSO)
+lib/clap/models/*.bin                 weights — must sit next to the DSO (dladdr)
+lib/ara/MambaSuiteARA.so              the ARA2 library
+lib/ara/models/*.bin                  weights, next to the library
+lib/vst3/MambaSuite.vst3/             the clap-wrapper VST3 module
+  Contents/x86_64-linux/MambaSuite.so
+```
+
+macOS/Windows install the CLAP as a bundle (`<stem>.clap/Contents/<arch>/<stem>.clap`),
+which is the local convention. A *full* install also drops the fetched CLAP SDK's
+own headers/CMake package files under `include/clap/` and `lib/cmake/clap/` —
+those come from the CLAP SDK's install rules, not from CLARA; use a component
+install if you do not want them.
+
+The VST3 bundles carry no weights of their own: clap-wrapper loads the `.clap`
+from the CLAP search paths, and *that* file reads the `models/` beside it.
 
 Outputs:
 
-- `build/plugins/MambaSuiteClap.clap` — CLAP audio effect
+- `build/plugins/MambaSuite.clap` — CLAP audio effect
 - `build/Release/MambaSuite.vst3` — VST3 bundle (`MambaSuite_as_vst3` target)
 - `build/plugins/MambaSuiteARA.so` — ARA2 library
 - `build/tests/test_*` — unit tests (`-DBUILD_TESTING=ON`)
@@ -127,21 +158,42 @@ Outputs:
 
 ## Running
 
+**CLAP hosts (Bitwig, Carla, clap-host):** load `build/plugins/MambaSuite.clap`
+directly, or copy it into a CLAP search path (`~/.clap/`, `/usr/lib/clap/`).
+
 **Ableton Live (VST3):** copy `build/Release/MambaSuite.vst3` to your VST3 folder
 (`~/.vst3/`, `~/Library/Audio/Plug-Ins/VST3/`, `C:\Program Files\Common Files\VST3\`).
+The wrapper locates the CLAP by *matching file name*: `MambaSuite.vst3` → it
+searches the CLAP paths for `MambaSuite.clap` (clap-wrapper's
+`wrapasvst3_entry.cpp` derives the name from its own binary and looks in
+`/usr/lib/clap`, `~/.clap` and `CLAP_PATH`, plus one level of subdirectories).
+The build now produces exactly that name, so the pairing is:
 
-**CLAP hosts (Bitwig, Carla, clap-host):** load `build/plugins/MambaSuiteClap.clap`.
+```bash
+cp build/plugins/MambaSuite.clap ~/.clap/            # + models/ beside it
+cp -r build/Release/MambaSuite.vst3 ~/.vst3/
+```
 
-The weight file must sit in `models/` next to the plugin binary; the build
-deploys it for the CLAP target. The VST3 bundle does not embed it yet — copy
-`build/plugins/models/` next to the `.so` inside the bundle.
+Verified 2026-10-04 with a `dlopen` probe: with only the old
+`MambaSuiteClap.clap` present, `GetPluginFactory()` returns `nullptr`; with
+`MambaSuite.clap` in `~/.clap`, the factory is created and reports
+`Mamba-3 SSM Processor` (vendor `Elite DSP`, id `com.mamba.audio.suite`).
+
+The weight file must sit in `models/` **next to the `.clap` binary that is
+loaded** (the plugin resolves its own module path with `dladdr`, so it is the
+`.clap` location that matters, not the host's). The build deploys it for the
+CLAP target. Verified 2026-10-04 with a minimal CLAP host harness: `plugin->init()`
+returns true with `models/` beside the `.clap` and false without it; with it,
+`process()` produces finite audio.
 
 Each plugin exposes three parameters: bypass (stepped, click-free 50 ms
 crossfade), wet/dry, intensity.
 
 > **No DAW load test has been performed on this codebase.** The engine is
-> verified by unit tests and by direct benchmark, but nobody has confirmed audio
-> output inside a running host.
+> verified by unit tests, by direct benchmark, and (2026-10-04) by a minimal
+> CLAP host harness that dlopens `MambaSuite.clap`, creates and activates
+> the plugin and processes 512 frames — `init()` succeeds and the output is
+> finite. Nobody has confirmed audio output inside a running DAW.
 
 ## Model
 
@@ -247,6 +299,21 @@ deployment (including that `model.bin` is not an LFS pointer), downloads
 `clap-validator` (advisory — the step tolerates failures), runs CTest on both
 platforms, and uploads the CLAP plugin, ARA library, VST3 bundle and deployed
 weights as artifacts.
+
+<!-- STATUS: in progress -->
+**None of that has run since 2026-10-04.** Every workflow run created on that
+date and later — the three pushes, both `pull_request` runs, and the scheduled
+CodeQL runs — completed with conclusion `startup_failure`, zero jobs and
+`path=BuildFailed`. The last run that actually executed was 2026-07-10
+(`workflow_dispatch`, `path=.github/workflows/ci.yml`). The file itself is not
+the problem: it parses as YAML, `gh api .../actions/workflows` lists `CI` as
+`active` at `.github/workflows/ci.yml`, and the working tree copy is byte-identical
+to `main`. A `startup_failure` with no jobs on *all* workflows at once points at
+the repository/account level — Actions spending limit or billing, or Actions
+disabled for the repo — which only someone with admin rights can check
+(Settings → Billing → Actions, and Settings → Actions → General). Until that is
+resolved the CI claims in `CHANGELOG.md` v0.1.1/v0.1.2 (clap-validator pin,
+model checks, X11-free build) are written but **unverified on CI**.
 
 ## License
 

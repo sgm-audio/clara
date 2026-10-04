@@ -1,5 +1,12 @@
 # Changelog
 
+<!-- STATUS: historical -->
+> **Historical — the pre-0.1.0 internal changelog.** These 1.x version numbers
+> predate the first release and overstated maturity (see the note in
+> [`../CHANGELOG.md`](../CHANGELOG.md) under v0.1.0). The live changelog is
+> [`/CHANGELOG.md`](../CHANGELOG.md); the ONNX-era entries further down describe
+> code that now lives in [`../archive/mamba1-onnx-era/`](../archive/mamba1-onnx-era/).
+
 ## 1.2.1 — 2026-07-01
 
 Pre-commit hooks, C++ formatting config, and GCC 16 compatibility fix.

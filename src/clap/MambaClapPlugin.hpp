@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../core/Platform.hpp"
 #include "../core/SPSCQueue.hpp"
 #include "../core/SsmInferenceCore.h"
 
@@ -15,13 +16,30 @@ struct MambaNativeGUIState;
 #include <clap/ext/state.h>
 #include <clap/ext/tail.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
 enum ParamId { PARAM_BYPASS = 0, PARAM_WET_DRY = 1, PARAM_INTENSITY = 2, PARAM_COUNT };
+
+namespace clara::mamba3 {
+
+// All three parameters are declared over [0, 1] (see clap_params_get_info), and
+// the model's conditioning/mix math assumes that range. Values arrive from
+// sources that cannot be trusted to respect it — host param events, the webview
+// JSON (the host page can post anything), and a project's saved state — so map
+// them into range and never let NaN/Inf through. The native GUI already clamps
+// at the slider boundary (MambaNativeGUI.hpp sliderValueFromMouse).
+inline float mambaClampParamValue(double value) {
+    if (!mambaIsFinite(value)) return 0.0f;
+    return static_cast<float>(std::clamp(value, 0.0, 1.0));
+}
+
+} // namespace clara::mamba3
 
 struct MambaPluginState {
     // One engine per channel (stereo). SsmInferenceCore holds SSM state internally.

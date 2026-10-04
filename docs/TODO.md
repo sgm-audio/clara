@@ -40,6 +40,45 @@ list immediately below, and the measurements behind it are in
       blobs were lost with the LFS budget; retrain and regenerate the reference
       fixtures (`python/tools/dump_engine_reference.py`).
 
+### P1.5 — packaging & CI (found during the 2026-10-04 review)
+
+- [ ] **CI is not running.** Every run created since 2026-10-04 (pushes,
+      `pull_request`, scheduled CodeQL) concludes `startup_failure` with 0 jobs
+      and `path=BuildFailed`; the last run that executed anything was
+      2026-07-10. `.github/workflows/ci.yml` parses as YAML, is registered
+      `active` and is byte-identical to `main`, so this is a repository/account
+      level condition (Actions spending limit/billing, or Actions disabled) —
+      needs someone with admin rights, not a workflow edit. Until then every CI
+      claim in `CHANGELOG.md`/README is unverified.
+- [x] **VST3 wrapper could not find the CLAP as built** (fixed 2026-10-04).
+      clap-wrapper derives the CLAP file name from its own binary stem
+      (`MambaSuite` → `MambaSuite.clap`); the build produced
+      `MambaSuiteClap.clap`. `CLAP_WRAPPER_OUTPUT_NAME` now sets `OUTPUT_NAME` on
+      the CLAP target as well, so both artefacts share one stem and cannot drift.
+      Verified: `GetPluginFactory()` is `nullptr` with only the old name present
+      and returns the factory (`Mamba-3 SSM Processor`, `Elite DSP`) once
+      `MambaSuite.clap` is in `~/.clap`. Still untested: a real DAW load.
+- [x] **Install components were broken** (fixed 2026-10-04). All three now exit 0
+      and honour `--prefix`. Linux installs the CLAP as a *bare* file (a bundle
+      dir and a same-named bare file cannot coexist — that collision is what made
+      `--component clap` fail); macOS/Windows keep bundles. The `vst3` component
+      used an absolute `DESTINATION` into the build tree and installed only the
+      weights; it now installs the VST3 module into
+      `lib/vst3/MambaSuite.vst3/Contents/<arch>/`. Found while fixing it: the ARA
+      `COMPONENT ara` clause attached only to `LIBRARY`, so the Windows `.dll`
+      would have landed in the default component — both TARGETS installs now
+      repeat `COMPONENT` per artefact type.
+- [ ] **`-ffast-math` and NaN/Inf checks.** Release builds compile with
+      `-ffast-math` (`-ffinite-math-only`), so `std::isfinite`/`std::isnan` are
+      folded to constants; the param entry points and the test suite now use the
+      bit-level `mambaIsFinite` (`src/core/Platform.hpp`) instead. If more
+      non-finite guards are added, they must use that helper.
+- [ ] **Stale personal files at the repository root** (proposed): `SESSION_LOG.md`
+      (104 KB), `omo-config.json` (unreferenced agent-tool config) and the
+      tracked-but-ignored `.agent_context/nrinstruct.md` (session notes from
+      2026-06-04 describing the old architecture). Move them under `docs/` or
+      untrack them.
+
 ### P2 — product evidence
 
 - [ ] One flagship effect, trained, with a same-loudness A/B in a real DAW

@@ -282,8 +282,10 @@ python python/training/train_clara.py \
 See `python/training/train_clara.py` for training options. For the launch workflow:
 
 ```bash
-# On the cloud VM
-curl -fsSL https://raw.githubusercontent.com/SGM-Studios/clara/main/scripts/setup_cloud.sh | bash
+# On the cloud VM — the launcher is archived, not in scripts/ (verified 2026-10-04:
+# the URL this block used to print pointed at a different account and a missing file)
+git clone https://github.com/sgm-audio/clara.git && cd clara
+bash archive/old-training-files/setup_cloud.sh
 ```
 
 This installs ROCm + PyTorch, downloads MUSDB18-HQ, precomputes features, starts cost monitoring (warns at $75, kills at $90), syncs checkpoints to S3 every 5 minutes, and begins Stage 0 training.

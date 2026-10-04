@@ -129,8 +129,8 @@ public:
     // Per-sample steps 2-6 for every sample in the chunk.
     // For sample i: reads proj column i and the FiLM'd embedding u_film column i,
     // writes y_gated column i plus the two scalar output terms used by step 7.
-    void sample_core_batch(const float *proj, const float *u_film, size_t n_samples, float *y_gated, float *d_skip_scale,
-                           float *mimo_o_sum);
+    void sample_core_batch(const float *proj, const float *u_film, size_t n_samples, float *y_gated,
+                           float *d_skip_scale, float *mimo_o_sum);
 
     // out[d][i] = sum_j out_proj_w[d][j] * y_gated[j][i]
     void out_proj_batch(const float *y_gated, size_t n_samples, float *out) const;
@@ -143,8 +143,9 @@ public:
     // cond:   [COND_DIM] — conditioning vector (nullptr = skip FiLM)
     void process_sample(const float *input, float *output, const float *cond = nullptr);
 
-    // Process a block of samples (up to MAX_CHUNK_SIZE). Not used by the
-    // engine's hot path — SsmInferenceCore drives the batched entry points.
+    // Process a block of samples (the count is not bounded by MAX_CHUNK_SIZE).
+    // Not used by the engine's hot path — SsmInferenceCore drives the batched
+    // entry points.
     void process_block(const float *input, float *output, size_t n_samples, const float *cond = nullptr);
 
 private:

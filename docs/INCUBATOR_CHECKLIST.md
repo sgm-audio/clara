@@ -8,7 +8,7 @@ nothing to do with polish.
 ## What's Done (shipping, verified)
 
 - [x] C++ engine: R=4 time-domain Mamba-3, 1.66M params, V2 flat binary weights
-- [x] CLAP plugin: `MambaSuiteClap.clap` — 3 params (bypass, wet/dry, intensity)
+- [x] CLAP plugin: `MambaSuite.clap` — 3 params (bypass, wet/dry, intensity)
 - [x] VST3 wrapper: `MambaSuite.vst3` via clap-wrapper — loadable in Ableton Live
 - [x] ARA 2.0 extension: `MambaSuiteARA.so` — scaffolding only
 - [x] GUIs: `CLAP_EXT_WEBVIEW` (inline HTML) and `CLAP_EXT_GUI` (native framebuffer, X11/Win32; auto-disabled with `CLARA_NO_NATIVE_GUI` when X11 headers are absent)
@@ -147,10 +147,12 @@ Push the current commits and verify CI passes on all three platforms:
 
 ```bash
 git push origin main
-# Check https://github.com/scottmill306/CLARA/actions
+# Check https://github.com/sgm-audio/clara/actions   (was scottmill306/CLARA)
 ```
 
-CI builds: ubuntu-22.04 (CLAP + VST3 + ARA + tests), macos-14 (CLAP + VST3 + ARA), windows-2022 (CLAP + ARA + tests).
+CI builds: ubuntu-22.04 (CLAP + VST3 + ARA + tests) and windows-2022
+(CLAP + ARA + tests). There is **no macOS job** — `CMakePresets.json` defines
+macOS presets, but nothing verifies them (this line claimed three platforms).
 
 ---
 

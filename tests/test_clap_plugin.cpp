@@ -1,5 +1,7 @@
 #include "../core/SPSCQueue.hpp"
 #include "clap/MambaClapPlugin.hpp"
+// mamba_webview_receive lives here (inline); the plugin .cpp includes it too.
+#include "gui/MambaWebviewGUI.hpp"
 
 #include <clap/clap.h>
 #include <clap/ext/audio-ports.h>
@@ -458,7 +460,6 @@ static int test_spsc_two_thread() {
 // ---------------------------------------------------------------------------
 static int test_spsc_wrap_around() {
     SPSCQueue<int, 64> queue;
-    constexpr int N = 200;
 
     for (int batch = 0; batch < 4; ++batch) {
         for (int i = 0; i < 50; ++i) {
@@ -482,8 +483,129 @@ static int test_spsc_wrap_around() {
 }
 
 // ---------------------------------------------------------------------------
-// 14. test_plugin_descriptor_urls
-//    ---------------------------------------------------------------------------
+// 15. test_process_audio_path
+//     The plugin's audio path had no coverage: create -> init -> activate ->
+//     start_processing -> process, plus the two passthrough paths (no engine
+//     after deactivate, and bypass settled at 1.0). models/model.bin is
+//     committed, so this runs wherever the rest of the suite does.
+// ---------------------------------------------------------------------------
+static int test_process_audio_path() {
+    MambaPluginState state;
+    state.modelPath = std::string(TEST_MODEL_DIR) + "/model.bin";
+    clap_plugin_t plugin = makeMockPlugin(&state);
+
+    TEST_ASSERT(plugin.init(&plugin), "init finds the model");
+
+    constexpr uint32_t N = 512;
+    TEST_ASSERT(plugin.activate(&plugin, 48000.0, 32, N), "activate");
+    TEST_ASSERT(plugin.start_processing(&plugin), "start_processing");
+
+    std::vector<float> inL(N), inR(N), outL(N, 0.0f), outR(N, 0.0f);
+    for (uint32_t i = 0; i < N; ++i) {
+        inL[i] = inR[i] = 0.5f * std::sin(2.0 * M_PI * 440.0 * i / 48000.0);
+    }
+
+    float *inPtrs[2] = {inL.data(), inR.data()};
+    float *outPtrs[2] = {outL.data(), outR.data()};
+    clap_audio_buffer_t inBuf{};
+    inBuf.data32 = inPtrs;
+    inBuf.channel_count = 2;
+    clap_audio_buffer_t outBuf{};
+    outBuf.data32 = outPtrs;
+    outBuf.channel_count = 2;
+    clap_process_t proc{};
+    proc.frames_count = N;
+    proc.audio_inputs = &inBuf;
+    proc.audio_inputs_count = 1;
+    proc.audio_outputs = &outBuf;
+    proc.audio_outputs_count = 1;
+
+    TEST_ASSERT(plugin.process(&plugin, &proc) == CLAP_PROCESS_CONTINUE, "process returns continue");
+    bool finite = true;
+    float peak = 0.0f;
+    for (uint32_t i = 0; i < N; ++i) {
+        // mambaIsFinite, not std::isfinite: Release builds use -ffast-math,
+        // which folds std::isfinite() away and would make this check vacuous.
+        if (!mambaIsFinite(outL[i]) || !mambaIsFinite(outR[i])) finite = false;
+        peak = std::max(peak, std::fabs(outL[i]));
+    }
+    TEST_ASSERT(finite, "engine output is finite");
+    TEST_ASSERT(peak > 1e-3f, "engine output is non-trivial");
+
+    // Bypass: with the ramp already settled at 1.0 the dry signal passes
+    // through unchanged (the mix reduces to 1.0 * dry).
+    state.bypass.store(1.0f, std::memory_order_release);
+    state.currentBypassValue = 1.0f;
+    TEST_ASSERT(plugin.process(&plugin, &proc) == CLAP_PROCESS_CONTINUE, "bypassed process returns continue");
+    bool passthroughIsExact = true;
+    for (uint32_t i = 0; i < N; ++i) {
+        if (outL[i] != inL[i]) passthroughIsExact = false;
+    }
+    TEST_ASSERT(passthroughIsExact, "bypass passes the dry signal through");
+    state.bypass.store(0.0f, std::memory_order_release);
+    state.currentBypassValue = 0.0f;
+
+    // No engine (deactivated) -> passthrough copy, still CLAP_PROCESS_CONTINUE.
+    plugin.deactivate(&plugin);
+    std::fill(outL.begin(), outL.end(), 0.0f);
+    TEST_ASSERT(plugin.process(&plugin, &proc) == CLAP_PROCESS_CONTINUE, "process without an engine returns continue");
+    TEST_ASSERT(std::memcmp(outL.data(), inL.data(), N * sizeof(float)) == 0, "no engine -> dry passthrough");
+
+    TEST_PASS("process audio path");
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// 16. test_webview_message_handling
+//     The webview message parser sits behind the CLAP C ABI. A malformed
+//     numeric value used to reach std::stod, which throws — through a C ABI,
+//     where an escaping exception is undefined behaviour.
+// ---------------------------------------------------------------------------
+static int test_webview_message_handling() {
+    MambaPluginState state; // host == nullptr, so host notification is skipped
+    clap_plugin_t plugin = makeMockPlugin(&state);
+
+    const std::string valid = R"({"type":"param_change","id":"intensity","value":0.25})";
+    TEST_ASSERT(clara::mamba3::mamba_webview_receive(&plugin, valid.data(), (uint32_t) valid.size()),
+                "valid message accepted");
+    TEST_ASSERT(state.intensity.load() == 0.25f, "intensity updated from the webview message");
+
+    // The declared parameter range is [0, 1]; the webview page (or anything
+    // that can post to it) must not be able to drive the model outside it.
+    const char *outOfRange[] = {
+        R"({"type":"param_change","id":"intensity","value":-3})",
+        R"({"type":"param_change","id":"intensity","value":99})",
+    };
+    for (const char *message : outOfRange) {
+        MambaPluginState ranged;
+        clap_plugin_t rangedPlugin = makeMockPlugin(&ranged);
+        TEST_ASSERT(clara::mamba3::mamba_webview_receive(&rangedPlugin, message, (uint32_t) std::strlen(message)),
+                    "out-of-range message handled");
+        const float stored = ranged.intensity.load();
+        TEST_ASSERT(stored == 0.0f || stored == 1.0f, "out-of-range value clamped into [0, 1]");
+    }
+
+    const char *malformed[] = {
+        R"({"type":"param_change","id":"intensity","value":"abc"})",
+        R"({"type":"param_change","id":"intensity","value":})",
+        R"({"type":"param_change","id":"intensity","value":1e999})",
+    };
+    for (const char *message : malformed) {
+        MambaPluginState badState;
+        clap_plugin_t badPlugin = makeMockPlugin(&badState);
+        const bool accepted =
+            clara::mamba3::mamba_webview_receive(&badPlugin, message, (uint32_t) std::strlen(message));
+        TEST_ASSERT(!accepted, "malformed value rejected without throwing");
+        TEST_ASSERT(badState.intensity.load() == 0.5f, "malformed value leaves the parameter untouched");
+    }
+
+    TEST_PASS("webview message handling");
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// 17. test_plugin_descriptor_urls
+// ---------------------------------------------------------------------------
 static int test_plugin_descriptor_urls() {
     TEST_ASSERT(mamba_plugin_info.url != nullptr, "url not null");
     TEST_ASSERT(std::strlen(mamba_plugin_info.url) > 0, "url not empty");
@@ -522,6 +644,8 @@ int main() {
         {"deferred task queue", test_deferred_task_queue},
         {"SPSC two-thread FIFO", test_spsc_two_thread},
         {"SPSC wrap-around", test_spsc_wrap_around},
+        {"process audio path", test_process_audio_path},
+        {"webview message handling", test_webview_message_handling},
         {"plugin descriptor URLs", test_plugin_descriptor_urls},
     };
 

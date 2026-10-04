@@ -126,10 +126,21 @@ set_target_properties(Mamba3Core PROPERTIES
 # SPSCQueue.hpp is header-only — included via MambaClapPlugin.hpp, no compilation unit needed
 
 # --- CLAP Plugin ---
+# The output file name is load-bearing:
+#   1. CLAP hosts and clap-wrapper search the CLAP paths for "<stem>.clap".
+#   2. clap-wrapper derives that stem from the VST3 binary's own name
+#      (wrapasvst3_entry.cpp: plugname = os::getBinaryName() + ".clap"), so the
+#      wrapped VST3 only finds the plugin if both stems are identical.
+# One cache variable drives both names so they cannot drift. The CMake *target*
+# stays MambaSuiteClap; only the file name follows the stem.
+set(CLAP_WRAPPER_OUTPUT_NAME "MambaSuite" CACHE STRING
+    "Plugin name stem: produces '<stem>.clap' and the wrapped '<stem>.vst3'")
+
 add_library(MambaSuiteClap MODULE src/clap/MambaClapPlugin.cpp)
 target_include_directories(MambaSuiteClap PRIVATE ${COMMON_INCLUDES})
 set_target_properties(MambaSuiteClap PROPERTIES
     PREFIX ""
+    OUTPUT_NAME "${CLAP_WRAPPER_OUTPUT_NAME}"
     SUFFIX ".clap"
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins
     CXX_VISIBILITY_PRESET hidden
@@ -216,8 +227,9 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # --- VST3 Wrapper (via clap-wrapper) ---
-# Wraps the built MambaSuiteClap.clap into a native VST3 for Ableton Live etc.
-set(CLAP_WRAPPER_OUTPUT_NAME "MambaSuite" CACHE STRING "VST3 output name")
+# Wraps the built MambaSuite.clap into a native VST3 for Ableton Live etc.
+# CLAP_WRAPPER_OUTPUT_NAME (defined above the CLAP target) supplies the name for
+# both artefacts — they must match, see the comment there.
 set(CLAP_WRAPPER_BUNDLE_IDENTIFIER "com.clara.mambasuite" CACHE STRING "macOS bundle ID")
 set(CLAP_WRAPPER_BUNDLE_VERSION "${PROJECT_VERSION}" CACHE STRING "Bundle version")
 set(CLAP_WRAPPER_BUILD_STANDALONE OFF CACHE BOOL "Skip standalone target")
@@ -256,15 +268,6 @@ if(CLARA_BUILD_VST3)
         POSITION_INDEPENDENT_CODE ON)
 
     target_link_options(MambaSuite_as_vst3 PRIVATE $<$<AND:$<PLATFORM_ID:Linux,Darwin>,$<CONFIG:Release>>:-s>)
-
-    # Deploy models via install rule (works across directory boundaries)
-    if(EXISTS ${CMAKE_SOURCE_DIR}/models)
-        install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
-            DESTINATION ${CMAKE_BINARY_DIR}/plugins/MambaSuite.vst3/Contents/Resources/models
-            COMPONENT vst3
-            FILES_MATCHING PATTERN "*.bin"
-        )
-    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -341,24 +344,28 @@ endif()
 # Install Rules
 # ---------------------------------------------------------------------------
 #
-# CLAP bundle structure (for hosts that discover bundles):
-#   ${CMAKE_INSTALL_PREFIX}/lib/clap/MambaSuiteClap.clap/
-#     Contents/
-#       linux-x86-64/
-#         MambaSuiteClap.clap    (the plugin binary)
-#         libmamba_core.so
-#         models/
-#           model.bin
+# Layout produced (Linux, relative to CMAKE_INSTALL_PREFIX or --prefix):
 #
-# ARA standalone:
-#   ${CMAKE_INSTALL_PREFIX}/lib/ara/MambaSuiteARA.so
+#   lib/clap/MambaSuite.clap        the CLAP plugin (bare DSO)
+#   lib/clap/models/*.bin           weights — must sit next to the DSO (dladdr)
+#   lib/ara/MambaSuiteARA.so        the ARA2 library
+#   lib/ara/models/*.bin            weights, next to the library
+#   lib/vst3/MambaSuite.vst3/       the clap-wrapper VST3 module
+#     Contents/x86_64-linux/MambaSuite.so
 #
-# Bare CLAP binary (for hosts that scan bare .clap files):
-#   ${CMAKE_INSTALL_PREFIX}/lib/clap/MambaSuiteClap.clap
+# macOS/Windows install the CLAP as a bundle
+# (<stem>.clap/Contents/<arch>/<stem>.clap) because that is the local
+# convention — clap/include/clap/entry.h: search paths are scanned for
+# "files and/or bundles as appropriate in your OS".
 #
-# An installed plugin directory includes everything needed at runtime
-# (plugin + shared engine + model). The RUNPATH is $ORIGIN so all
-# dependencies resolve relative to the plugin binary location.
+# NOTE: on Linux the CLAP is a bare file, never a bundle. The two cannot
+# coexist under one name: CMake would write the bare file *inside* the bundle
+# directory, and the models install then failed with "cannot make directory
+# ... Permission denied" (this is what broke `--component clap`).
+#
+# The VST3 module is deliberately *not* given its own copy of the weights:
+# clap-wrapper loads the .clap from the CLAP search paths (/usr/lib/clap,
+# ~/.clap) and that .clap reads lib/clap/models/. See README → Install.
 # ---------------------------------------------------------------------------
 
 # CLAP bundle install destinations per CLAP specification:
@@ -368,40 +375,38 @@ endif()
 # Set CMAKE_INSTALL_PREFIX to override (e.g., $HOME/.clap for per-user install).
 if(WIN32)
     set(CLAP_INSTALL_PREFIX "CLAP" CACHE STRING "CLAP install directory relative to CMAKE_INSTALL_PREFIX")
-    set(CLAP_BUNDLE_DIR "${CLAP_INSTALL_PREFIX}/MambaSuiteClap.clap/Contents/x86_64-windows")
+    set(CLAP_BUNDLE_DIR "${CLAP_INSTALL_PREFIX}/${CLAP_WRAPPER_OUTPUT_NAME}.clap/Contents/x86_64-win")
 elseif(APPLE)
     set(CLAP_INSTALL_PREFIX "lib/clap" CACHE STRING "CLAP install directory relative to CMAKE_INSTALL_PREFIX")
-    set(CLAP_BUNDLE_DIR "${CLAP_INSTALL_PREFIX}/MambaSuiteClap.clap/Contents/MacOS")
+    set(CLAP_BUNDLE_DIR "${CLAP_INSTALL_PREFIX}/${CLAP_WRAPPER_OUTPUT_NAME}.clap/Contents/MacOS")
 else()
     set(CLAP_INSTALL_PREFIX "lib/clap" CACHE STRING "CLAP install directory relative to CMAKE_INSTALL_PREFIX")
-    set(CLAP_BUNDLE_DIR "${CLAP_INSTALL_PREFIX}/MambaSuiteClap.clap/Contents/linux-x86-64")
+    set(CLAP_BUNDLE_DIR "${CLAP_INSTALL_PREFIX}")
 endif()
 
-# --- CLAP bundle install ---
+# --- CLAP install ---
+# Linux: bare DSO directly in lib/clap/ (see the note above).
+# macOS/Windows: bundle under <stem>.clap/Contents/<arch>/.
+# NOTE: COMPONENT attaches to the DESTINATION that precedes it — write it after
+# *each* artifact type or the other one silently lands in the default component
+# (and `--component clap` then installs only part of the plugin).
 install(TARGETS MambaSuiteClap
-    LIBRARY DESTINATION ${CLAP_BUNDLE_DIR}
-    COMPONENT clap
+    LIBRARY DESTINATION ${CLAP_BUNDLE_DIR} COMPONENT clap   # .so / .dylib
+    RUNTIME DESTINATION ${CLAP_BUNDLE_DIR} COMPONENT clap   # .dll on Windows
 )
 
-# Also install bare .clap for hosts that don't support bundles
-install(FILES ${CMAKE_BINARY_DIR}/plugins/MambaSuiteClap.clap
-    DESTINATION ${CLAP_INSTALL_PREFIX}
+# --- Weights for the CLAP ---
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
+    DESTINATION ${CLAP_BUNDLE_DIR}/models
     COMPONENT clap
+    FILES_MATCHING PATTERN "*.bin"
 )
 
 # --- ARA install ---
 set(ARA_INSTALL_PREFIX "lib/ara" CACHE STRING "ARA install directory relative to CMAKE_INSTALL_PREFIX")
 install(TARGETS MambaSuiteARA
-    LIBRARY DESTINATION ${ARA_INSTALL_PREFIX}
-    COMPONENT ara
-    RUNTIME DESTINATION ${ARA_INSTALL_PREFIX}
-)
-
-# --- Models for CLAP bundle ---
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
-    DESTINATION ${CLAP_BUNDLE_DIR}/models
-    COMPONENT clap
-    FILES_MATCHING PATTERN "*.bin"
+    LIBRARY DESTINATION ${ARA_INSTALL_PREFIX} COMPONENT ara   # .so / .dylib
+    RUNTIME DESTINATION ${ARA_INSTALL_PREFIX} COMPONENT ara   # .dll on Windows
 )
 
 # --- Models for ARA ---
@@ -411,6 +416,31 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
     FILES_MATCHING PATTERN "*.bin"
 )
 
-# Convenience: `cmake --install . --component clap` for CLAP only
-#              `cmake --install . --component ara` for ARA only
-#              `cmake --install .` for both
+# --- VST3 module (clap-wrapper) ---
+# Installs the built VST3 into a conventional, prefix-relative bundle. The
+# previous rule wrote only the weights into ${CMAKE_BINARY_DIR}/..., i.e. an
+# absolute DESTINATION that ignored --prefix and did not even match where the
+# build puts the bundle (build/Release/<stem>.vst3). The weights are read from
+# next to the .clap, so the VST3 bundle carries none.
+if(CLARA_BUILD_VST3)
+    if(WIN32)
+        set(VST3_INSTALL_PREFIX "VST3" CACHE STRING "VST3 install directory relative to CMAKE_INSTALL_PREFIX")
+        set(VST3_BUNDLE_ARCH_DIR "x86_64-win")
+    elseif(APPLE)
+        set(VST3_INSTALL_PREFIX "lib/vst3" CACHE STRING "VST3 install directory relative to CMAKE_INSTALL_PREFIX")
+        set(VST3_BUNDLE_ARCH_DIR "MacOS")
+    else()
+        set(VST3_INSTALL_PREFIX "lib/vst3" CACHE STRING "VST3 install directory relative to CMAKE_INSTALL_PREFIX")
+        set(VST3_BUNDLE_ARCH_DIR "x86_64-linux")
+    endif()
+
+    install(FILES $<TARGET_FILE:MambaSuite_as_vst3>
+        DESTINATION ${VST3_INSTALL_PREFIX}/${CLAP_WRAPPER_OUTPUT_NAME}.vst3/Contents/${VST3_BUNDLE_ARCH_DIR}
+        COMPONENT vst3
+    )
+endif()
+
+# Convenience: `cmake --install . --component clap`  for CLAP only
+#              `cmake --install . --component vst3`  for the VST3 wrapper
+#              `cmake --install . --component ara`   for ARA only
+#              `cmake --install .`                   for everything

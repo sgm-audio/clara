@@ -42,11 +42,11 @@ jobs:
       - name: Verify symbols
         run: |
           echo "=== CLAP entry ==="
-          readelf --dyn-syms build/plugins/MambaSuiteClap.clap | grep clap_entry
+          readelf --dyn-syms build/plugins/MambaSuite.clap | grep clap_entry
           echo "=== ARA factory ==="
           readelf --dyn-syms build/plugins/MambaSuiteARA.so | grep ARAGetFactory
           echo "=== RPATH ==="
-          readelf -d build/plugins/MambaSuiteClap.clap | grep RUNPATH
+          readelf -d build/plugins/MambaSuite.clap | grep RUNPATH
           readelf -d build/plugins/MambaSuiteARA.so | grep RUNPATH
 
       # A 132-byte file here means an unresolved Git LFS pointer, not a model:
@@ -92,7 +92,7 @@ jobs:
 
       - name: Validate CLAP plugin
         run: |
-          "$CLAP_VALIDATOR" --no-gui build/plugins/MambaSuiteClap.clap 2>&1 || true
+          "$CLAP_VALIDATOR" --no-gui build/plugins/MambaSuite.clap 2>&1 || true
         continue-on-error: true
 
       - name: Verify ARA library
@@ -104,7 +104,7 @@ jobs:
 
       - name: Verify stripped (release build)
         run: |
-          if readelf -S build/plugins/MambaSuiteClap.clap 2>/dev/null | grep -q .symtab; then
+          if readelf -S build/plugins/MambaSuite.clap 2>/dev/null | grep -q .symtab; then
             echo "WARNING: Binary not stripped (expected in Debug, optional in Release)"
           else
             echo "OK: Binary is stripped"
@@ -122,7 +122,7 @@ jobs:
         with:
           name: mamba-plugins-${{ github.sha }}
           path: |
-            build/plugins/MambaSuiteClap.clap
+            build/plugins/MambaSuite.clap
             build/Release/MambaSuite.vst3
             build/plugins/MambaSuiteARA.so
             build/plugins/models/
@@ -175,7 +175,7 @@ jobs:
 
       - name: Verify CLAP plugin
         shell: pwsh
-        run: Test-Path build/plugins/Release/MambaSuiteClap.clap
+        run: Test-Path build/plugins/Release/MambaSuite.clap
 
       - name: Verify ARA library
         shell: pwsh
@@ -195,7 +195,7 @@ jobs:
         with:
           name: mamba-plugins-windows-${{ github.sha }}
           path: |
-            build/plugins/Release/MambaSuiteClap.clap
+            build/plugins/Release/MambaSuite.clap
             build/plugins/Release/MambaSuiteARA.dll
             build/plugins/models/
           if-no-files-found: error

@@ -31,7 +31,16 @@ def main() -> int:
 
     target = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dump_engine_reference.py")
     print("NOTE: dump_reference_output.py is deprecated; running dump_engine_reference.py instead.")
-    cmd = [sys.executable, target, "--model", args.model, "--seed", str(args.seed), "--samples", str(args.samples)]
+    cmd = [
+        sys.executable,
+        target,
+        "--model",
+        args.model,
+        "--seed",
+        str(args.seed),
+        "--samples",
+        str(args.samples),
+    ]
     if args.output_dir:
         cmd += ["--output-dir", args.output_dir]
     return subprocess.call(cmd)

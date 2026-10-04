@@ -1,0 +1,31 @@
+# Editor defaults for CLARA. C++ formatting is authoritative in .clang-format
+# and Python formatting in ruff.toml + black; this file only stops editors from
+# introducing unrelated whitespace churn (see .pre-commit-config.yaml).
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{c,cpp,h,hpp,cc}]
+# .clang-format is the source of truth for C/C++ (IndentWidth: 4, column 120).
+indent_size = 4
+max_line_length = 120
+
+[*.{py,pyi}]
+indent_size = 4
+max_line_length = 100
+
+[*.{json,yml,yaml}]
+indent_size = 2
+
+[*.md]
+# The trailing-whitespace pre-commit hook keeps markdown line breaks.
+trim_trailing_whitespace = false
+
+[*.{bin,pt,onnx,onnx.data,wav,mp3,flac}]
+insert_final_newline = false

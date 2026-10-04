@@ -118,8 +118,8 @@ void SsmInferenceCore::process_chunk(const float *input, float *output, size_t n
     for (size_t l = 0; l < MAX_LAYERS; ++l) {
         SSMBlock &block = blocks_[l];
 
-        block.prepare_conditioning(cond);        // FiLM + Δ coefficients, once per chunk
-        block.film_batch(x_batch_, n);           // x_batch becomes u_film in place
+        block.prepare_conditioning(cond); // FiLM + Δ coefficients, once per chunk
+        block.film_batch(x_batch_, n);    // x_batch becomes u_film in place
         block.in_proj_batch(x_batch_, n, proj_batch_);
         block.sample_core_batch(proj_batch_, x_batch_, n, y_batch_, d_skip_scratch_, mimo_o_scratch_);
         block.out_proj_batch(y_batch_, n, out_batch_);

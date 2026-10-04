@@ -79,6 +79,7 @@ int main(int argc, char **argv) {
     auto t0 = Clock::now();
     sink = run_calibration();
     auto t1 = Clock::now();
+    (void) sink; // the calibration result is intentionally unused; the read keeps it alive
     const double cal_sec = std::chrono::duration<double>(t1 - t0).count();
     const double cal_ns = cal_sec * 1e9;
 
@@ -116,8 +117,7 @@ int main(int argc, char **argv) {
     std::printf("  cost of 1 stream @48k stereo: %10.1f%% of one core\n", stereo_core_pct);
     std::printf("  real-time factor (1 core):    %10.3fx  (1.0x = exactly real time)\n",
                 1.0 / (ns_per_sample * 1e-9 * 48000.0));
-    std::printf("  NOTE: real-time needs stereo < 100%%, i.e. ~%.0fx faster than today.\n",
-                stereo_core_pct / 100.0);
+    std::printf("  NOTE: real-time needs stereo < 100%%, i.e. ~%.0fx faster than today.\n", stereo_core_pct / 100.0);
 
     int failures = 0;
     if (ratio >= BUDGET_RATIO) {

@@ -409,8 +409,7 @@ def verify_engine():
     # which is a SyntaxError — the module could not be imported at all until
     # 2026-10-04. Keep the sum on its own statement.
     total_params = sum(
-        w.in_proj_w.numel() + w.out_proj_w.numel() + w.film_proj_w.numel()
-        for w in engine.weights
+        w.in_proj_w.numel() + w.out_proj_w.numel() + w.film_proj_w.numel() for w in engine.weights
     )
     print(f"  Params: ~{total_params // 1000}K")
 

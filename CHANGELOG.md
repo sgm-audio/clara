@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The VST3 wrapper could not find the CLAP plugin.** clap-wrapper locates the
+  plugin by matching file names: `MambaSuite.vst3` makes it search the CLAP
+  paths for `MambaSuite.clap` (clap-wrapper `wrapasvst3_entry.cpp`:
+  `plugname = getBinaryName() + ".clap"`), while the build produced
+  `MambaSuiteClap.clap`. `GetPluginFactory()` returned `nullptr` as a result.
+  `CLAP_WRAPPER_OUTPUT_NAME` now drives the CLAP's `OUTPUT_NAME` as well as the
+  VST3's, so the two stems always match. Verified with a `dlopen` probe: factory
+  `nullptr` with the old name, `Mamba-3 SSM Processor` (vendor `Elite DSP`) with
+  the new one. **The plugin file name changed: `MambaSuiteClap.clap` →
+  `MambaSuite.clap`** (the CMake target is still `MambaSuiteClap`).
+- **`cmake --install` components were broken.**
+  `--component clap` exited 1 (the "bare `.clap` for hosts that scan loose files"
+  install collided with the same-named bundle directory it was installed
+  alongside, leaving a self-nested tree and a `Permission denied` on the models
+  install); `--component vst3` used an absolute `DESTINATION` so it ignored
+  `--prefix`, wrote into the build tree, and installed only the weights — never
+  the VST3 module. Both now install prefix-relative: Linux gets a bare
+  `lib/clap/MambaSuite.clap` + `lib/clap/models/`, macOS/Windows get the bundle
+  layout, and the VST3 goes to `lib/vst3/MambaSuite.vst3/Contents/<arch>/`.
+- `COMPONENT` in `install(TARGETS …)` binds to the artifact type it follows, so
+  the ARA rule's `COMPONENT ara` applied to `LIBRARY` only — on Windows the
+  `.dll` would have installed under the default component. Both rules now repeat
+  `COMPONENT` after each `DESTINATION`.
+
 ## v0.1.2 — 2026-10-04
 
 Build portability. A fresh clone previously could not be configured at all in an
@@ -42,7 +70,7 @@ environment that permits `git clone` but blocks GitHub *release-asset* downloads
   configure, build and `ctest` all succeed — **4/4 tests pass**, including
   `test_clap_plugin`, which now genuinely builds and instantiates the plugin
   (previously it could not compile here and was reported as *Not Run*).
-- All three plugin artefacts build: `MambaSuiteClap.clap`, `MambaSuiteARA.so`,
+- All three plugin artefacts build: `MambaSuite.clap`, `MambaSuiteARA.so`,
   `MambaSuite.vst3`.
 - Zero-allocation guarantee re-proved on the refactored engine: 0 heap
   allocations across 4,096 `process_block()` samples (`LD_PRELOAD` counter).
@@ -138,7 +166,7 @@ audible effect: a proof of the engine and pipeline, not a finished product.
 
 ### Plugin targets
 
-- `MambaSuiteClap.clap` — CLAP audio effect (bypass, wet/dry, intensity;
+- `MambaSuite.clap` — CLAP audio effect (bypass, wet/dry, intensity;
   click-free 50ms bypass crossfade)
 - `MambaSuite.vst3` — VST3 via clap-wrapper (loads in Ableton Live)
 - `MambaSuiteARA.so` — ARA 2.0 extension library (scaffolding; no real-time

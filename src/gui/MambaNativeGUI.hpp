@@ -17,27 +17,27 @@
 // generic editor.
 #if !defined(CLARA_NO_NATIVE_GUI)
 
-#include "clap/MambaClapPlugin.hpp"
+#    include "clap/MambaClapPlugin.hpp"
 
-#include <clap/ext/gui.h>
+#    include <clap/ext/gui.h>
 
-#include <algorithm>
-#include <cmath>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
+#    include <algorithm>
+#    include <cmath>
+#    include <cstdint>
+#    include <cstdio>
+#    include <cstdlib>
+#    include <cstring>
 
 // Platform-specific includes
-#if defined(_WIN32)
-#    define NOMINMAX
-#    include <windows.h>
-#elif defined(__APPLE__)
-#    include <TargetConditionals.h>
-#else
-#    include <X11/Xlib.h>
-#    include <X11/Xutil.h>
-#endif
+#    if defined(_WIN32)
+#        define NOMINMAX
+#        include <windows.h>
+#    elif defined(__APPLE__)
+#        include <TargetConditionals.h>
+#    else
+#        include <X11/Xlib.h>
+#        include <X11/Xutil.h>
+#    endif
 
 namespace clara::mamba3 {
 
@@ -126,20 +126,20 @@ struct MambaNativeGUIState {
     const clap_host_gui_t *hostGUI{nullptr};
 
     // Platform window handles
-#if defined(_WIN32)
+#    if defined(_WIN32)
     HWND hwnd{nullptr};
     HDC hdc{nullptr};
     HBITMAP hbitmap{nullptr};
     void *bitmapBits{nullptr};
     WNDPROC originalWndProc{nullptr};
-#elif defined(__APPLE__)
+#    elif defined(__APPLE__)
     void *nsview{nullptr};
-#else
+#    else
     Display *display{nullptr};
     Window window{0};
     GC gc{nullptr};
     XImage *ximage{nullptr};
-#endif
+#    endif
 
     bool visible{false};
     bool floating{false};
@@ -204,23 +204,23 @@ struct MambaNativeGUIState {
 // ── CLAP_EXT_GUI Implementation ────────────────────────────────────────────
 
 inline bool mamba_gui_is_api_supported(const clap_plugin_t *, const char *api, bool is_floating) {
-#if defined(_WIN32)
+#    if defined(_WIN32)
     return std::strcmp(api, CLAP_WINDOW_API_WIN32) == 0 && !is_floating;
-#elif defined(__APPLE__)
+#    elif defined(__APPLE__)
     return std::strcmp(api, CLAP_WINDOW_API_COCOA) == 0 && !is_floating;
-#else
+#    else
     return std::strcmp(api, CLAP_WINDOW_API_X11) == 0 && !is_floating;
-#endif
+#    endif
 }
 
 inline bool mamba_gui_get_preferred_api(const clap_plugin_t *, const char **api, bool *is_floating) {
-#if defined(_WIN32)
+#    if defined(_WIN32)
     *api = CLAP_WINDOW_API_WIN32;
-#elif defined(__APPLE__)
+#    elif defined(__APPLE__)
     *api = CLAP_WINDOW_API_COCOA;
-#else
+#    else
     *api = CLAP_WINDOW_API_X11;
-#endif
+#    endif
     *is_floating = false;
     return true;
 }
@@ -245,7 +245,7 @@ inline bool mamba_gui_create(const clap_plugin_t *plugin, const char *api, bool 
 inline void mamba_gui_destroy(const clap_plugin_t *plugin) {
     auto *state = (MambaPluginState *) plugin->plugin_data;
     if (state->nativeGUI) {
-#if defined(_WIN32)
+#    if defined(_WIN32)
         if (state->nativeGUI->hbitmap) {
             DeleteObject(state->nativeGUI->hbitmap);
             state->nativeGUI->hbitmap = nullptr;
@@ -254,7 +254,7 @@ inline void mamba_gui_destroy(const clap_plugin_t *plugin) {
             DeleteDC(state->nativeGUI->hdc);
             state->nativeGUI->hdc = nullptr;
         }
-#elif !defined(__APPLE__)
+#    elif !defined(__APPLE__)
         if (state->nativeGUI->ximage) {
             XDestroyImage(state->nativeGUI->ximage);
             state->nativeGUI->ximage = nullptr;
@@ -263,7 +263,7 @@ inline void mamba_gui_destroy(const clap_plugin_t *plugin) {
             XFreeGC(state->nativeGUI->display, state->nativeGUI->gc);
             state->nativeGUI->gc = nullptr;
         }
-#endif
+#    endif
         delete state->nativeGUI;
         state->nativeGUI = nullptr;
     }
@@ -296,7 +296,7 @@ inline bool mamba_gui_set_size(const clap_plugin_t *, uint32_t, uint32_t) {
 }
 
 // ── Platform-specific blit ─────────────────────────────────────────────────
-#if defined(_WIN32)
+#    if defined(_WIN32)
 
 inline bool mamba_gui_set_parent(const clap_plugin_t *plugin, const clap_window_t *window) {
     auto *state = (MambaPluginState *) plugin->plugin_data;
@@ -346,7 +346,7 @@ inline bool mamba_gui_hide(const clap_plugin_t *plugin) {
     return true;
 }
 
-#elif defined(__APPLE__)
+#    elif defined(__APPLE__)
 
 inline bool mamba_gui_set_parent(const clap_plugin_t *plugin, const clap_window_t *window) {
     auto *state = (MambaPluginState *) plugin->plugin_data;
@@ -366,7 +366,7 @@ inline bool mamba_gui_hide(const clap_plugin_t *plugin) {
     return true;
 }
 
-#else // Linux X11
+#    else // Linux X11
 
 inline bool mamba_gui_set_parent(const clap_plugin_t *plugin, const clap_window_t *window) {
     auto *state = (MambaPluginState *) plugin->plugin_data;
@@ -414,7 +414,7 @@ inline bool mamba_gui_hide(const clap_plugin_t *plugin) {
     return true;
 }
 
-#endif
+#    endif
 
 // ── Timer callback (for level meter updates) ───────────────────────────────
 // Called from the host's timer. We re-render and blit the pixel buffer.
@@ -423,20 +423,20 @@ inline void mamba_gui_on_timer(MambaNativeGUIState *gui) {
 
     gui->render();
 
-#if defined(_WIN32)
+#    if defined(_WIN32)
     if (gui->hdc && gui->hwnd) {
         std::memcpy(gui->bitmapBits, gui->buffer.pixels, kGUIWidth * kGUIHeight * 4);
         HDC hdcWin = GetDC(gui->hwnd);
         BitBlt(hdcWin, 0, 0, kGUIWidth, kGUIHeight, gui->hdc, 0, 0, SRCCOPY);
         ReleaseDC(gui->hwnd, hdcWin);
     }
-#elif !defined(__APPLE__)
+#    elif !defined(__APPLE__)
     if (gui->display && gui->window && gui->ximage) {
         std::memcpy(gui->ximage->data, gui->buffer.pixels, kGUIWidth * kGUIHeight * 4);
         XPutImage(gui->display, gui->window, gui->gc, gui->ximage, 0, 0, 0, 0, kGUIWidth, kGUIHeight);
         XFlush(gui->display);
     }
-#endif
+#    endif
 }
 
 // ── Mouse event handler ────────────────────────────────────────────────────

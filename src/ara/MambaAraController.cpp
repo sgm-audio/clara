@@ -13,9 +13,18 @@ using namespace clara::mamba3;
 // PlaybackRenderer
 // -----------------------------------------------------------------------------
 
+std::string mambaAraModelPath() {
+    // Pass a real address from this library: mambaResolveModulePath(nullptr, …)
+    // skips the platform path lookup and returns the "./models/model.bin" stub,
+    // which resolves against the host's working directory and therefore almost
+    // never exists. The CLAP plugin passes a function address for the same
+    // reason (see clap_create_plugin).
+    return mambaResolveModulePath((void *) &ARAGetFactory, "model.bin");
+}
+
 MambaPlaybackRenderer::MambaPlaybackRenderer(ARA::PlugIn::DocumentController *documentController)
     : ARA::PlugIn::PlaybackRenderer(documentController) {
-    std::string modelPath = mambaResolveModulePath(nullptr, "model.bin");
+    std::string modelPath = mambaAraModelPath();
     rtEngine_ = std::make_unique<SsmInferenceCore>();
 
     if (!rtEngine_->init(modelPath.c_str())) {

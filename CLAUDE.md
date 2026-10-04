@@ -40,7 +40,7 @@ cmake --build --preset <preset-name-if-defined>   # only windows-msvc-debug has 
 `default` / `windows-msvc-release`.
 
 Outputs land in `build/plugins/`:
-- `MambaSuiteClap.clap` — CLAP effect
+- `MambaSuite.clap` — CLAP effect
 - `MambaSuiteARA.so` — ARA2 library
 - `libMamba3Core.a` — static inference engine
 - `models/*.bin` — weights copied alongside the plugin (plugin resolves this
@@ -107,7 +107,7 @@ format or the engine's forward pass).
   (intended for nightly CI or manual debugging, not routine local runs).
 
 **Manual/DAW testing** (no automated coverage — gap G5 in `docs/TODO.md`):
-load `build/plugins/MambaSuiteClap.clap` in a CLAP host (Bitwig, Carla,
+load `build/plugins/MambaSuite.clap` in a CLAP host (Bitwig, Carla,
 `clap-host`); `models/` must be adjacent to the plugin binary.
 
 ## CI

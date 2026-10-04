@@ -42,7 +42,9 @@ export HSA_ENABLE_SDMA=0
 export PYTORCH_ALLOC_CONF=garbage_collection_threshold:0.8,max_split_size_mb:256
 export MIOPEN_FIND_MODE=5
 
-TRAIN_CMD="python train_clara.py \
+# Path is relative to PROJECT_DIR (the script cd's there before running);
+# train_clara.py lives under python/training/, not at the repository root.
+TRAIN_CMD="python python/training/train_clara.py \
   --data ~/datasets/musdb18hq/train \
   --save ${CHECKPOINT_DIR} \
   --device cuda"

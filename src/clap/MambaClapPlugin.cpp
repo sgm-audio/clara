@@ -1,4 +1,4 @@
-// CLARA CLAP Plugin — MambaSuiteClap.clap audio effect
+// CLARA CLAP Plugin — MambaSuite.clap audio effect
 //
 // Per-channel engine instances, 128-dim conditioning.
 
@@ -167,13 +167,13 @@ static void clap_params_flush(const clap_plugin_t *plugin, const clap_input_even
             const clap_event_param_value_t *param_event = (const clap_event_param_value_t *) event;
             switch (param_event->param_id) {
                 case PARAM_BYPASS:
-                    state->bypass.store(static_cast<float>(param_event->value), std::memory_order_release);
+                    state->bypass.store(mambaClampParamValue(param_event->value), std::memory_order_release);
                     break;
                 case PARAM_WET_DRY:
-                    state->wetDry.store(static_cast<float>(param_event->value), std::memory_order_release);
+                    state->wetDry.store(mambaClampParamValue(param_event->value), std::memory_order_release);
                     break;
                 case PARAM_INTENSITY:
-                    state->intensity.store(static_cast<float>(param_event->value), std::memory_order_release);
+                    state->intensity.store(mambaClampParamValue(param_event->value), std::memory_order_release);
                     break;
             }
         }
@@ -218,20 +218,29 @@ static bool mamba_state_save(const clap_plugin_t *plugin, const clap_ostream_t *
     return stream->write(stream, &data, sizeof(data)) >= 0;
 }
 
-static bool mamba_state_load(const clap_plugin_t *plugin, const clap_istream_t *stream) {
-    auto *state = (MambaPluginState *) plugin->plugin_data;
+// Shared by the state and state-context loaders, which differ only in whether
+// the engine state is reset. Parameter values come from a project file, so they
+// are clamped to the declared [0, 1] range instead of being stored verbatim.
+static bool mambaReadPresetState(MambaPluginState *state, const clap_istream_t *stream, bool resetEngines) {
     int32_t version = 0;
     if (stream->read(stream, &version, sizeof(version)) < (int64_t) sizeof(version)) return false;
     if (version > 2) return false;
     MambaPresetData data;
     if (stream->read(stream, &data, sizeof(data)) < (int64_t) sizeof(data)) return false;
-    state->bypass.store(data.bypass, std::memory_order_release);
-    state->wetDry.store(data.wetDry, std::memory_order_release);
-    state->intensity.store(data.intensity, std::memory_order_release);
-    state->currentBypassValue = data.bypass;
-    if (state->engineL) state->engineL->reset_states();
-    if (state->engineR) state->engineR->reset_states();
+    const float bypass = mambaClampParamValue(data.bypass);
+    state->bypass.store(bypass, std::memory_order_release);
+    state->wetDry.store(mambaClampParamValue(data.wetDry), std::memory_order_release);
+    state->intensity.store(mambaClampParamValue(data.intensity), std::memory_order_release);
+    state->currentBypassValue = bypass;
+    if (resetEngines) {
+        if (state->engineL) state->engineL->reset_states();
+        if (state->engineR) state->engineR->reset_states();
+    }
     return true;
+}
+
+static bool mamba_state_load(const clap_plugin_t *plugin, const clap_istream_t *stream) {
+    return mambaReadPresetState((MambaPluginState *) plugin->plugin_data, stream, true);
 }
 
 const clap_plugin_state_t mamba_state_extension = {mamba_state_save, mamba_state_load};
@@ -242,21 +251,8 @@ static bool mamba_state_context_save(const clap_plugin_t *plugin, const clap_ost
 }
 
 static bool mamba_state_context_load(const clap_plugin_t *plugin, const clap_istream_t *stream, uint32_t context_type) {
-    auto *state = (MambaPluginState *) plugin->plugin_data;
-    int32_t version = 0;
-    if (stream->read(stream, &version, sizeof(version)) < (int64_t) sizeof(version)) return false;
-    if (version > 2) return false;
-    MambaPresetData data;
-    if (stream->read(stream, &data, sizeof(data)) < (int64_t) sizeof(data)) return false;
-    state->bypass.store(data.bypass, std::memory_order_release);
-    state->wetDry.store(data.wetDry, std::memory_order_release);
-    state->intensity.store(data.intensity, std::memory_order_release);
-    state->currentBypassValue = data.bypass;
-    if (context_type != CLAP_STATE_CONTEXT_FOR_PROJECT) {
-        if (state->engineL) state->engineL->reset_states();
-        if (state->engineR) state->engineR->reset_states();
-    }
-    return true;
+    return mambaReadPresetState((MambaPluginState *) plugin->plugin_data, stream,
+                                context_type != CLAP_STATE_CONTEXT_FOR_PROJECT);
 }
 
 const clap_plugin_state_context_t mamba_state_context_extension = {mamba_state_context_save, mamba_state_context_load};

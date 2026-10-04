@@ -7,7 +7,9 @@
 #include <clap/host.h>
 #include <clap/plugin.h>
 
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -219,37 +221,52 @@ inline bool mamba_webview_receive(const clap_plugin_t *plugin, const void *buffe
     if (type == "param_change") {
         auto id = findStr("id");
         auto valStr = findStr("value");
-        if (!id.empty() && !valStr.empty()) {
-            double value = std::stod(valStr);
-            clap_id paramId = 0;
-            if (id == "bypass") paramId = 0;
-            else if (id == "wetdry")
-                paramId = 1;
-            else if (id == "intensity")
-                paramId = 2;
-            else
-                return false;
+        // A param_change without both fields is malformed: report it as
+        // unhandled rather than pretending it was applied.
+        if (id.empty() || valStr.empty()) return false;
 
-            // Store value in the plugin's atomic params (RT-safe)
-            switch (paramId) {
-                case 0:
-                    state->bypass.store((float) value, std::memory_order_release);
-                    break;
-                case 1:
-                    state->wetDry.store((float) value, std::memory_order_release);
-                    break;
-                case 2:
-                    state->intensity.store((float) value, std::memory_order_release);
-                    break;
-            }
-            // Notify host that params changed
-            if (state->host && state->host->get_extension) {
-                auto *hostParams =
-                    static_cast<const clap_host_params_t *>(state->host->get_extension(state->host, CLAP_EXT_PARAMS));
-                if (hostParams && hostParams->request_flush) hostParams->request_flush(state->host);
-            }
+        // strtod, not std::stod: this runs behind the CLAP C ABI, and an
+        // unparseable value (std::invalid_argument / std::out_of_range) must
+        // not escape as an exception. Reject non-numeric and non-finite input
+        // instead (mambaIsFinite, not std::isfinite: -ffast-math folds the
+        // latter away in Release builds).
+        const char *begin = valStr.c_str();
+        char *end = nullptr;
+        const double value = std::strtod(begin, &end);
+        if (end == begin || !mambaIsFinite(value)) return false;
+
+        clap_id paramId = 0;
+        if (id == "bypass") paramId = 0;
+        else if (id == "wetdry")
+            paramId = 1;
+        else if (id == "intensity")
+            paramId = 2;
+        else
+            return false;
+
+        // Store value in the plugin's atomic params (RT-safe), clamped to the
+        // declared [0, 1] range like every other parameter entry point.
+        switch (paramId) {
+            case 0:
+                state->bypass.store(mambaClampParamValue(value), std::memory_order_release);
+                break;
+            case 1:
+                state->wetDry.store(mambaClampParamValue(value), std::memory_order_release);
+                break;
+            case 2:
+                state->intensity.store(mambaClampParamValue(value), std::memory_order_release);
+                break;
         }
+        // Notify host that params changed
+        if (state->host && state->host->get_extension) {
+            auto *hostParams =
+                static_cast<const clap_host_params_t *>(state->host->get_extension(state->host, CLAP_EXT_PARAMS));
+            if (hostParams && hostParams->request_flush) hostParams->request_flush(state->host);
+        }
+        return true;
     }
+    // Unknown message types are ignored (kept handled so a host doesn't treat
+    // them as errors).
     return true;
 }
 
