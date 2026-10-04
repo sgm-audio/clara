@@ -21,6 +21,16 @@ environment that permits `git clone` but blocks GitHub *release-asset* downloads
 - **New `-DCLARA_BUILD_VST3=OFF`** builds the CLAP plugin, ARA library and tests
   without clap-wrapper or the VST3 SDK.
 
+### CI
+
+- The uploaded VST3 artifact path was `build/plugins/MambaSuite.so`, which the
+  build never produces — the bundle lands at
+  `build/Release/MambaSuite.vst3`. The VST3 bundle is now actually uploaded.
+- `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` added to every configure step, so the
+  workflow survives CMake 4.x runners.
+- The `test` job installed only `cmake` and `g++` and still built the CLAP
+  plugin, which used to need `libx11-dev`; that job could not have passed before.
+
 ### Verification
 
 - Fresh clone, clean container, no flags beyond the CMake 4.x policy shim:

@@ -240,10 +240,13 @@ shipping implementation. See the module docstring for the list.
 
 ## CI/CD
 
-GitHub Actions (`.github/workflows/ci.yml`) builds Release on `ubuntu-22.04`,
-`macos-14` and `windows-2022`, verifies exported symbols and model deployment
-(including that `model.bin` is not an LFS pointer), runs `clap-validator`, runs
-CTest on all three platforms, and uploads artifacts.
+GitHub Actions (`.github/workflows/ci.yml`) builds Release on `ubuntu-22.04` and
+`windows-2022` (there is **no macOS job**; `CMakePresets.json` defines macOS
+presets, but nothing verifies them), verifies exported symbols and model
+deployment (including that `model.bin` is not an LFS pointer), downloads
+`clap-validator` (advisory — the step tolerates failures), runs CTest on both
+platforms, and uploads the CLAP plugin, ARA library, VST3 bundle and deployed
+weights as artifacts.
 
 ## License
 
