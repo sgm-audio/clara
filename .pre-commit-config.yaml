@@ -9,8 +9,11 @@ repos:
         args: [--markdown-linebreak-ext=md]
       - id: end-of-file-fixer
       - id: check-yaml
+      # The weights are 6.6 MB and are committed directly (see models/README.md).
+      # The old 500 KB limit is what pushed them into Git LFS, whose budget was
+      # then exceeded — breaking every clone. Keep the guard for everything else.
       - id: check-added-large-files
-        args: ["--maxkb=500"]
+        args: ["--maxkb=8000"]
       - id: check-merge-conflict
       - id: check-case-conflict
       - id: mixed-line-ending

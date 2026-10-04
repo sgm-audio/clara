@@ -1,12 +1,25 @@
 #!/usr/bin/env python3
-"""CLARA Legacy Mamba-3 Reference Forward Pass — R=4 time-domain (PyTorch bit-exact).
+"""CLARA Mamba-3 Reference Forward Pass — R=4 time-domain (PyTorch bit-exact).
 
 Implements the full 8-step Mamba-3 per-sample pipeline with multi-head MIMO R=4,
-trapezoidal SSM, RoPE, and FiLM conditioning. All intermediate values are
-dumped at predetermined checkpoints for bit-exact C++ comparison.
+trapezoidal SSM, RoPE, and FiLM conditioning — matching the shipping C++ engine
+(SsmInferenceCore / SsmBlock) step for step.
 
-NOTE: This is the LEGACY R=4 time-domain reference. The canonical architecture
-is PerTrackProcessor (R=8, spectral-domain, complex poles) — see train_clara.py.
+This is the canonical Python reference for the R=4 time-domain engine that the
+plugin actually runs. The PerTrackProcessor (R=8, spectral domain) in
+train_clara.py is the *target* architecture; it is a different model and cannot
+be compared against the C++ engine bit for bit.
+
+Alignment history (2026-10-04): this file diverged from the engine in five
+places, which made the old "bit-exact" test impossible to satisfy. Corrected to
+match SsmBlock.cpp, which is the shipping implementation:
+
+  1. RoPE pairing: interleaved (x[2a], x[2a+1]) instead of half-split.
+  2. B/C inputs now add the learnable B_bias / C_bias before the norm scaling.
+  3. Δ (dt) is now FiLM-modulated via dt_film_proj_w when cond is provided.
+  4. D-skip now uses per-head weighted sums (the old version broadcast the
+     total sum across all heads, which contradicted the engine).
+  5. State normalization scales ssm_real only, like the engine.
 
 Architecture:  d_model=128, d_inner=256, nheads=4, headdim=64,
                d_state=32, mimo_rank=4, n_layers=6, cond_dim=128
@@ -118,12 +131,12 @@ class LayerState:
     angle_state: torch.Tensor  # [NHEADS, NUM_ROPE_ANGLES]
 
     @classmethod
-    def zeros(cls, device="cpu"):
+    def zeros(cls, device="cpu", dtype=torch.float32):
         return cls(
-            ssm_real=torch.zeros(NHEADS, HEADDIM, D_STATE, device=device),
-            ssm_imag=torch.zeros(NHEADS, HEADDIM, D_STATE, device=device),
-            k_state=torch.zeros(NHEADS, MIMO_RANK, D_STATE, device=device),
-            angle_state=torch.zeros(NHEADS, NUM_ROPE_ANGLES, device=device),
+            ssm_real=torch.zeros(NHEADS, HEADDIM, D_STATE, device=device, dtype=dtype),
+            ssm_imag=torch.zeros(NHEADS, HEADDIM, D_STATE, device=device, dtype=dtype),
+            k_state=torch.zeros(NHEADS, MIMO_RANK, D_STATE, device=device, dtype=dtype),
+            angle_state=torch.zeros(NHEADS, NUM_ROPE_ANGLES, device=device, dtype=dtype),
         )
 
 
@@ -132,20 +145,24 @@ class LayerState:
 
 def apply_rope(x: torch.Tensor, angles: torch.Tensor) -> torch.Tensor:
     """Apply RoPE rotation to a tensor along its last dimension.
+
     x: [..., D] where D is even (D_STATE)
     angles: [D//2] — one angle per pair
-    """
-    D = x.shape[-1]
-    half = D // 2
-    x_even, x_odd = x[..., :half], x[..., half:]
-    cos_a = torch.cos(angles)  # [half]
-    sin_a = torch.sin(angles)  # [half]
 
-    # Broadcast cos/sin to match x's shape: [half] -> [1,...,1, half]
-    # x_even is [..., half], so we need cos_a of shape [half] which broadcasts fine
+    Pairing convention: INTERLEAVED adjacent pairs (x[2a], x[2a+1]). This
+    matches SsmBlock::step_norm_rope() in the shipping C++ engine. The
+    previous half-split pairing (x[a], x[a + D/2]) did not match the engine
+    and was corrected 2026-10-04.
+    """
+    cos_a = torch.cos(angles)  # [D//2]
+    sin_a = torch.sin(angles)  # [D//2]
+
+    x_even = x[..., 0::2]  # [..., D//2]
+    x_odd = x[..., 1::2]  # [..., D//2]
+
     rot_even = x_even * cos_a - x_odd * sin_a
     rot_odd = x_even * sin_a + x_odd * cos_a
-    return torch.cat([rot_even, rot_odd], dim=-1)
+    return torch.stack([rot_even, rot_odd], dim=-1).flatten(-2)
 
 
 # ── SSM Block Forward — 8-step per-sample pipeline ─────────────────
@@ -196,20 +213,26 @@ def ssm_block_forward(
     angles_raw = angles_raw.view(NHEADS, NUM_ROPE_ANGLES)  # [NHEADS, NUM_ROPE_ANGLES]
 
     # ── Step 2: A and Δ preprocessing ──
+    # Δ ("dt") is FiLM-modulated by the conditioning vector through
+    # dt_film_proj_w, exactly as SsmBlock::step_dt_A() does when cond != nullptr.
+    dt_cond = weights.dt_film_proj_w @ cond if cond is not None else None
     DT_t = []
     A_t = []
     for h in range(NHEADS):
         dt_h = F.softplus(dd_dt[h] + weights.dt_bias[h])
-        # ponytail: skip dt_cond initially to isolate instability source
+        if dt_cond is not None:
+            dt_h = F.softplus(dt_h + dt_cond[h] + dt_cond[NHEADS + h])
         DT_t.append(dt_h)
         A_t.append(-F.softplus(dd_A[h]))
     DT_t = torch.stack(DT_t)  # [NHEADS]
     A_t = torch.stack(A_t)  # [NHEADS]
 
-    # ── Step 3: RMSNorm on B and C ──
-    B_normed = B * weights.B_norm_weight.view(1, 1, D_STATE)
-    C_normed = C * weights.C_norm_weight.view(1, 1, D_STATE)
-    # Note: RMSNorm proper would divide by RMS. Simplified here.
+    # ── Step 3: learnable B/C bias + norm scaling ──
+    # Mamba-3 adds learnable biases to B and C (which is what lets it drop the
+    # short causal conv). The engine applies (B + B_bias) * B_norm_weight.
+    B_normed = (B + weights.B_bias) * weights.B_norm_weight.view(1, 1, D_STATE)
+    C_normed = (C + weights.C_bias) * weights.C_norm_weight.view(1, 1, D_STATE)
+    # Note: RMSNorm proper would divide by RMS. Simple learned scaling here.
 
     # ── Step 4: RoPE rotation on B and C ──
     state.angle_state = state.angle_state + angles_raw  # [NHEADS, NUM_ROPE_ANGLES]
@@ -264,14 +287,11 @@ def ssm_block_forward(
     # out_proj_w: [D_MODEL, D_INNER] — projects D_INNER back to D_MODEL
     out = weights.out_proj_w @ y_flat  # [D_MODEL]
 
-    # D skip: D_proj[h] * x_h[h,:] summed across heads
-    d_skip = torch.zeros(D_MODEL)
-    for h in range(NHEADS):
-        start = h * HEADDIM
-        d_skip = d_skip + weights.D_proj[h] * x_h.sum() * torch.ones(D_MODEL) * 0.01
-    # ponytail: simplified D skip — each head contributes to full D_MODEL
-
-    out = out + d_skip
+    # D skip: D_proj[h] * sum_d x_h[h, d], summed across heads. Each head
+    # contributes its own weighted sum (this is what SsmBlock::step_output
+    # computes; an earlier version broadcast the total sum, which was a bug).
+    d_skip_scale = sum(weights.D_proj[h] * x_h[h].sum() for h in range(NHEADS))
+    out = out + d_skip_scale * 0.01 * torch.ones(D_MODEL, device=out.device)
 
     # MIMO output coupling through mimo_o
     mimo_o_contrib = torch.einsum("hd,hrd->hr", y_gated, weights.mimo_o)  # [NHEADS, MIMO_RANK]
@@ -290,18 +310,19 @@ def ssm_block_forward(
 class ReferenceMamba3Engine:
     """6-layer Mamba-3 engine with chunked block processing."""
 
-    def __init__(self, device="cpu"):
+    def __init__(self, device="cpu", dtype=torch.float32):
         self.device = device
+        self.dtype = dtype
         self.weights: list[SSMWeights] = [SSMWeights.random(device) for _ in range(N_LAYERS)]
-        self.states: list[LayerState] = [LayerState.zeros(device) for _ in range(N_LAYERS)]
+        self.states: list[LayerState] = [LayerState.zeros(device, dtype) for _ in range(N_LAYERS)]
         self.sample_count = 0
 
         # Input projection: D_MODEL in, D_MODEL out (identity for now)
-        self.in_proj_linear = torch.randn(D_MODEL, D_MODEL, device=device) * 0.02
+        self.in_proj_linear = torch.randn(D_MODEL, D_MODEL, device=device, dtype=dtype) * 0.02
 
         # LayerNorm: across D_MODEL, per layer
-        self.ln_gamma = [torch.ones(D_MODEL, device=device) for _ in range(N_LAYERS)]
-        self.ln_beta = [torch.zeros(D_MODEL, device=device) for _ in range(N_LAYERS)]
+        self.ln_gamma = [torch.ones(D_MODEL, device=device, dtype=dtype) for _ in range(N_LAYERS)]
+        self.ln_beta = [torch.zeros(D_MODEL, device=device, dtype=dtype) for _ in range(N_LAYERS)]
 
     @staticmethod
     def _layer_norm(
@@ -337,13 +358,17 @@ class ReferenceMamba3Engine:
             audio = audio.squeeze(-1)
 
         N = audio.shape[0]
-        output = torch.zeros(N, device=self.device)
+        # Follow the input/weight dtype so the engine can run in float64 as a
+        # numerical oracle (see --dtype in tools/dump_engine_reference.py).
+        out_dtype = audio.dtype
+        embed_dtype = self.weights[0].in_proj_w.dtype
+        output = torch.zeros(N, device=self.device, dtype=out_dtype)
 
         for i in range(N):
             u = audio[i] * self.in_proj_linear[0, 0]  # simplified input proj
             # Actually: embed scalar input into D_MODEL space
-            u_embed = torch.zeros(D_MODEL, device=self.device)
-            u_embed[0] = audio[i]  # ponytail: single-channel input → first dim
+            u_embed = torch.zeros(D_MODEL, device=self.device, dtype=embed_dtype)
+            u_embed[0] = audio[i].to(embed_dtype)  # single-channel input → first dim
 
             out_embed = self.forward_sample(u_embed, cond)
             output[i] = out_embed[0]  # ponytail: first dim → output
@@ -357,13 +382,16 @@ class ReferenceMamba3Engine:
         return output
 
     def _normalize_states(self):
-        """Clamp any state element exceeding ±1.0."""
+        """Scale the SSM real state down when its max magnitude exceeds 1.0.
+
+        Matches SSMState::normalize_if_needed() in the C++ engine, which scales
+        ssm_real only (ssm_imag and k_state exist in the state struct but the
+        engine leaves them untouched).
+        """
         for s in self.states:
-            for name in ["ssm_real", "ssm_imag", "k_state"]:
-                tensor = getattr(s, name)
-                max_abs = tensor.abs().max()
-                if max_abs > 1.0:
-                    tensor.mul_(1.0 / max_abs)
+            max_abs = s.ssm_real.abs().max()
+            if max_abs > 1.0:
+                s.ssm_real.mul_(1.0 / max_abs)
 
 
 # ── Verification ───────────────────────────────────────────────────
@@ -377,10 +405,14 @@ def verify_engine():
     engine = ReferenceMamba3Engine(device="cpu")
 
     print(f"  Layers: {N_LAYERS}")
-    print(
-        f"  Params: ~{sum(w.in_proj_w.numel() + w.out_proj_w.numel() + w.film_proj_w.numel()
-                        for w in engine.weights) // 1000}K"
+    # Note: this f-string previously contained a multi-line generator expression,
+    # which is a SyntaxError — the module could not be imported at all until
+    # 2026-10-04. Keep the sum on its own statement.
+    total_params = sum(
+        w.in_proj_w.numel() + w.out_proj_w.numel() + w.film_proj_w.numel()
+        for w in engine.weights
     )
+    print(f"  Params: ~{total_params // 1000}K")
 
     # Generate test audio
     audio = torch.sin(torch.linspace(0, 10 * math.pi, 256))  # 256 samples of sine

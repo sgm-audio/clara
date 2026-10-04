@@ -1733,3 +1733,141 @@ python3 python/tools/validate_export.py models/model_trained.bin
      --steps 100000 --chunk-samples 2048 --warmup-chunk 64
    ```
 3. **DAW load test** — reboot to Windows, copy VST3, load in Ableton
+
+---
+
+## Session 2026-10-04 — External review remediation (reproducibility, performance, honesty)
+
+**Duration:** ~4 hours
+**Objective:** Act on an external verification pass (`docs/BLUEPRINT_COMPARISON.md`):
+build the project, run the tests, benchmark the engine, and fix what the
+measurements exposed.
+
+### 🔴 What the verification found (before any fixes)
+
+1. **Weights unreachable.** `models/*.bin` were Git LFS pointers; the account's
+   LFS budget was exceeded (`403` on the LFS API, authenticated or not). Fresh
+   clones shipped 132-byte text files → plugin fails to load, `test_mamba3` aborts
+   with `std::bad_alloc` (exit 134).
+2. **Not real time.** 0.379 ms/sample → ~1,820% of one core per 48 kHz mono stream.
+3. **"Bit-exact" test impossible by construction** — it compared the R=4
+   time-domain engine against R=8 spectral `PerTrackProcessor` fixtures. The
+   generator's own docstring said so.
+4. **`python/reference_forward.py` was a `SyntaxError`** — never importable. It also
+   disagreed with the engine in 5 places (RoPE pairing, `B_bias`/`C_bias`, Δ
+   conditioning, D-skip broadcast bug, state-normalization scope).
+5. **CI red on `main`** — the clap-validator URL pointed at an asset that has never
+   existed; `actions/checkout` had no `lfs: true` so CI never saw real weights either.
+6. **`model.bin` and `model_trained.bin` shared one LFS oid** — the "briefly trained
+   autoencoder" was byte-identical to the seed-42 test fixture.
+
+### ✅ Fixes
+
+**P0 — reproducibility**
+- Removed the LFS filter for `models/*.bin`, committed the 6.6 MB model, documented
+  the lost oids in `models/README.md`. Raised the pre-commit large-file guard from
+  500 KB to 8 MB (it was what pushed the model into LFS in the first place).
+- `WeightLoader` now requires an exact payload-size match; `test_mamba3` validates
+  fixture lengths before allocating; LFS pointers are reported as failures, not
+  skips.
+- `dump_engine_reference.py` generates fixtures from the engine's own model via
+  `reference_forward.py`; `dump_reference_output.py` is a shim. Fixtures committed,
+  so the test suite no longer needs torch.
+- `reference_forward.py` fixed (SyntaxError) and aligned with the engine in all 5
+  divergences. `test_python_reference` now measures 1.0–1.8e-3 abs / 5–9e-4 rel.
+- CI: pinned clap-validator 0.4.1 asset + unzip, added `libx11-dev`, dropped the
+  unnecessary torch install, added model-pointer/size checks on Linux and Windows.
+
+**P1 — performance**
+- Layer-major chunked execution (128-sample chunks), per-chunk FiLM/Δ precompute,
+  register-blocked GEMM kernels, 4× fewer RoPE transcendentals.
+- **0.379 → 0.262 ms/sample mono (-31%); 0.419 → 0.259 ms stereo (-38%).**
+  The review predicted 3–5×; measured 1.45×. `in_proj` is at the CPU's FP issue
+  limit, so kernel work is exhausted — the remaining lever is model size.
+- New `test_perf_budget` (ratio vs same-machine calibration, budget 3.0) and
+  `test_numeric_sensitivity` (1-ULP drift guard).
+
+**New finding — numerical drift.** float32 vs a float64 oracle of the same
+pipeline: 2.0% of peak within 12 ms, 7.3% within 93 ms; peak `|ssm_real|` saturates
+the 4096-sample clamp. Output stays finite (which is why the old long-run test
+passed). Tracked in `docs/TODO.md`.
+
+### 🧪 Verification
+
+- `test_mamba3`: 21 checks pass (was: abort)
+- `test_perf_budget`: ratio 1.6–1.9 (< 3.0 budget)
+- `test_ara_controller`: pass; CLAP plugin compiled (see the 2026-10-04 continuation
+  below — it now builds and runs for real here)
+- Fresh clone of the committed tree builds and passes the same tests
+- `-Wall -Wextra` clean, including the GCC `-Waggressive-loop-optimizations` case
+  in the new GEMM remainder loops
+
+### 📝 Docs
+
+README rewritten (status table, measured performance, stability section, testing),
+AGENTS.md rewritten (execution model, invariants, gaps), `models/README.md` (new),
+`docs/BLUEPRINT_COMPARISON.md` (new + addendum with the corrected estimates),
+`docs/TODO.md` (current status header + P0–P3), CHANGELOG v0.1.1,
+`docs/INCUBATOR_CHECKLIST.md` (blocking section).
+
+### 🧱 Next (in priority order)
+
+1. Shrink the model to fit a CPU budget (~12–24× to find) — a modelling decision
+2. Fix the float32 drift; add an assertion once fixed
+3. Train a real model and regenerate the reference fixtures
+4. DAW load test — still never performed
+
+---
+
+## Session 2026-10-04 (continued) — Build portability: fresh clone now works everywhere
+
+**Duration:** ~40 min
+**Objective:** A fresh clone of the pushed branch could not be configured at all in
+this sandbox. Make the build work with no manual steps, then sync the docs.
+
+### 🔴 What was broken
+
+- `cmake` configure died in clap-wrapper's CPM bootstrap:
+  `file DOWNLOAD cannot compute hash on failed download` for
+  `https://github.com/cpm-cmake/CPM.cmake/releases/download/v0.38.6/CPM.cmake`
+  → `Unknown CMake command "CPMAddPackage"`. The sandbox allows `git clone` but
+  blocks GitHub **release-asset** downloads; `-DCPM_SOURCE_CACHE` does not help
+  because the download is attempted unconditionally.
+- The CLAP plugin could not build without `libx11-dev` (the native editor includes
+  `X11/Xlib.h` directly), so `test_clap_plugin` was *Not Run* and the MinGW
+  cross-build in the release checklist could never have worked.
+- An earlier attempt (git-seeding `build/cmake/CPM_0.38.6.cmake` and string-patching
+  clap-wrapper's stub) did not fix it — the seed was ignored and the patch pattern
+  did not match the real file. Both were reverted rather than shipped.
+
+### ✅ Fixes
+
+- Fetch the VST3 SDK revision clap-wrapper wants (`v3.7.6_build_18`) by git and pass
+  it as `VST3_SDK_ROOT`; clap-wrapper skips CPM entirely when that is set. No
+  release-asset download happens at any point.
+- `-DCLARA_BUILD_VST3=OFF` for CLAP + ARA + tests only.
+- CMake probes for X11; when absent it defines `CLARA_NO_NATIVE_GUI`, the editor
+  compiles out, and the plugin/ARA/tests still build.
+
+### 🧪 Verification (fresh clone, clean container, no workarounds)
+
+- Configure + build + `ctest`: **4/4 pass** (`test_mamba3`, `test_perf_budget`,
+  `test_clap_plugin`, `test_ara_controller`). `test_clap_plugin` now constructs the
+  plugin and asserts descriptors, params, state round-trip and the SPSC FIFO —
+  previously it was unbuildable here.
+- All three artefacts produced: `MambaSuiteClap.clap`, `MambaSuiteARA.so`,
+  `MambaSuite.vst3` (`build/Release/MambaSuite.vst3/Contents/x86_64-linux/MambaSuite.so`).
+- Zero-allocation guarantee re-proved on the refactored engine: 0 heap allocations
+  across 4,096 `process_block()` samples, `LD_PRELOAD` interposition.
+
+### 📝 Docs
+
+README (build section: X11 optional, `CLARA_BUILD_VST3`, `VST3_SDK_ROOT`, status
+table), AGENTS.md (build line), `docs/TODO.md` (two P0 items closed),
+`docs/INCUBATOR_CHECKLIST.md` (MinGW/X11 item resolved), CHANGELOG v0.1.2.
+
+### 🧱 Still open (unchanged, highest first)
+
+1. Not real time (~1,250% of one core per mono stream) — needs a smaller model
+2. No trained weights; float32 drift ~2% vs f64 oracle in 12 ms
+3. No DAW load test has ever been performed

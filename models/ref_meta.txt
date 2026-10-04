@@ -1,0 +1,7 @@
+reference=python/reference_forward.py (R=4 time-domain, 8-step pipeline)
+model=model.bin
+model_sha256=bc10f7636a0583b69032111a910678b7bc1b9dcef4fada4b6ea123ffa538639e
+sample_rate=44100
+samples=512
+conditioning={0: 0.5, 40: 0.3}
+output_std=0.95724601

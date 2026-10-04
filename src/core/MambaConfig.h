@@ -65,9 +65,24 @@ static_assert(COND_DAW_SIZE + COND_CLAP_SIZE + COND_KNOB_SIZE + COND_RESERVED_SI
 
 // ── Block Processing ──────────────────────────────────────────────
 
-constexpr size_t MAX_CHUNK_SIZE = 64;            // Samples per SSM sub-block
+constexpr size_t MAX_CHUNK_SIZE = 64;            // Samples per SSM sub-block (model semantics — must match training)
 constexpr size_t MAX_BLOCK_SIZE = 512;           // Max samples per processBlock() call
 constexpr size_t SSM_STATE_NORM_INTERVAL = 4096; // Periodic state re-normalization
+
+// ── Execution Scheduling (performance only, no effect on model semantics) ──
+//
+// The engine processes the host's block in sub-chunks of this size so the
+// per-layer input/output projections run as small GEMMs (matrix × n samples)
+// instead of one matrix-vector product per sample. The recurrence itself stays
+// per-sample (it is causal), so the audio output is unchanged — only the
+// summation order inside the projections differs, which moves results by
+// float32 rounding (see tests/test_mamba3.cpp test_python_reference).
+//
+// Cost: PROCESS_CHUNK_SIZE × MAX_IN_PROJ_DIM × 4 bytes of scratch per engine
+// (~825 KB at 128). Smaller chunks use less memory and vectorize less; measured
+// on the reference machine, 128 is within a few percent of 256 and halves the
+// scratch, so 128 is the default.
+constexpr size_t PROCESS_CHUNK_SIZE = 128;
 
 // ── Weight Format (Version 2) ─────────────────────────────────────
 

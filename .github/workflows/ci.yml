@@ -24,15 +24,17 @@ jobs:
             g++ \
             python3 \
             python3-pip \
-            libpthread-stubs0-dev
+            python3-numpy \
+            libpthread-stubs0-dev \
+            libx11-dev \
+            unzip
 
-      - name: Install Python deps (torch for model export)
-        run: |
-          pip3 install torch --index-url https://download.pytorch.org/whl/cpu --quiet
-          pip3 install numpy --quiet
+      # validate_export.py needs numpy only. torch is NOT required by the build
+      # job — the Python↔C++ reference fixtures are committed (see models/), so
+      # the fixture generator (which does need torch) is not run here.
 
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
       - name: Build
         run: cmake --build build --parallel $(nproc)
@@ -47,10 +49,23 @@ jobs:
           readelf -d build/plugins/MambaSuiteClap.clap | grep RUNPATH
           readelf -d build/plugins/MambaSuiteARA.so | grep RUNPATH
 
+      # A 132-byte file here means an unresolved Git LFS pointer, not a model:
+      # that silently broke every clone until 2026-10-04 (see .gitattributes).
       - name: Verify model files (Mamba-3 flat binary)
         run: |
-          test -f build/plugins/models/model.bin
-          echo "OK: model.bin deployed"
+          M=build/plugins/models/model.bin
+          test -f "$M"
+          SIZE=$(stat -c %s "$M")
+          if [ "$SIZE" -ne 6649600 ]; then
+            echo "FAIL: $M is $SIZE bytes, expected 6,649,600"
+            head -c 60 "$M" || true
+            exit 1
+          fi
+          if head -c 8 "$M" | grep -q '^version '; then
+            echo "FAIL: $M is an unresolved Git LFS pointer"
+            exit 1
+          fi
+          echo "OK: model.bin deployed ($SIZE bytes)"
 
       - name: Verify engine source files
         run: |
@@ -59,15 +74,25 @@ jobs:
           test -f src/core/WeightLoader.cpp
           test -f src/core/SPSCQueue.hpp
 
+      # Asset names are version- and runner-specific. The previous URL
+      # (clap-validator-linux-x86_64.tar.gz) has never existed in any release,
+      # which is what turned this job red on main. Pinned to the 0.4.1 build
+      # published for ubuntu-22.04.
       - name: Download clap-validator
         run: |
-          wget -q https://github.com/free-audio/clap-validator/releases/latest/download/clap-validator-linux-x86_64.tar.gz
-          tar xzf clap-validator-linux-x86_64.tar.gz
-          chmod +x clap-validator
+          set -euo pipefail
+          URL="https://github.com/free-audio/clap-validator/releases/download/0.4.1/clap-validator-0.4.1-127-g152b982-ubuntu-22.04.zip"
+          wget -q -O clap-validator.zip "$URL"
+          unzip -o -q clap-validator.zip
+          V=$(find . -maxdepth 3 -type f -name 'clap-validator' | head -1)
+          test -n "$V"
+          chmod +x "$V"
+          echo "CLAP_VALIDATOR=$V" >> "$GITHUB_ENV"
+          "$V" --version || true
 
       - name: Validate CLAP plugin
         run: |
-          ./clap-validator --no-gui build/plugins/MambaSuiteClap.clap 2>&1 || true
+          "$CLAP_VALIDATOR" --no-gui build/plugins/MambaSuiteClap.clap 2>&1 || true
         continue-on-error: true
 
       - name: Verify ARA library
@@ -98,7 +123,7 @@ jobs:
           name: mamba-plugins-${{ github.sha }}
           path: |
             build/plugins/MambaSuiteClap.clap
-            build/plugins/MambaSuite.so
+            build/Release/MambaSuite.vst3
             build/plugins/MambaSuiteARA.so
             build/plugins/models/
           if-no-files-found: error
@@ -114,8 +139,11 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq cmake g++
 
+      # The reference fixtures (models/input_ref.bin, output_ref.bin) are
+      # committed, so the torch-based generator is not invoked here. See
+      # python/tools/dump_engine_reference.py if it ever needs regenerating.
       - name: Configure CMake with tests
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
       - name: Build tests
         run: cmake --build build --parallel $(nproc)
@@ -140,7 +168,7 @@ jobs:
           pip install numpy --quiet
 
       - name: Configure CMake
-        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
       - name: Build
         run: cmake --build build --config Release --parallel $env:NUMBER_OF_PROCESSORS
@@ -155,7 +183,12 @@ jobs:
 
       - name: Verify model files
         shell: pwsh
-        run: Test-Path build/plugins/models/model.bin
+        run: |
+          $m = "build/plugins/models/model.bin"
+          if (-not (Test-Path $m)) { throw "missing $m" }
+          $size = (Get-Item $m).Length
+          if ($size -ne 6649600) { throw "$m is $size bytes, expected 6,649,600 (LFS pointer?)" }
+          Write-Host "OK: model.bin deployed ($size bytes)"
 
       - name: Upload plugins artifact
         uses: actions/upload-artifact@v4
@@ -174,7 +207,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Configure CMake with tests
-        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
       - name: Build tests
         run: cmake --build build --config Debug --parallel $env:NUMBER_OF_PROCESSORS

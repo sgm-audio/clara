@@ -1,1 +1,11 @@
-models/*.bin filter=lfs diff=lfs merge=lfs -text
+# Model weights are committed directly to the repository — NOT via Git LFS.
+#
+# History: these files were tracked by Git LFS until 2026-10-04. The account's
+# LFS budget was exceeded, so *every* clone received 132-byte pointer files
+# instead of weights. Consequences: the plugin failed to load (mamba_init()
+# returns false when weights are unreadable) and test_mamba3 aborted with
+# std::bad_alloc while parsing a pointer file as a weight header.
+#
+# The model is small (6.6 MB), so plain Git is the right storage. Keep these
+# files binary: never apply line-ending conversion.
+models/*.bin -text -diff

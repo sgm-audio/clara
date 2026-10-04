@@ -2,70 +2,108 @@
 
 [![CI](https://github.com/SGM-Studios/clara/actions/workflows/ci.yml/badge.svg)](https://github.com/SGM-Studios/clara/actions/workflows/ci.yml)
 
-C++17 audio plugin that runs a Mamba-3 SSM (Selective State Space Model) via a custom C++ inference engine. Ships as a CLAP plugin (`MambaSuiteClap.clap`) and an ARA 2.0 extension library (`MambaSuiteARA.so`), both sharing a single inference core. Supports Linux (stable), macOS and Windows (in progress).
+C++17 audio plugin that runs a Mamba-3 SSM (Selective State Space Model) through a
+custom C++ inference engine. Ships as a CLAP plugin (`MambaSuiteClap.clap`), a VST3
+wrapper (`MambaSuite.vst3`, via clap-wrapper) and an ARA 2.0 extension library
+(`MambaSuiteARA.so`), all sharing one inference core. Linux is the tested platform;
+macOS and Windows presets exist but are not verified.
 
-No ONNX Runtime is used. Weights are stored as a flat binary file (`model.bin`) and loaded via mmap at init.
+No ONNX Runtime. Weights are a flat binary file (`model.bin`) loaded via `mmap` at init.
 
-**Start here:** [Build the plugin](#build) · [Train a model](#training) ([`docs/TRAINING.md`](docs/TRAINING.md) reference, [`docs/TRAIN_GUIDE.md`](docs/TRAIN_GUIDE.md) for the R=8 target arch) · [Run in a DAW](#running)
+**Read this first:** [`docs/BLUEPRINT_COMPARISON.md`](docs/BLUEPRINT_COMPARISON.md) —
+a verification pass over this repository (build, tests, benchmarks, model files)
+that documents what works, what does not, and what the remaining work is. The
+short version: **the engine is real and tested, but it is ~12x too slow for
+real time and the shipped weights are an untrained fixture.**
 
-## Status — what works right now
-
-This is what an incubator leader testing the plugin will see:
+## Status — 2026-10-04
 
 | Capability | Status |
 |---|---|
-| Builds on Linux | ✅ `cmake -B build && cmake --build build` |
-| VST3 for Ableton Live | ✅ `MambaSuite.vst3` built via clap-wrapper |
-| CLAP for Bitwig/Carla | ✅ `MambaSuiteClap.clap` |
-| ARA 2.0 extension | ✅ `MambaSuiteARA.so` (scaffolding, no real-time conditioning yet) |
-| Processes stereo audio | ✅ 3 params: bypass, wet/dry, intensity |
-| RT-safe (zero heap alloc on audio thread) | ✅ |
-| Click-free bypass (50ms linear crossfade) | ✅ |
-| Trained model | ✅ Identity autoencoder — briefly trained, audible effect |
-| GUI | ❌ Deferred (CLAP_EXT_GUI) — generic host editor only |
-| Per-effect model variants | ❌ Planned (Saturator, Compressor, Denoiser) |
-| macOS/Windows builds | 🟡 CMake presets defined, not fully tested |
-| ARA real-time conditioning | 🟡 Scaffolding only — no host content reader yet |
+| Builds on Linux (CLAP + VST3 + ARA) | ✅ clean-container verified (`cmake` + `g++` only; `libx11-dev` optional, X11 auto-detected) |
+| Weights present in a fresh clone | ✅ committed to Git (6.6 MB) — LFS removed, see [`models/README.md`](models/README.md) |
+| Engine tests (`test_mamba3`) | ✅ 21 checks pass, incl. Python↔C++ equivalence and a drift guard |
+| Python↔C++ equivalence | ✅ within float32 noise floor: 1.0–1.8e-3 abs / 5–9e-4 relative on a 2.14 peak |
+| Compute budget guard (`test_perf_budget`) | ✅ exists and passes; it reports ~1,250% of one core per mono stream |
+| **Real-time capable** | ❌ **~0.26 ms/sample → ~1,250% of one core per 48 kHz mono stream** |
+| Numerical stability | ⚠️ float32 output drifts ~2% vs a float64 oracle within 12 ms; see *Stability* below |
+| Trained model | ❌ `model.bin` is an untrained random fixture; the trained blobs were lost with the LFS budget |
+| GUI | ✅ native `CLAP_EXT_GUI` (X11/Win32 framebuffer) + `CLAP_EXT_WEBVIEW`; auto-disabled when X11 headers are absent |
+| ARA real-time conditioning | 🟡 scaffolding only — no host content reader |
+| macOS / Windows builds | 🟡 presets defined; not verified in this environment |
+| CI | 🟡 clap-validator download fixed; the CLAP plugin now builds without X11, so the Windows job no longer needs a cross-GUI; needs a run to confirm green |
 
-## Architecture
+## Performance (measured, not estimated)
 
-```
-DAW Host
-│
-├── CLAP Plugin (MambaSuiteClap.clap) / VST3 (MambaSuite.vst3)
-│   │
-│   ├── Audio In → SsmInferenceCore → Audio Out
-│   │              (6 layers, MIMO rank 4, time-domain)
-│   │
-│   └── Conditioning Vector (128 floats)
-│       [0-127: reserved for future DAW context / CLAP embedding]
-│
-└── ARA Extension (MambaSuiteARA.so)
-    Scaffolding only — content reader not yet implemented
-```
+Xeon @ 2.60 GHz, 2 vCPU container, 6-layer R=4 model, 512-sample blocks:
 
-**Current engine:** Mamba-3 R=4 time-domain — RoPE rotation, trapezoidal SSM, multi-head MIMO rank 4, d_model=128, d_state=32, 6 layers, ~1.66M trainable params. Per-sample processing (no STFT in the model — STFT is used only in the training loss).
+| Build | Per sample | 1 stream @48 kHz | Real-time factor |
+|---|---|---|---|
+| Original code, repo Release flags | 0.379 ms | 1,820% of one core | 0.055x |
+| **Current, repo Release flags** | **0.262 ms** | **1,256%** | **0.080x** |
+| Current, `-O3 -march=native` | 0.188 ms | 903% | 0.111x |
 
-**Next milestone:** PerTrackProcessor R=8 spectral-domain with STFT frontend, complex-pole SSM, CREPE f0 conditioning, cross-track attention, and ISTFT decoder (~4.26M params). See [`docs/MAMBA3_MIGRATION_PLAN.md`](docs/MAMBA3_MIGRATION_PLAN.md) for the full roadmap.
+The 2026-10-04 optimization pass (batched projections + blocked GEMM kernels +
+hoisted RoPE trigonometry) bought **1.45x mono / 1.6x stereo**, not the 3–5x
+originally hoped: per-component profiling shows the `in_proj` GEMM is already at
+this CPU's floating-point issue limit, so the remaining lever is **model size**
+(`d_model`, `in_proj` width, MIMO rank), not more kernel tuning. See
+`docs/BLUEPRINT_COMPARISON.md` §5.
 
-The inference engine lives in `src/core/` as the `Mamba3Core` static library, linked into both the CLAP and ARA targets. The plugin loads `model.bin` (version 2 flat binary weights).
+Where the time goes now, per sample, per layer: `in_proj` 0.0246 ms (57%),
+SSM recurrence 0.0148 ms (34%), `out_proj` 0.0037 ms (9%), FiLM ≈ 0.
+
+### Stability (known issue)
+
+Comparing the float32 engine against a float64 oracle of the identical pipeline:
+2.0% of peak divergence within 12 ms, 3.6% at 23 ms, 7.3% at 93 ms. A 1-ULP
+change to one input sample grows to 0.1% of peak over 85 ms. Peak `|ssm_real|`
+sits at exactly 1.000, i.e. the periodic state clamp is active every 4096 samples.
+The output is finite and stable, but float32 precision is not sufficient for this
+recurrence, and different CPUs/compilers will produce slightly different audio.
+`test_numeric_sensitivity` tracks this; the fix (double accumulation or a
+less saturating state) is tracked in [`docs/TODO.md`](docs/TODO.md).
 
 ## Build
 
-Dependencies fetched automatically via `FetchContent`: CLAP SDK (`29ffcc27`), ARA SDK (`releases/2.3.0`), and clap-wrapper (`v0.9.1`). No manual dependency installation required. ONNX Runtime is **not** used.
-
-Release build:
+Dependencies are fetched by CMake `FetchContent`: CLAP SDK (`29ffcc27`), ARA SDK
+(`2.3.0`), clap-wrapper (`v0.9.1`), and — for the VST3 target — the Steinberg
+VST3 SDK (`v3.7.6_build_18`). Only a C++20 toolchain, CMake ≥ 3.14, `git` and a
+network connection to GitHub are required:
 
 ```bash
+sudo apt-get install -y cmake g++                 # Debian/Ubuntu
+
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
+cmake --build build --parallel                    # CLAP + ARA + tests
 ```
 
-The default build produces the CLAP plugin and ARA library. The VST3 wrapper is a separate target (it pulls in the VST3 SDK):
+> With CMake 4.x, pass `-DCMAKE_POLICY_VERSION_MINIMUM=3.5`: clap-wrapper's
+> bundled dependencies still declare `cmake_minimum_required` values below 3.5.
+
+Two build knobs matter on restricted machines:
+
+- **`libx11-dev` is optional.** The native framebuffer editor talks to Xlib
+  directly. CMake detects X11 and, when it is absent, defines
+  `CLARA_NO_NATIVE_GUI` and compiles the editor out — the CLAP plugin, ARA
+  library and all tests still build, the plugin just advertises no GUI extension
+  and hosts show their generic editor. Install `libx11-dev` to get the editor.
+- **`-DCLARA_BUILD_VST3=OFF`** skips clap-wrapper and the VST3 SDK entirely
+  (the CLAP plugin, ARA library and tests need neither).
+
+The VST3 wrapper is a separate target, because the SDK is large:
 
 ```bash
 cmake --build build --target MambaSuite_as_vst3 --parallel
 ```
+
+clap-wrapper normally pulls the VST3 SDK through CPM, whose bootstrap downloads
+`CPM.cmake` from a **GitHub release asset** — a class of URL that some CI
+sandboxes and corporate networks block even when `git clone` works. CLARA avoids
+that bootstrap: it fetches the same SDK revision by git and passes it to
+clap-wrapper as `VST3_SDK_ROOT`, so no release-asset download happens. If you
+already have an SDK checkout, skip the fetch with
+`-DVST3_SDK_ROOT=/path/to/vst3sdk`.
 
 Debug build with tests:
 
@@ -74,198 +112,152 @@ cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
 cmake --build build --parallel && ctest --test-dir build --output-on-failure
 ```
 
-Cross-platform builds via CMake presets:
-
-```bash
-cmake --preset default             # Linux (Release)
-cmake --preset macos-release       # macOS
-cmake --preset windows-msvc-release  # Windows
-cmake --build --preset <preset>
-```
-
-Install (default prefix `/usr/local`):
-
-```bash
-cmake --install build                         # both CLAP + ARA
-cmake --install build --component clap        # CLAP only
-cmake --install build --component ara         # ARA only
-```
+Install (default prefix `/usr/local`), cross-platform presets, and the `clara_test`
+aggregate target work as before: `cmake --preset macos-release`,
+`cmake --install build --component clap`, `cmake --build build --target clara_test`.
 
 Outputs:
 
 - `build/plugins/MambaSuiteClap.clap` — CLAP audio effect
-- `build/Release/MambaSuite.vst3` — VST3 bundle (loadable in Ableton Live, Cubase, REAPER, etc.; built by the `MambaSuite_as_vst3` target)
-- `build/plugins/MambaSuiteARA.so` / `.dylib` / `.dll` — ARA2 library
-- `build/libMamba3Core.a` — static C++ engine
-- `build/plugins/models/*.bin` — flat binary weights
+- `build/Release/MambaSuite.vst3` — VST3 bundle (`MambaSuite_as_vst3` target)
+- `build/plugins/MambaSuiteARA.so` — ARA2 library
+- `build/tests/test_*` — unit tests (`-DBUILD_TESTING=ON`)
+- `build/libMamba3Core.a` — static engine
+- `build/plugins/models/*.bin` — weights, deployed next to the binary
 
 ## Running
 
-**Ableton Live (VST3):** Copy the `build/Release/MambaSuite.vst3` bundle to your VST3 plugin folder:
-- Linux: `~/.vst3/` or `/usr/lib/vst3/`
-- macOS: `~/Library/Audio/Plug-Ins/VST3/`
-- Windows: `C:\Program Files\Common Files\VST3\`
+**Ableton Live (VST3):** copy `build/Release/MambaSuite.vst3` to your VST3 folder
+(`~/.vst3/`, `~/Library/Audio/Plug-Ins/VST3/`, `C:\Program Files\Common Files\VST3\`).
 
-**CLAP hosts (Bitwig Studio, Carla, clap-host):** Load `build/plugins/MambaSuiteClap.clap` directly.
+**CLAP hosts (Bitwig, Carla, clap-host):** load `build/plugins/MambaSuiteClap.clap`.
 
-The flat binary model must be present in `models/` adjacent to the plugin binary. The build deploys it automatically for the CLAP (`build/plugins/models/`); the VST3 bundle does **not** yet embed it — copy `build/plugins/models/` next to the `.so` inside the bundle (`Contents/x86_64-linux/`) after installing.
+The weight file must sit in `models/` next to the plugin binary; the build
+deploys it for the CLAP target. The VST3 bundle does not embed it yet — copy
+`build/plugins/models/` next to the `.so` inside the bundle.
 
-ARA hosts (REAPER, Cubase) discover `MambaSuiteARA.so`. Audio processing is handled by the companion CLAP plugin (ARA 2.0 has no `renderSamples()` method).
+Each plugin exposes three parameters: bypass (stepped, click-free 50 ms
+crossfade), wet/dry, intensity.
 
-Each plugin exposes three parameters: bypass (stepped, click-free via 50ms linear crossfade), wet/dry blend, and intensity.
+> **No DAW load test has been performed on this codebase.** The engine is
+> verified by unit tests and by direct benchmark, but nobody has confirmed audio
+> output inside a running host.
 
 ## Model
 
-**Current shipping model:** Mamba-3 R=4 time-domain (multi-head MIMO, RoPE, trapezoidal SSM).
+**Shipping format:** Mamba-3 R=4 time-domain (multi-head MIMO, RoPE, trapezoidal
+SSM). `models/model.bin` is a 6.6 MB V2 flat-binary file.
 
-| Parameter    | Value | Notes                                            |
-|--------------|-------|--------------------------------------------------|
-| d_model      | 128   | Embedding dimension                              |
-| n_layers     | 6     | Stacked SSM layers                               |
-| d_state      | 32    | SSM state dimension per channel                  |
-| nheads       | 4     | Parallel heads                                   |
-| headdim      | 64    | Per-head dimension (= d_inner / nheads)          |
-| mimo_rank    | 4     | MIMO rank (time-domain)                          |
-| d_inner      | 256   | 2× d_model expansion                             |
-| cond_dim     | 128   | Conditioning vector (reserved for future use)    |
-| Total params | ~1.66M | 13 arrays/layer × 6 layers                       |
+| Parameter | Value |
+|---|---|
+| d_model / d_inner | 128 / 256 |
+| n_layers / d_state | 6 / 32 |
+| nheads / headdim | 4 / 64 |
+| mimo_rank | 4 |
+| cond_dim | 128 |
+| Total params | 1,662,384 (~1.66M) |
 
-**Target architecture:** PerTrackProcessor R=8 spectral-domain (~4.26M params). See [`docs/MAMBA3_MIGRATION_PLAN.md`](docs/MAMBA3_MIGRATION_PLAN.md).
+**Not a trained effect.** The blobs that were labelled trained were lost when the
+account's LFS budget was exceeded; the current file is an untrained fixture with
+the correct shape. To train and install a real one, see
+[`models/README.md`](models/README.md) and [`docs/TRAINING.md`](docs/TRAINING.md).
 
-### Training
+**Target architecture:** PerTrackProcessor R=8 spectral-domain (~4.26M params) —
+see [`docs/MAMBA3_MIGRATION_PLAN.md`](docs/MAMBA3_MIGRATION_PLAN.md). The C++
+engine rewrite to match it (H3) has not been started.
 
-The R=4 time-domain model is trained with `python/training/train_local_radeon.py`:
+### Execution model
 
-```bash
-# Stage 0: identity pretraining (local ROCm GPU)
-python python/training/train_local_radeon.py \
-  --data ~/datasets/musdb18hq/train \
-  --steps 50000 --batch 4 --grad-accum 4 \
-  --chunk-samples 2048
-
-# Export to flat binary weights
-python python/training/train_local_radeon.py \
-  --export checkpoints_clara/best.pt \
-  --output models/model.bin
-```
-
-The canonical PerTrackProcessor R=8 training script is `python/training/train_clara.py` (spectral-domain, complex poles). It is the target architecture; the C++ engine rewrite to match it is the next milestone.
-
-## Project Structure
-
-```
-├── CMakeLists.txt                    # Build system (FetchContent, dual-target)
-├── AGENTS.md                         # Build/architecture reference
-├── docs/
-│   ├── adr/                          # Architectural Decision Records (ADR-001..013)
-│   ├── MAMBA3_MIGRATION_PLAN.md      # Complete architecture & migration plan
-│   ├── TRAINING.md                   # Unified Mamba-3 training reference
-│   ├── TRAINING_QUICKSTART.md        # One-command quick start
-│   └── ...
-├── python/
-│   ├── reference_forward.py          # PyTorch bit-exact gold standard
-│   ├── training/
-│   │   ├── train_clara.py          # PerTrackProcessor R=8 training (target arch)
-│   │   ├── train_local_radeon.py   # R=4 time-domain training (current engine)
-│   │   ├── dataset.py               # StemDataset + DataLoader
-│   │   └── loss.py                   # MR-STFT + Mel-L1 + SI-SDR losses
-│   └── tools/
-│       ├── export_mamba_weights.py   # Flat binary weight export (V2)
-│       ├── validate_export.py        # Python↔C++ round-trip validation
-│       └── ...
-├── scripts/
-│   ├── run_train.sh                  # Training launcher (ROCm)
-│   ├── run_test.sh                   # Smoke test launcher
-│   └── setup_local.sh                # Local ROCm env setup
-├── LICENSE                           # Apache 2.0
-├── .github/workflows/ci.yml          # CI pipeline
-├── models/                           # Flat binary weights: model.bin = briefly-trained identity
-│                                     #   autoencoder; *_ref.bin = seed-42 test fixtures (regenerated
-│                                     #   by tests/CMakeLists.txt if deleted)
-├── src/
-│   ├── core/                         # Mamba3Core: SsmInferenceCore, SsmBlock, WeightLoader
-│   ├── clap/                         # CLAP plugin entry + extensions
-│   └── ara/                          # ARA document controller + playback renderer
-├── tests/                            # CTest suite
-└── archive/mamba1-onnx-era/          # Deprecated Mamba-1 / ONNX code, docs, models
-```
+The host block is processed in chunks of `PROCESS_CHUNK_SIZE` (128) samples,
+layer-major. Within a chunk the FiLM/Δ conditioning projections are evaluated once,
+and `in_proj`/`out_proj` run as register-blocked GEMMs; the SSM recurrence stays
+per-sample because it is causal. This is a scheduling decision only — it does not
+change the model. Weights are `mmap`'d, state and scratch are engine-owned, and the
+audio path performs **zero heap allocations** (verified with an allocation counter).
 
 ## Testing
 
 ```bash
-cmake -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build build --parallel
+cmake -B build -DBUILD_TESTING=ON && cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-### Test targets
+| CTest name | Scope |
+|---|---|
+| `test_mamba3` | init, silence/sine response, conditioning changes output, determinism, state continuity, long-run finiteness, **Python↔C++ equivalence**, **1-ULP sensitivity guard** |
+| `test_perf_budget` | per-sample cost vs a same-machine calibration loop; fails on regression (budget ratio 3.0) |
+| `test_clap_plugin` | CLAP descriptor, lifecycle, parameters, buffer handling |
+| `test_ara_controller` | ARA document controller lifecycle, archive round-trip |
+| `clap_validator` | clap-validator (pinned 0.4.1 ubuntu-22.04 asset) against the built `.clap`; SKIPs (77) if the binary is absent |
 
-| CTest name           | Scope                                                                                |
-|----------------------|--------------------------------------------------------------------------------------|
-| `test_mamba3`        | Python↔C++ numerical equivalence, state continuity, long-run stability                |
-| `test_clap_plugin`   | CLAP plugin descriptor, lifecycle, parameter registration, buffer handling           |
-| `test_ara_controller`| ARA document controller creation/destruction, archive round-trip                      |
-| `clap_validator`     | Runs [clap-validator](https://github.com/free-audio/clap-validator) against the built `.clap`. Required categories: `audio-ports`, `params`, `state`, `latency`. Returns SKIP (77) if the validator binary is not available. |
+The Python↔C++ fixture pair in `models/` is generated by
+`python/tools/dump_engine_reference.py`, which runs the same model through
+`python/reference_forward.py`. Those two files are committed, so the test suite
+does **not** need torch. Regenerating them does (plus numpy).
 
-The `clap_validator` test is resolved in this order:
+### What the equivalence test does and does not prove
 
-1. `find_program(clap-validator)` — local install on `PATH`
-2. `cargo install --git https://github.com/free-audio/clap-validator --locked` — builds from git master (the last tagged release doesn't compile on current Rust; requires Rust toolchain)
-3. Otherwise the test is registered but exits 77 (SKIP) at runtime; CTest reports it as skipped rather than failed.
+It proves the C++ engine and the Python reference implement the same arithmetic:
+they agree to ~1e-3 absolute (~5e-4 relative) over 512 samples, and both sit
+~2% away from a float64 oracle of the same pipeline. That residual is float32
+rounding amplified by the recurrence, not a modelling difference — which is why
+the tolerance is 5e-3 rather than 1e-6, and why `test_numeric_sensitivity` exists
+to make the drift visible.
 
-Tests require model files in `models/`. The CLAP plugin test and the validator test additionally require `MambaSuiteClap.clap` to be present at `build/plugins/MambaSuiteClap.clap` (built by the same `cmake --build` invocation).
+## Numerical layout and provenance
 
-To build and run the full test suite (including the validator) in a single step:
+`python/reference_forward.py` was a `SyntaxError` (a multi-line generator inside
+an f-string) and therefore unimportable until 2026-10-04; it also disagreed with
+the engine in five places (RoPE pairing convention, missing `B_bias`/`C_bias`,
+missing Δ conditioning, a broadcast bug in the D-skip, and state-normalization
+scope). It has been corrected to match `src/core/SsmBlock.cpp`, which is the
+shipping implementation. See the module docstring for the list.
 
-```bash
-cmake -B build -DBUILD_TESTING=ON
-cmake --build build --target clara_test
+## Project structure
+
 ```
-
-The target name `clara_test` (not `test`, which is reserved by CTest) builds the CLAP and ARA plugins first, then invokes `ctest --output-on-failure`. The clap-validator test is automatically skipped (logged as `[SKIPPED]`) if the validator binary is unavailable.
-
-## Code Quality
-
-This project uses [pre-commit](https://pre-commit.com) to enforce consistent formatting and catch common issues before they reach CI:
-
-```bash
-# Install hooks (one-time)
-pre-commit install
-
-# Run on all files (after clone or adding new hooks)
-pre-commit run --all-files
+├── CMakeLists.txt              # FetchContent deps, dual-target build
+├── AGENTS.md                   # Build/architecture reference for agents
+├── models/                     # Weights + reference fixtures (see models/README.md)
+├── docs/
+│   ├── BLUEPRINT_COMPARISON.md # Verification pass: measurements, gaps, priorities
+│   ├── MAMBA3_MIGRATION_PLAN.md# R=8 target architecture and roadmap
+│   ├── TRAINING.md             # Training reference
+│   ├── TODO.md                 # Open work, incl. stability and compute budget
+│   └── adr/                    # ADR-001..013
+├── python/
+│   ├── reference_forward.py    # R=4 time-domain reference (engine-equivalent)
+│   ├── training/               # train_clara.py (R=8), train_local_radeon.py (R=4)
+│   └── tools/                  # export, validate, dump_engine_reference, ...
+├── src/
+│   ├── core/                   # Mamba3Core: SsmInferenceCore, SsmBlock, WeightLoader
+│   ├── clap/                   # CLAP plugin entry + extensions
+│   ├── ara/                    # ARA document controller
+│   └── gui/                    # Native (X11/Win32) and webview GUIs
+├── tests/                      # test_mamba3, test_perf_budget, test_clap_plugin, ...
+└── archive/mamba1-onnx-era/    # Deprecated Mamba-1 / ONNX code and docs
 ```
-
-Hooks include:
-- **clang-format** — C++ formatting (`.clang-format`)
-- **black** — Python formatting (100-char lines)
-- **ruff** — Python linting (auto-fix enabled)
-- **trailing-whitespace**, **end-of-file-fixer**, **mixed-line-ending** — file hygiene
-- **check-added-large-files**, **check-merge-conflict**, **check-case-conflict** — safety checks
-
-The `.clang-format` config uses LLVM style with 4-space indent, 120-column limit, right-aligned pointers/references, and C++17 standard.
 
 ## CI/CD
 
-GitHub Actions workflow (`.github/workflows/ci.yml`):
-
-- Builds Release on `ubuntu-22.04`, `macos-14`, and `windows-2022` with all FetchContent dependencies
-- Verifies symbol exports (`clap_entry`, `ARAGetFactory`), RPATH / install name / DLL search path, model deployment
-- Runs `clap-validator` against the built `.clap` (continues on error; may fail without GUI)
-- Validates model round-trip via `python3 python/tools/validate_export.py`
-- Uploads plugin artifacts (`.clap`, `.vst3`, `.so`/`.dylib`/`.dll`, `models/`)
-- Debug build with `BUILD_TESTING=ON` runs CTest on all three platforms
+GitHub Actions (`.github/workflows/ci.yml`) builds Release on `ubuntu-22.04` and
+`windows-2022` (there is **no macOS job**; `CMakePresets.json` defines macOS
+presets, but nothing verifies them), verifies exported symbols and model
+deployment (including that `model.bin` is not an LFS pointer), downloads
+`clap-validator` (advisory — the step tolerates failures), runs CTest on both
+platforms, and uploads the CLAP plugin, ARA library, VST3 bundle and deployed
+weights as artifacts.
 
 ## License
 
-Apache 2.0. See `LICENSE`.
+Apache 2.0. See [`LICENSE`](LICENSE).
 
 ## Roadmap
 
 | Phase | What | Status |
-|-------|------|--------|
-| Current | R=4 time-domain engine + CLAP/VST3/ARA | ✅ Shipping |
-| Next | C++ engine rewrite to R=8 PerTrackProcessor (spectral, complex poles) | 🟡 Planned (see `docs/MAMBA3_MIGRATION_PLAN.md`) |
-| Phase 2 | Per-effect model variants (Saturator, Compressor, Denoiser) | 🟡 Planned |
-| Phase 3 | CLAP text/audio encoders, preset system | 🟡 Planned |
-| Phase 4 | ARA real-time conditioning, content reader | 🟡 Planned |
+|---|---|---|
+| Now | R=4 engine, tests, fixtures, compute-budget guard | ✅ |
+| Next (P1) | Fix numerical drift; cut per-sample cost ~12–24x so a stereo instance fits a CPU budget | 🔴 blocking for real-time |
+| P2 | One flagship trained effect + DAW demo + CPU numbers | 🔴 not started |
+| P3 | R=8 PerTrackProcessor engine rewrite (H3) | 🔴 not started |
+| P4 | Per-effect variants, CLAP text/audio encoders, presets, installers | 🔴 not started |
