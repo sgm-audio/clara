@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Validate PerTrackProcessor flat binary weight file (Version 3).
+"""Validate a flat-binary weight file (Version 2 — the shipping R=4 engine).
 
-Reads a .bin file, checks header magic/version/dimensions,
-round-trips all arrays, and optionally compares against
-reference_forward.py random weights with the same seed.
+Reads the 64-byte header, checks magic/version/dimensions, reads every weight
+array back and checks it is finite, and verifies the file size matches the
+declared payload.
+
+The array-layout table also carries the V3 (R=8 PerTrackProcessor) layout for
+the next milestone, but the header check accepts version 2 only, so V3 files
+currently fail validation by design.
 
 Usage:
     python python/tools/validate_export.py models/model.bin
-    python python/tools/validate_export.py models/model.bin --seed 42
 """
 
 import argparse
