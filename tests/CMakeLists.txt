@@ -102,7 +102,13 @@ target_include_directories(test_clap_plugin PRIVATE
 )
 target_link_libraries(test_clap_plugin PRIVATE Mamba3Core)
 if(UNIX AND NOT APPLE)
-    target_link_libraries(test_clap_plugin PRIVATE pthread dl X11)
+    if(X11_FOUND)
+        target_link_libraries(test_clap_plugin PRIVATE pthread dl X11)
+    else()
+        # Mirrors the plugin target: no native GUI, no X11 dependency
+        target_compile_definitions(test_clap_plugin PRIVATE CLARA_NO_NATIVE_GUI=1)
+        target_link_libraries(test_clap_plugin PRIVATE pthread dl)
+    endif()
 endif()
 target_compile_definitions(test_clap_plugin PRIVATE
     TEST_MODEL_DIR="${CMAKE_SOURCE_DIR}/models"

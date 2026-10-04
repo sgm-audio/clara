@@ -151,7 +151,17 @@ target_link_libraries(MambaSuiteClap
     Mamba3Core
 )
 if(UNIX AND NOT APPLE)
-    target_link_libraries(MambaSuiteClap PRIVATE pthread dl X11)
+    # The native framebuffer editor talks to Xlib directly. When the X11 headers
+    # are missing (headless containers, MinGW cross-compiles), build the plugin
+    # without it instead of failing the build.
+    find_package(X11 QUIET)
+    if(X11_FOUND)
+        target_link_libraries(MambaSuiteClap PRIVATE pthread dl X11)
+    else()
+        message(STATUS "CLARA: X11 not found — building MambaSuiteClap without the native GUI")
+        target_compile_definitions(MambaSuiteClap PRIVATE CLARA_NO_NATIVE_GUI=1)
+        target_link_libraries(MambaSuiteClap PRIVATE pthread dl)
+    endif()
 endif()
 
 # --- ARA Plugin ---

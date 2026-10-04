@@ -9,6 +9,14 @@
 // Mouse input: click+drag on slider tracks to change param values.
 // Timer-based redraw for level meter updates.
 
+// CLARA_NO_NATIVE_GUI: build without the framebuffer editor. Linux needs the X11
+// development headers for it; Windows uses GDI and needs no extra dependency.
+// Defined automatically by CMake when X11 is unavailable (see CMakeLists.txt),
+// which is what lets headless containers and MinGW cross-compiles build the CLAP
+// plugin. The plugin then advertises no GUI extension and hosts show their
+// generic editor.
+#if !defined(CLARA_NO_NATIVE_GUI)
+
 #include "clap/MambaClapPlugin.hpp"
 
 #include <clap/ext/gui.h>
@@ -489,3 +497,5 @@ static const clap_plugin_gui_t mamba_native_gui_extension = {
 };
 
 } // namespace clara::mamba3
+
+#endif // !CLARA_NO_NATIVE_GUI

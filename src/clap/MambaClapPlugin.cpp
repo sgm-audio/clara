@@ -6,7 +6,12 @@
 
 #include "core/ConditioningGenerator.hpp"
 #include "core/Platform.hpp"
-#include "gui/MambaNativeGUI.hpp"
+#if defined(CLARA_NO_NATIVE_GUI)
+// Native editor compiled out (no X11 headers); the plugin still ships the
+// webview GUI and works with the host's generic editor.
+#else
+#    include "gui/MambaNativeGUI.hpp"
+#endif
 #include "gui/MambaWebviewGUI.hpp"
 
 #include <clap/ext/audio-ports.h>
@@ -479,7 +484,9 @@ const void *mamba_get_extension(const clap_plugin_t *plugin, const char *extensi
     if (strcmp(extensionId, CLAP_EXT_AUDIO_PORTS) == 0) return &mamba_audio_ports_extension;
     if (strcmp(extensionId, CLAP_EXT_RENDER) == 0) return &mamba_render_extension;
     if (strcmp(extensionId, CLAP_EXT_TAIL) == 0) return &mamba_tail_extension;
+#if !defined(CLARA_NO_NATIVE_GUI)
     if (strcmp(extensionId, CLAP_EXT_GUI) == 0) return &mamba_native_gui_extension;
+#endif
     if (strcmp(extensionId, CLAP_EXT_WEBVIEW) == 0) {
         // Store host webview extension for sending messages
         auto *state = (MambaPluginState *) plugin->plugin_data;
