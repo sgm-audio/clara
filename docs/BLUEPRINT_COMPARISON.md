@@ -1,5 +1,14 @@
 # CLARA vs. the two blueprints — a verification-based comparison
 
+<!-- STATUS: historical -->
+> **Read the addendum at the end of this file first if you want the current
+> state.** Sections 1–7 are the 2026-07-09 verification snapshot and describe
+> the *pre-fix* tree (LFS-pointer weights, failing tests, the old 0.379 ms/sample
+> engine); the addendum records what was fixed on 2026-10-04 and which estimates
+> the measurements corrected. This file is kept as the audit trail, not as
+> current documentation. Current state: [`README.md`](../README.md) status table,
+> open work: [`docs/TODO.md`](TODO.md).
+
 **Repo:** `sgm-audio/clara` @ `7a175b8` (2026-07-09, `main`) · **Review date:** 2026-10-04
 **Method:** not a doc read — I built the project, ran its tests, regenerated its model fixtures, benchmarked the inference core, and queried GitHub for the live CI/LFS state.
 

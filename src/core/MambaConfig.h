@@ -65,7 +65,13 @@ static_assert(COND_DAW_SIZE + COND_CLAP_SIZE + COND_KNOB_SIZE + COND_RESERVED_SI
 
 // ── Block Processing ──────────────────────────────────────────────
 
-constexpr size_t MAX_CHUNK_SIZE = 64;            // Samples per SSM sub-block (model semantics — must match training)
+// NOTE (2026-10-04 review): nothing in this repository consumes this constant
+// except the static_assert below — the engine chunks at PROCESS_CHUNK_SIZE and
+// the recurrence is per-sample, so block size does not change the model, and no
+// training or export code reads MAX_CHUNK_SIZE either. The "must match
+// training" note that used to be here is not backed by code; treat it as
+// unverified until the training side is checked. STATUS: research.
+constexpr size_t MAX_CHUNK_SIZE = 64;            // Legacy sub-block size (unused by the audio path)
 constexpr size_t MAX_BLOCK_SIZE = 512;           // Max samples per processBlock() call
 constexpr size_t SSM_STATE_NORM_INTERVAL = 4096; // Periodic state re-normalization
 

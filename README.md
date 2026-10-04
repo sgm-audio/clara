@@ -31,7 +31,8 @@ real time and the shipped weights are an untrained fixture.**
 | GUI | ✅ native `CLAP_EXT_GUI` (X11/Win32 framebuffer) + `CLAP_EXT_WEBVIEW`; auto-disabled when X11 headers are absent |
 | ARA real-time conditioning | 🟡 scaffolding only — no host content reader |
 | macOS / Windows builds | 🟡 presets defined; not verified in this environment |
-| CI | 🟡 clap-validator download fixed; the CLAP plugin now builds without X11, so the Windows job no longer needs a cross-GUI; needs a run to confirm green |
+| CI | 🔴 **not running**: every run since 2026-10-04 ends in `startup_failure` with 0 jobs (workflow parses and is registered active, so this is account/repo-level, not a YAML error) — see *CI/CD* below |
+| VST3 in a host | 🔴 **broken by name mismatch**: the wrapper looks for `MambaSuite.clap`, the build produces `MambaSuiteClap.clap` — reproduced, see *Running* |
 
 ## Performance (measured, not estimated)
 
@@ -68,18 +69,28 @@ less saturating state) is tracked in [`docs/TODO.md`](docs/TODO.md).
 
 Dependencies are fetched by CMake `FetchContent`: CLAP SDK (`29ffcc27`), ARA SDK
 (`2.3.0`), clap-wrapper (`v0.9.1`), and — for the VST3 target — the Steinberg
-VST3 SDK (`v3.7.6_build_18`). Only a C++20 toolchain, CMake ≥ 3.14, `git` and a
-network connection to GitHub are required:
+VST3 SDK (`v3.7.6_build_18`). Only a C++17 toolchain, CMake ≥ 3.14, `git` and a
+network connection to GitHub are required (the project is built with
+`CMAKE_CXX_STANDARD 17`; the VST3 SDK is the only dependency that would accept
+a newer standard):
 
 ```bash
 sudo apt-get install -y cmake g++                 # Debian/Ubuntu
 
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel                    # CLAP + ARA + tests
+cmake --build build --parallel                    # CLAP + ARA (+ VST3 wrapper)
 ```
 
-> With CMake 4.x, pass `-DCMAKE_POLICY_VERSION_MINIMUM=3.5`: clap-wrapper's
-> bundled dependencies still declare `cmake_minimum_required` values below 3.5.
+Tests are opt-in: add `-DBUILD_TESTING=ON` to the configure line, otherwise no
+test targets exist and `build/tests/` is empty.
+
+> CI passes `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` on every configure. With the
+> pinned dependency revisions it is **not required** — verified 2026-10-04: a
+> fresh configure (all four dependencies fetched) succeeds on CMake 4.4.3
+> without it, because clap-wrapper v0.9.1 builds the VST3 SDK from a source glob
+> rather than `add_subdirectory`, so the SDK's
+> `cmake_minimum_required(VERSION 3.4.3)` files are never processed. Passing it
+> is harmless, and it protects against older clap-wrapper/dependency pins.
 
 Two build knobs matter on restricted machines:
 
@@ -113,8 +124,26 @@ cmake --build build --parallel && ctest --test-dir build --output-on-failure
 ```
 
 Install (default prefix `/usr/local`), cross-platform presets, and the `clara_test`
-aggregate target work as before: `cmake --preset macos-release`,
-`cmake --install build --component clap`, `cmake --build build --target clara_test`.
+aggregate target: `cmake --preset macos-release`, `cmake --build build --target clara_test`.
+
+<!-- STATUS: in progress — the install rules are broken, see below -->
+Two of the three install components do not do what this section used to claim
+(verified 2026-10-04 on a clean build):
+
+- `cmake --install build --component clap` **fails** (exit 1). The bare
+  `lib/clap/MambaSuiteClap.clap` file that is installed "for hosts that scan bare
+  .clap files" collides with the `lib/clap/MambaSuiteClap.clap/` bundle
+  directory; the file ends up inside the bundle and the models install then dies
+  with `cannot make directory ... Permission denied`, leaving a corrupt tree.
+- `cmake --install build --component vst3` writes the weights to
+  `<build dir>/plugins/MambaSuite.vst3/Contents/Resources/models` — inside the
+  build tree, and *not* into the bundle the build actually produces
+  (`<build dir>/Release/MambaSuite.vst3/`). The `--prefix` is ignored because
+  that `install(DIRECTORY)` uses an absolute `DESTINATION`.
+
+`cmake --install build --component ara` works and deploys the weights next to
+the ARA library. Use `cmake --install build --prefix <dir>` without a component
+for the ARA path, or copy `build/plugins/models/` by hand.
 
 Outputs:
 
@@ -130,18 +159,35 @@ Outputs:
 **Ableton Live (VST3):** copy `build/Release/MambaSuite.vst3` to your VST3 folder
 (`~/.vst3/`, `~/Library/Audio/Plug-Ins/VST3/`, `C:\Program Files\Common Files\VST3\`).
 
+> **The VST3 wrapper cannot find the plugin as built.** clap-wrapper resolves a
+> CLAP library whose *file name* matches the wrapper binary: `MambaSuite.so`
+> makes it search for `MambaSuite.clap` in the CLAP search paths
+> (`~/.clap`, `/usr/lib/clap`, `CLAP_PATH`), while the build produces
+> `MambaSuiteClap.clap`. Reproduced 2026-10-04: calling `GetPluginFactory()` on
+> the built bundle returns `nullptr` when only `MambaSuiteClap.clap` exists, and
+> a working factory as soon as the same binary is visible as `MambaSuite.clap`.
+> Until the naming is reconciled, the VST3 path needs a manual copy (e.g.
+> `cp build/plugins/MambaSuiteClap.clap ~/.clap/MambaSuite.clap`). Tracked in
+> [`docs/TODO.md`](docs/TODO.md).
+
 **CLAP hosts (Bitwig, Carla, clap-host):** load `build/plugins/MambaSuiteClap.clap`.
 
-The weight file must sit in `models/` next to the plugin binary; the build
-deploys it for the CLAP target. The VST3 bundle does not embed it yet — copy
-`build/plugins/models/` next to the `.so` inside the bundle.
+The weight file must sit in `models/` **next to the `.clap` binary that is
+loaded** (the plugin resolves its own module path with `dladdr`, so it is the
+`.clap` location that matters, not the host's). The build deploys it for the
+CLAP target. For the VST3 wrapper that means: put the `.clap` the wrapper will
+load somewhere in the CLAP search path, with `models/` beside it. Verified
+2026-10-04 with a minimal host harness: without `models/` the plugin's `init()`
+returns false; with it, `process()` produces finite audio.
 
 Each plugin exposes three parameters: bypass (stepped, click-free 50 ms
 crossfade), wet/dry, intensity.
 
 > **No DAW load test has been performed on this codebase.** The engine is
-> verified by unit tests and by direct benchmark, but nobody has confirmed audio
-> output inside a running host.
+> verified by unit tests, by direct benchmark, and (2026-10-04) by a minimal
+> CLAP host harness that dlopens `MambaSuiteClap.clap`, creates and activates
+> the plugin and processes 512 frames — `init()` succeeds and the output is
+> finite. Nobody has confirmed audio output inside a running DAW.
 
 ## Model
 
@@ -247,6 +293,21 @@ deployment (including that `model.bin` is not an LFS pointer), downloads
 `clap-validator` (advisory — the step tolerates failures), runs CTest on both
 platforms, and uploads the CLAP plugin, ARA library, VST3 bundle and deployed
 weights as artifacts.
+
+<!-- STATUS: in progress -->
+**None of that has run since 2026-10-04.** Every workflow run created on that
+date and later — the three pushes, both `pull_request` runs, and the scheduled
+CodeQL runs — completed with conclusion `startup_failure`, zero jobs and
+`path=BuildFailed`. The last run that actually executed was 2026-07-10
+(`workflow_dispatch`, `path=.github/workflows/ci.yml`). The file itself is not
+the problem: it parses as YAML, `gh api .../actions/workflows` lists `CI` as
+`active` at `.github/workflows/ci.yml`, and the working tree copy is byte-identical
+to `main`. A `startup_failure` with no jobs on *all* workflows at once points at
+the repository/account level — Actions spending limit or billing, or Actions
+disabled for the repo — which only someone with admin rights can check
+(Settings → Billing → Actions, and Settings → Actions → General). Until that is
+resolved the CI claims in `CHANGELOG.md` v0.1.1/v0.1.2 (clap-validator pin,
+model checks, X11-free build) are written but **unverified on CI**.
 
 ## License
 

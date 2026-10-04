@@ -37,9 +37,11 @@ and `MambaSuiteARA.so`.
   Tile size is a compile-time knob (`CLARA_GEMM_BJ`/`CLARA_GEMM_BI`, default 4x16).
 - **Invariants to preserve:** zero heap allocations on the audio thread (all
   scratch is engine-owned, allocated once in `init()`); the RoPE angle state is
-  advanced *before* the rotation (matching `python/reference_forward.py`);
-  `MAX_CHUNK_SIZE` (64) is model semantics and must match training — do not
-  confuse it with `PROCESS_CHUNK_SIZE` (128), which is performance only.
+  advanced *before* the rotation (matching `python/reference_forward.py`).
+  `MAX_CHUNK_SIZE` (64) is **not** used by the audio path — only by a
+  `static_assert` — so do not treat it as model semantics; the engine chunks at
+  `PROCESS_CHUNK_SIZE` (128), which is performance only. STATUS: research — the
+  "must match training" wording that used to be here is unverified.
 - Weights: V2 flat binary, 64-byte header + 13 arrays/layer, validated strictly
   (magic, version, every dimension, exact payload size) before `mmap` pointers are
   handed out. A file that is not exactly the declared size is rejected.
@@ -121,9 +123,17 @@ ctest --test-dir build --output-on-failure
 ./build/tests/test_perf_budget models/model.bin  # compute budget + RTF report
 ```
 
-CI (`.github/workflows/ci.yml`) builds Release + VST3 on three platforms, verifies
-symbols, RPATH and that `model.bin` is not an LFS pointer / truncated file, runs
-clap-validator (pinned asset), and runs CTest.
+CI (`.github/workflows/ci.yml`) builds Release + VST3 on two platforms
+(`ubuntu-22.04`, `windows-2022` — no macOS job), verifies symbols, RPATH and
+that `model.bin` is not an LFS pointer / truncated file, runs clap-validator
+(pinned asset), and runs CTest.
+
+**STATUS: in progress — CI has not run since 2026-10-04.** Every run from that
+date on (including the CodeQL schedules) ends in `startup_failure` with 0 jobs
+and `path=BuildFailed`; the last executed run was 2026-07-10. The workflow file
+parses and is registered active, so the cause is repository/account-level
+(Actions billing/spending limit or Actions disabled) and needs repo-admin
+action. See README → CI/CD.
 
 ## Known gaps
 
