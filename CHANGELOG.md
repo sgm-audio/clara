@@ -31,6 +31,11 @@ environment that permits `git clone` but blocks GitHub *release-asset* downloads
 - The `test` job installed only `cmake` and `g++` and still built the CLAP
   plugin, which used to need `libx11-dev`; that job could not have passed before.
 
+- `clara_test` (the `cmake --build build --target clara_test` convenience target)
+  did not depend on the test executables, so on a clean tree it ran CTest with
+  nothing built: every test reported *Not Run* and the target failed with exit
+  code 8. It now depends on the four tests it runs.
+
 ### Verification
 
 - Fresh clone, clean container, no flags beyond the CMake 4.x policy shim:
