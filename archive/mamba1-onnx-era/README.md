@@ -8,10 +8,10 @@ These files are kept for historical reference only. They describe the deprecated
 
 For the active Mamba-3 implementation, see:
 
-- [`MAMBA3_MIGRATION_PLAN.md`](../../MAMBA3_MIGRATION_PLAN.md) — Complete architecture, model config, C++ engine spec, and product roadmap
+- [`MAMBA3_MIGRATION_PLAN.md`](../../docs/MAMBA3_MIGRATION_PLAN.md) — Complete architecture, model config, C++ engine spec, and product roadmap
 - [`docs/TRAINING.md`](../../docs/TRAINING.md) — Unified Mamba-3 training pipeline
-- [`MI300X_TRAINING_PLAN.md`](../../MI300X_TRAINING_PLAN.md) — Cloud training launch reference
-- [`TRAINING_QUICKSTART.md`](../../TRAINING_QUICKSTART.md) — One-command quick start
+- [`MI300X_TRAINING_PLAN.md`](../old-training-files/MI300X_TRAINING_PLAN.md) — Cloud training launch reference
+- [`TRAINING_QUICKSTART.md`](../../docs/TRAINING_QUICKSTART.md) — One-command quick start
 
 ## Archived Files
 
@@ -83,4 +83,5 @@ For the active Mamba-3 implementation, see:
 
 ## Current Training Script
 
-The only supported training script is [`train_clara_mamba3.py`](../../train_clara_mamba3.py).
+The only supported training script is [`python/training/train_clara.py`](../../python/training/train_clara.py)
+(this section used to point at `train_clara_mamba3.py`, which no longer exists).
