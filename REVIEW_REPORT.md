@@ -1,6 +1,6 @@
 # CLARA — Mamba Audio Suite: end-to-end repository review
 
-**Repository:** `sgm-audio/clara` (private) · **Reviewed revision:** `d6c64fe` + branch `arena/01a105e2-clara` (7 commits, see *Changes Applied*)
+**Repository:** `sgm-audio/clara` (private) · **Reviewed revision:** `d6c64fe` + branch `arena/01a105e2-clara` (10 commits, see *Changes Applied* and *Post-review Follow-up*)
 **Review date:** 2026-10-04 · **Scope:** repository hygiene, documentation accuracy, project scaffolding, code quality, bugs & correctness
 **Method:** read the tree; ran the build, the full test suite and the project's pinned linters before and after every change; reproduced every behavior claim with a minimal harness before writing it down.
 
@@ -27,9 +27,12 @@ the shipping code. What it did find is a repository whose *outside* is less heal
 4. **Documentation drift** away from the code in the README, AGENTS.md and the training docs — including a broken
    one-command setup that referenced a script that does not exist.
 
-Seven commits on this branch fix what is safe to fix (docs, formatters, `.gitignore`, `.editorconfig`, scripts, three localized
-bugs with tests, lint-scope bugs), and record what must be decided by a human (CI root cause, VST3 naming, install components,
-`-ffast-math` policy, repository layout). Build and tests were green at every commit; no behavior was changed silently.
+Ten commits on this branch fix what is safe to fix (docs, formatters, `.gitignore`, `.editorconfig`, scripts, three localized
+bugs with tests, lint-scope bugs), and record what must be decided by a human (CI root cause, `-ffast-math` policy, repository
+layout, the canonical project URL). Build and tests were green at every commit; no behavior was changed silently.
+The VST3 name mismatch and the broken install components — originally escalated rather than applied — were subsequently fixed at
+the maintainer's request and are documented in *Post-review Follow-up*, including the one user-visible rename
+(`MambaSuiteClap.clap` → `MambaSuite.clap`) and the new install-layout regression test.
 
 ---
 
@@ -44,7 +47,7 @@ are listed as High below.
 
 ## Changes Applied
 
-Seven change commits on `arena/01a105e2-clara` (the report and its corrections follow them). Each was verified with a build
+Seven review commits on `arena/01a105e2-clara` (the report and its corrections follow them; the three follow-up commits are listed in *Post-review Follow-up*). Each was verified with a build
 (`cmake --build`, no warnings) and the full suite (`ctest`, 4/4 PASS), and the branch tip was re-verified after the report's
 own corrections: build 0 warnings/errors, `ctest` 4/4 PASS.
 
@@ -99,16 +102,15 @@ Ordered by impact. Each is recorded in `docs/TODO.md` §P1.5 where it is actiona
    at once with zero jobs points to Actions spending limit/billing or Actions disabled for the repo. **Check** Settings →
    Billing → Actions and Settings → Actions → General. Until this is fixed, every CI claim in `CHANGELOG.md` (v0.1.1/v0.1.2:
    validator pin, model checks, X11-free build) is unverified.
-2. **VST3 cannot load the plugin as built (High).** clap-wrapper derives the CLAP file name from the VST3 wrapper's stem
-   (`MambaSuite` → searches `MambaSuite.clap` in `/usr/lib/clap`, `$HOME/.clap`, `$CLAP_PATH`), while the build produces
-   `MambaSuiteClap.clap`. Reproduced: `GetPluginFactory()` returns `nullptr` with only the built name present, and succeeds as
-   soon as the same binary is visible as `MambaSuite.clap`. **Decision needed:** rename the CLAP target/output to
-   `MambaSuite.clap`, or have the VST3 install step place a copy under the expected name. Not applied here because the artifact
-   name is a published interface.
-3. **`cmake --install` components are broken (Medium).** `--component clap` exits 1 (the bare `.clap` file installed for hosts
-   that scan loose files collides with the `.clap` *bundle* directory and leaves a self-nested tree);
-   `--component vst3` ignores `--prefix` (absolute `DESTINATION`) and writes into the build tree; `--component ara` works.
-   Fixing this changes install layout, so it is proposed, not applied.
+2. ~~**VST3 cannot load the plugin as built (High).**~~ **RESOLVED 2026-10-04 after maintainer sign-off** — the CLAP output is
+   renamed `MambaSuite.clap` and one cache variable (`CLAP_WRAPPER_OUTPUT_NAME`) now names both artefacts, so the stems cannot
+   drift. Re-verified with the `dlopen` probe (`GetPluginFactory()` non-null from `~/.clap/MambaSuite.clap`). See
+   *Post-review follow-up*. **The plugin file name is now a user-visible change: `MambaSuiteClap.clap` → `MambaSuite.clap`.**
+3. ~~**`cmake --install` components are broken (Medium).**~~ **RESOLVED 2026-10-04 after maintainer sign-off** — all three
+   components exit 0 and honour `--prefix`; on Linux the CLAP is a bare file (the bundle/bare-name collision was the cause of
+   the exit 1), and `--component vst3` now installs the module itself to `lib/vst3/MambaSuite.vst3/Contents/<arch>/`. Guarded by
+   the new `test_install_layout` CTest (findings 3.12, 5.9). A latent `COMPONENT` scoping bug in the ARA rule was found and fixed
+   in the same pass.
 4. **`-ffast-math` policy (Medium).** The flag is a deliberate performance choice, but it makes all `std::isfinite`/`std::isnan`
    folds unsafe. The code now uses `mambaIsFinite()`; the team should decide whether to keep `-ffast-math` everywhere or restrict
    it to the engine target (`-ffast-math` on a plugin that inspects host input for validity is a footgun).
@@ -173,7 +175,7 @@ documents the lost LFS blobs; `docs/TODO.md` carries measured numbers rather tha
 | # | Finding | Severity | Status |
 |---|---|---|---|
 | 2.1 | README claimed CI works; every run since 2026-10-04 is `startup_failure` with 0 jobs | High | **fixed** + escalated |
-| 2.2 | README's "Running" section claimed the VST3 loads from the bundle; the wrapper cannot find `MambaSuiteClap.clap` | High | **fixed** (documented) + escalated |
+| 2.2 | README's "Running" section claimed the VST3 loads from the bundle; the wrapper cannot find `MambaSuiteClap.clap` | High | **fixed** (renamed in the follow-up — see below) |
 | 2.3 | README claimed tests build with the plain build; they are opt-in (`-DBUILD_TESTING=ON`) | Medium | **fixed** |
 | 2.4 | README's install instructions did not match reality (`--component clap` exits 1, `--component vst3` ignores `--prefix`) | Medium | **fixed** (documented) |
 | 2.5 | README said "C++20 toolchain"; `CMAKE_CXX_STANDARD` is 17 | Low | **fixed** |
@@ -186,7 +188,7 @@ documents the lost LFS blobs; `docs/TODO.md` carries measured numbers rather tha
 | 2.12 | `docs/adr/ADR-001-…md` had a broken relative link to `MAMBA3_MIGRATION_PLAN.md` | Low | **fixed** |
 | 2.13 | `python/tools/validate_export.py` docstring said "Version 3"; `EXPECTED_VERSION = 2` | Low | **fixed** |
 | 2.14 | `tests/test_mamba3.cpp` comment said the fixture agreement is `~1e-6`; the test prints `1.5e-3` | Low | **fixed** |
-| 2.15 | Project URL is inconsistent across the tree (`scottmill306/CLARA` in `Platform.hpp:6` and the incubator checklist vs `SGM-Studios/clara` badge vs `sgm-studios/clara` GitHub homepage vs actual `sgm-audio/clara` origin). The anonymous-404 badge and the third-party repo reference cannot be verified from this token | Medium | research |
+| 2.15 | Project URL is inconsistent across the tree (`scottmill306/CLARA` in `Platform.hpp:6` and the incubator checklist vs `SGM-Studios/clara` badge vs `sgm-studios/clara` GitHub homepage vs actual `sgm-audio/clara` origin). The badge, the incubator checklist and the `TRAINING.md` `curl \| bash` URL were corrected to `sgm-audio/clara` in the follow-up; `MAMBA_PROJECT_URL` in `src/core/Platform.hpp:8` still says `scottmill306/CLARA` and **is proposed, not changed** — it is emitted into the plugin descriptor (`mamba_plugin_info.url`), i.e. user-visible metadata, and the maintainer should pick the canonical URL before the repo goes public | Medium | in progress |
 | 2.16 | Broken relative links: five in total — four in `archive/mamba1-onnx-era/README.md` (`MAMBA3_MIGRATION_PLAN.md`, `MI300X_TRAINING_PLAN.md`, `TRAINING_QUICKSTART.md`, a `train_clara_mamba3.py` that no longer exists) and one in ADR-001. All five now resolve. **Correction to an earlier intermediate count of nine:** the four `](x)` "links" in `docs/CLARA_OVERHAUL_PLAN.md` were a regex artifact — they are `self.conv_stem[0](x)` expressions inside a Python code block, not markdown. A code-block-aware scan of all 55 tracked markdown files finds **0 broken relative links** after these fixes (26 relative links checked; the rest are absolute/anchor URLs or code samples) | Low | **fixed** |
 | 2.17 | README's "21 checks" figure was verified correct; no change needed | Info | fixed (verified) |
 
@@ -209,6 +211,8 @@ pre-commit pins clang-format, black and ruff; `.clang-format` and `ruff.toml` pr
 | 3.9 | `tests/CMakeLists.txt` had no `TIMEOUT` on `test_mamba3`; the sibling perf test did | Low | **fixed** |
 | 3.10 | `clap-validator` is advisory in CI (step tolerates failure) and unavailable here; noted, not a defect | Info | research |
 | 3.11 | `CMakePresets.json` `windows-msvc-release` sets `CMAKE_CXX_STANDARD` without `CMAKE_BUILD_TYPE`/multi-config handling — untestable in this environment | Low | research |
+| 3.12 | No regression guard for the install layout or the CLAP/VST3 name pairing, which is why the breakage survived | Medium | **fixed** — new `test_install_layout` CTest (installs every component into a scratch prefix, checks exit codes, `--prefix` honouring, the name pairing and `models/` adjacency; negative-controlled against a scratch build configured with the old name) |
+| 3.13 | A full `cmake --install` also drops the fetched CLAP SDK's headers and CMake package files under `include/clap/` and `lib/cmake/clap/` (the SDK's own install rules, not CLARA's) | Low | research (documented in README) |
 
 ### 4. Code quality
 
@@ -245,20 +249,71 @@ weight loader rejects size mismatches; the plugin's state format is versioned an
 | 5.6 | LayerNorm uses gamma=1/beta=0 with no weights loaded; the training script documents the same choice (`train_local_radeon.py:382,409`), so this is intentional, but worth a code comment near `WeightLoader` since the export carries no LN arrays | Low | research (documented) |
 | 5.7 | Float32 drift (2.0 % of peak in 12 ms, 7.3 % in 93 ms vs a float64 oracle) and the ~12× real-time shortfall are known, measured, and tracked in `docs/TODO.md` P1 — not new findings | High | in progress (tracked upstream) |
 | 5.8 | The repo has never been loaded in a DAW; verified here only with a minimal CLAP host harness (init OK, finite output) | Medium | research |
+| 5.9 | `COMPONENT` in `install(TARGETS …)` binds to the artefact type it follows, so the ARA rule's `COMPONENT ara` applied to `LIBRARY` only — on Windows the `.dll` would have installed under the default component | Low | **fixed** (both TARGETS rules repeat `COMPONENT` per artefact type) |
 
 ---
+
+## Post-review Follow-up (2026-10-04, maintainer-requested)
+
+After the review was delivered, the maintainer asked for two changes to be applied rather than proposed — the VST3 name
+reconciliation (Finding 2.2 / decision 2) and the install-component repair (decision 3) — and to prepare for the repository going
+public. Work done, all on `arena/01a105e2-clara`:
+
+**1. The CLAP output is renamed `MambaSuiteClap.clap` → `MambaSuite.clap`.**
+
+One cache variable, `CLAP_WRAPPER_OUTPUT_NAME` (default `MambaSuite`), now sets `OUTPUT_NAME` on the CLAP target *and* names the
+VST3, so the two stems cannot drift apart again — the invariant clap-wrapper depends on
+(`wrapasvst3_entry.cpp`: `plugname = os::getBinaryName() + ".clap"`). The CMake *target* is still `MambaSuiteClap`; only the file
+name changed. `CLAP_WRAPPER_OUTPUT_NAME` was previously declared next to the VST3 section and is now declared above the CLAP
+target, where it takes effect.
+
+Verified three ways:
+
+| Probe | Old name only | New name |
+|---|---|---|
+| `dlopen` + `GetPluginFactory()` (VST3 module, `~/.clap` populated) | `nullptr` | factory created — `Mamba-3 SSM Processor`, vendor `Elite DSP`, id `com.mamba.audio.suite` |
+| CLAP host harness → `plugin->init()` with `models/` beside the `.clap` | — | `true`; `false` without `models/` (control), so weight resolution is still load-bearing |
+| `test_install_layout` CTest | — | PASS, and FAILS when pointed at a scratch build configured with the old name (negative control) |
+
+This is a **user-visible change**: hosts that loaded `build/plugins/MambaSuiteClap.clap` by path must use
+`build/plugins/MambaSuite.clap`. It is stated in `CHANGELOG.md` under *Unreleased* and in the README.
+
+**2. The three `cmake --install` components are repaired.**
+
+| Component | Before | After |
+|---|---|---|
+| `clap` | exit 1 — bare `.clap` file installed into the same path as the `.clap/` bundle directory; self-nested tree, models install then died with `Permission denied` | exit 0 → `lib/clap/MambaSuite.clap` + `lib/clap/models/` on Linux; bundle layout on macOS/Windows |
+| `vst3` | exit 0 but wrote only weights to an absolute path in the build tree, ignoring `--prefix`; the module was never installed | exit 0 → `lib/vst3/MambaSuite.vst3/Contents/<arch>/` |
+| `ara` | exit 0 | exit 0 (unchanged behaviour; `COMPONENT` scoping bug fixed, see 5.9) |
+
+The Linux CLAP is now a bare DSO, not a bundle: `clap/include/clap/entry.h` says host search paths are scanned for "files
+and/or bundles as appropriate in your OS", a bare file and a same-named bundle directory cannot coexist, and that collision was the
+root cause of the exit 1. macOS/Windows keep the bundle layout, which is their convention.
+
+**3. New regression guard: `test_install_layout`** (`tests/install_check.cmake`, registered in `tests/CMakeLists.txt`). It installs
+every component into a scratch prefix, then asserts: all installs exit 0; the install honoured `--prefix`; exactly one `.clap`
+installed; its name equals `CLAP_WRAPPER_OUTPUT_NAME`; `models/model.bin` sits beside it; and, when a VST3 was built, the module
+installed and its stem matches. It SKIPs (exit 77) when the tree is not built, and it is multi-config aware.
+
+**4. Repository-going-public prerequisites touched.** README CI badge and the stale repository URLs now point at
+`sgm-audio/clara` (the badge previously pointed at `SGM-Studios/clara`, which 404s). `docs/TRAINING.md`'s `curl | bash` one-liner
+pointed at a *different account* and a **nonexistent script**; it now uses the archived launcher that actually exists.
+`docs/INCUBATOR_CHECKLIST.md` also claimed "three platforms" for CI (it is two — no macOS job). Remaining, and deliberately not
+changed: `MAMBA_PROJECT_URL` in `src/core/Platform.hpp:8` (see Finding 2.15) — it is emitted into the plugin descriptor shown by
+hosts, so the maintainer should decide the canonical URL. Note also that when the repository is made public, the anonymous CI
+badge will start resolving only if the badge URL matches the final repository path.
 
 ## Recommended Next Steps
 
 1. **Repo admin: fix CI.** Check Settings → Billing → Actions and Settings → Actions → General; one run of the existing workflow
    on `main` will re-validate everything else in this report. Nothing else in the project is verifiable until that happens.
-2. **Decide the VST3 naming** (rename the CLAP output to `MambaSuite.clap`, or install a copy under that name). This is a
-   one-line build change plus a re-test with VST3 host tooling; it is the single largest capability gap, since the VST3 is the
-   path most DAWs will take.
+2. ~~**Decide the VST3 naming.**~~ **Done** — `MambaSuite.clap` is now the built name and the pairing is guarded by
+   `test_install_layout`. What remains is the one thing no local harness can prove: a load inside a real DAW (P2 in
+   `docs/TODO.md`).
 3. **Merge this branch's fixes** (`4d1f2a3` in particular) once CI can run: the clamping, `mambaIsFinite` and ARA path fixes are
    small, tested, and independent of any product decision.
-4. **Repair the install components** (`--component clap` exit 1; `--component vst3` ignoring `--prefix`) as a follow-up to the
-   naming decision, and add a smoke test that runs `cmake --install` into a scratch prefix.
+4. ~~**Repair the install components.**~~ **Done** — see *Post-review Follow-up*; all three components install prefix-relative and
+   the new `test_install_layout` CTest would catch a regression.
 5. **Then resume the P1 work already in `docs/TODO.md`**: shrink the model (~12–24× needed), fix the float32 drift, train and
    ship a real model. The training scaffolding this review repaired (`launch_train.sh`, `bootstrap_local.sh`,
    `TRAINING_QUICKSTART.md`) is what makes that reachable.
@@ -268,6 +323,6 @@ weight loader rejects size mismatches; the plugin's state format is versioned an
 
 ---
 
-*Every claim above was checked against `d6c64fe` + the seven commits on `arena/01a105e2-clara`. Claims that could not be verified
+*Every claim above was checked against `d6c64fe` + the ten commits on `arena/01a105e2-clara`. Claims that could not be verified
 in this environment are explicitly marked "research". Reproductions used minimal local harnesses (a `dlopen` VST3 factory probe
 and a CLAP host that creates/activates/processes a plugin); they are throwaway and deliberately not committed.*
