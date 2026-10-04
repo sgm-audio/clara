@@ -114,6 +114,33 @@ static int test_atomic_defaults() {
     return 0;
 }
 
+// The ARA playback renderer must load weights relative to the ARA library, not
+// relative to the host's working directory: passing nullptr to
+// mambaResolveModulePath() yields the "./models/model.bin" stub, which is
+// resolved against wherever the host happens to run from.
+static int test_ara_model_path() {
+    const std::string path = mambaAraModelPath();
+    const std::string stub = mambaResolveModulePath(nullptr, "model.bin");
+
+    TEST_ASSERT(!path.empty(), "ARA model path is not empty");
+    TEST_ASSERT(path != stub, "ARA model path is not the './models/model.bin' stub");
+    TEST_ASSERT(path.size() > stub.size(), "ARA model path was resolved from the module location");
+    TEST_ASSERT(path.find("models/model.bin") != std::string::npos ||
+                    path.find("models\\model.bin") != std::string::npos,
+                "ARA model path ends in models/model.bin");
+    // NOTE: the prefix comes from the *loaded* module path, which dladdr reports
+    // exactly as the process was invoked — absolute under ctest, possibly
+    // relative ("./build/tests/…") when run by hand. So the check is not "is it
+    // absolute" but "is there a real module directory before models/": the
+    // unresolved stub is exactly "./models/model.bin", whose prefix is 2 chars.
+    const size_t prefixLen = path.find("models");
+    TEST_ASSERT(prefixLen != std::string::npos && prefixLen > 2,
+                "ARA model path carries a module-directory prefix (not the './' stub)");
+
+    TEST_PASS("ARA model path resolution");
+    return 0;
+}
+
 static int test_information_url() {
     MambaFactoryConfig config;
     const char *url = config.getInformationURL();
@@ -144,6 +171,9 @@ int main() {
 
     std::printf("Test: information URL\n");
     failures += test_information_url();
+
+    std::printf("Test: ARA model path (module-relative, not cwd)\n");
+    failures += test_ara_model_path();
 
     std::printf("\n=== %s ===\n", failures ? "SOME TESTS FAILED" : "ALL TESTS PASSED");
     return failures;

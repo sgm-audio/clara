@@ -6,7 +6,13 @@
 
 #include <atomic>
 #include <memory>
+#include <string>
 #include <vector>
+
+// Path of the weights the ARA engine loads: models/model.bin resolved relative
+// to this ARA library (not the host's working directory). Exposed so the test
+// suite can pin the behavior — see tests/test_ara_controller.cpp.
+std::string mambaAraModelPath();
 
 class MambaPlaybackRenderer : public ARA::PlugIn::PlaybackRenderer {
 public:
