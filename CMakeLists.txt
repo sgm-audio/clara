@@ -321,6 +321,14 @@ if(BUILD_TESTING)
     if(CLARA_BUILD_VST3)
         list(APPEND _clara_test_deps MambaSuite_as_vst3)
     endif()
+    # The test binaries must be in the dependency list: on a clean tree CTest
+    # otherwise has nothing to run and reports every test as "Not Run", which
+    # fails the target with exit code 8.
+    foreach(_t test_mamba3 test_perf_budget test_clap_plugin test_ara_controller)
+        if(TARGET ${_t})
+            list(APPEND _clara_test_deps ${_t})
+        endif()
+    endforeach()
     add_custom_target(clara_test
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
         DEPENDS ${_clara_test_deps}
