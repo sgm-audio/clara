@@ -1,4 +1,58 @@
-# CLARA TODO — Portfolio Audit Remediation
+# CLARA TODO
+
+## 2026-10-04 STATUS — read this first
+
+The phases below are the **historical** 2026-07-02 audit-remediation list. Most of
+Phase 0 and Phase 1 are done; the file was never pruned. Current open work is the
+list immediately below, and the measurements behind it are in
+`docs/BLUEPRINT_COMPARISON.md`.
+
+### P0 — reproducibility ✅ (done 2026-10-04)
+
+- [x] Weights committed to Git, Git LFS removed (`models/README.md` documents the lost oids)
+- [x] `WeightLoader` rejects files whose size does not exactly match the declared payload
+- [x] `test_mamba3` validates fixture sizes before allocating (no more `std::bad_alloc`)
+- [x] CI: pinned clap-validator asset, `libx11-dev`, model-pointer check
+- [x] `test_python_reference` replaces the impossible "bit-exact" comparison
+- [x] README / AGENTS / INCUBATOR_CHECKLIST synced with reality
+
+### P1 — blocking for real time
+
+- [ ] **Shrink the model to fit a CPU budget.** Measured cost is ~1,250% of one
+      core per 48 kHz mono stream (0.262 ms/sample); real time needs < 100% for
+      stereo, so ~12–24x. `in_proj` (1612×128) is 61% of the MACs per sample.
+      Levers: `d_model` 128 → 32–48, `in_proj` width, MIMO rank 4 → 1–2, 6 → 4
+      layers. Kernel tuning is exhausted (1.45x total, and the GEMM is at the
+      CPU's issue limit) — this is a modelling decision, not a code one.
+- [ ] **Fix the float32 drift.** 2.0% of peak divergence vs a float64 oracle within
+      12 ms, 7.3% within 93 ms; peak `|ssm_real|` saturates the 4096-sample clamp.
+      Options: double accumulation in the recurrence, or fix the dynamics so the
+      clamp never fires. Add a drift assertion once it is fixed.
+- [ ] **Trained model.** `models/model.bin` is an untrained fixture. The trained
+      blobs were lost with the LFS budget; retrain and regenerate the reference
+      fixtures (`python/tools/dump_engine_reference.py`).
+
+### P2 — product evidence
+
+- [ ] One flagship effect, trained, with a same-loudness A/B in a real DAW
+- [ ] DAW load test (never performed on this codebase)
+- [ ] CPU% and latency numbers printed by the plugin itself
+- [ ] Presets, installer, manual, demo limitation
+
+### P3 — optional / after P1
+
+- [ ] Vectorize the SSM recurrence by reordering state to `[h][s][d]` (~34% of
+      per-sample cost; the inner loop currently strides and cannot vectorize)
+- [ ] H3: R=8 PerTrackProcessor engine rewrite — **reconcile with P1 first**: at
+      4.26M params it is further from real time than the current 1.66M model
+- [ ] Per-effect variants, CLAP text/audio encoders
+- [ ] macOS/Windows verification
+
+---
+
+## Historical: 2026-07-02 portfolio audit remediation
+
+**Archived context — kept for traceability.** Many boxes below are stale.
 
 **Created:** 2026-07-02 (from comprehensive audit)
 **Architecture:** R=8 PerTrackProcessor (spectral, complex poles, ~4.26M params) — canonical

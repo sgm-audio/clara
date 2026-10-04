@@ -66,8 +66,14 @@ bool WeightLoader::load(const char *filepath) {
 
     mapped_data_ = static_cast<uint8_t *>(data);
 
-    // Read header (first 64 bytes)
+    // Read header (first 64 bytes). Guard the size first: a file smaller than
+    // the header (e.g. an unresolved Git LFS pointer, which is ~130 bytes of
+    // text) must be rejected here rather than read out of bounds.
     static_assert(sizeof(WeightHeader) <= 64, "Header must fit in 64 bytes");
+    if (mapped_size_ < sizeof(WeightHeader)) {
+        unload();
+        return false;
+    }
     std::memcpy(&header_, mapped_data_, sizeof(WeightHeader));
 
     // Validate header
@@ -121,9 +127,13 @@ bool WeightLoader::validate_header() const {
     if (header_.cond_dim != COND_DIM) return false;
     if (header_.in_proj_dim != MAX_IN_PROJ_DIM) return false;
 
-    // Check that weight data fits in the file
+    // The file must contain exactly the weight payload the header declares.
+    // Every dimension is already pinned to the compile-time constants above, so
+    // the payload size is fixed — an exact match means setup_layer_pointers()
+    // can never walk past the end of the mapping.
+    if (header_.weight_data_size != TOTAL_WEIGHT_BYTES) return false;
     size_t expected_size = 64 + header_.weight_data_size;
-    if (mapped_size_ < expected_size) return false;
+    if (mapped_size_ != expected_size) return false;
 
     return true;
 }

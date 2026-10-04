@@ -1,10 +1,17 @@
-// CLARA Mamba-3 SSM Block — Per-sample 8-step pipeline
+// CLARA Mamba-3 SSM Block — 8-step per-sample pipeline + batched entry points
 //
-// Part of Phase 3 of the Mamba-1 → Mamba-3 migration.
-// Bit-exact match target: reference_forward.py ssm_block_forward()
+// Reference implementation: python/reference_forward.py ssm_block_forward()
+// (R=4 time-domain, multi-head MIMO, trapezoidal SSM, RoPE, FiLM).
 //
-// Architecture: Multi-head MIMO R=4, trapezoidal SSM, RoPE, FiLM
-// Reference: MAMBA3_MIGRATION_PLAN.md §C
+// All scratch is either stack-allocated or owned by the caller. No heap
+// allocations on the audio thread.
+//
+// Performance note (2026-10-04): the three projections (FiLM, in_proj,
+// out_proj) are matrix-vector products per sample in the naive formulation,
+// which re-reads the 6.6 MB weight file through the cache once per sample.
+// The *_batch() entry points run them as matrix × chunk GEMMs instead, and
+// prepare_conditioning() hoists the conditioning projections out of the sample
+// loop. The recurrence (steps 2-6) stays per-sample because it is causal.
 
 #pragma once
 
@@ -80,12 +87,55 @@ struct SSMWeights {
     const float *dt_film_proj_w;
 };
 
-// ── SSM Block — Per-sample forward pass ───────────────────────────
+// ── SSM Block ─────────────────────────────────────────────────────
+//
+// Bound to one layer's weights and state via bind(). A block is a thin
+// view over caller-owned memory — it owns nothing but its conditioning cache.
 
 class SSMBlock {
 public:
-    SSMBlock(const SSMWeights &w, SSMState &s) : weights_(w), state_(s) {
+    SSMBlock() = default;
+    SSMBlock(const SSMWeights &w, SSMState &s) {
+        bind(w, s);
     }
+
+    void bind(const SSMWeights &w, SSMState &s) {
+        weights_ = &w;
+        state_ = &s;
+    }
+
+    bool bound() const {
+        return weights_ != nullptr && state_ != nullptr;
+    }
+
+    // ── Conditioning (computed once per chunk, not per sample) ────
+
+    // Evaluate the FiLM and Δ-conditioning projections for `cond`.
+    // cond == nullptr clears the cache (plain passthrough conditioning).
+    void prepare_conditioning(const float *cond);
+
+    // ── Batched entry points (chunk-major) ────────────────────────
+    //
+    // Batch buffers use channel-major layout: element (row, i) is at
+    // row * n_samples + i. Every sample in the chunk shares one conditioning
+    // vector, so FiLM coefficients are identical across the chunk.
+
+    // x[d][i] = x[d][i] * (1 + gamma[d]) + beta[d]   (in place)
+    void film_batch(float *x, size_t n_samples) const;
+
+    // proj[j][i] = sum_d in_proj_w[j][d] * x[d][i]
+    void in_proj_batch(const float *x, size_t n_samples, float *proj) const;
+
+    // Per-sample steps 2-6 for every sample in the chunk.
+    // For sample i: reads proj column i and the FiLM'd embedding u_film column i,
+    // writes y_gated column i plus the two scalar output terms used by step 7.
+    void sample_core_batch(const float *proj, const float *u_film, size_t n_samples, float *y_gated, float *d_skip_scale,
+                           float *mimo_o_sum);
+
+    // out[d][i] = sum_j out_proj_w[d][j] * y_gated[j][i]
+    void out_proj_batch(const float *y_gated, size_t n_samples, float *out) const;
+
+    // ── Single-sample path (kept for tests and reference comparison) ──
 
     // Process one sample through the SSM layer.
     // input:  [D_MODEL] — embedding from previous layer (or input)
@@ -93,37 +143,44 @@ public:
     // cond:   [COND_DIM] — conditioning vector (nullptr = skip FiLM)
     void process_sample(const float *input, float *output, const float *cond = nullptr);
 
-    // Process a block of samples (up to MAX_CHUNK_SIZE).
+    // Process a block of samples (up to MAX_CHUNK_SIZE). Not used by the
+    // engine's hot path — SsmInferenceCore drives the batched entry points.
     void process_block(const float *input, float *output, size_t n_samples, const float *cond = nullptr);
 
 private:
-    const SSMWeights &weights_;
-    SSMState &state_;
+    const SSMWeights *weights_ = nullptr;
+    SSMState *state_ = nullptr;
 
-    // Scratch buffers (stack-allocated inside process_sample)
-    // — declared here for alignment, used in process_sample
+    // Conditioning cache — evaluated once per chunk in prepare_conditioning()
+    float film_gamma_[MAX_D_MODEL] = {};
+    float film_beta_[MAX_D_MODEL] = {};
+    float dt_cond_[2 * MAX_NHEADS] = {};
+    bool has_cond_ = false;
 
-    // Step 0: FiLM conditioning
-    void step_film(const float *u, float *u_film, const float *cond);
+    // Step 0: FiLM conditioning using the cached coefficients
+    void step_film(const float *u, float *u_film) const;
 
     // Step 1: Fused in_proj — single matvec, then split
-    void step_in_proj(const float *u_film, float *proj);
+    void step_in_proj(const float *u_film, float *proj) const;
 
     // Step 2: A and Δ preprocessing (softplus, trapezoidal)
-    void step_dt_A(const float *dd_dt, const float *dd_A, const float *cond, float *DT_t, float *A_t);
+    void step_dt_A(const float *dd_dt, const float *dd_A, float *DT_t, float *A_t) const;
 
-    // Steps 3+4: RMSNorm + RoPE on B and C
-    void step_norm_rope(const float *B, const float *C, float *B_rot, float *C_rot);
+    // Steps 3+4: bias + norm scaling + RoPE on B and C
+    void step_norm_rope(const float *B, const float *C, const float *angles_raw, float *B_rot, float *C_rot);
 
     // Step 5: Multi-head MIMO SSM recurrence (trapezoidal)
     void step_ssm_recurrence(const float *x_h, const float *B_rot, const float *C_rot, const float *DT_t,
                              const float *A_t, float *y_head);
 
     // Step 6: MIMO z-gating (SiLU)
-    void step_z_gating(const float *z, const float *y_head, float *y_gated);
+    void step_z_gating(const float *z, const float *y_head, float *y_gated) const;
 
-    // Step 7: Output projection + D skip + residual
-    void step_output(const float *y_gated, const float *x_h, const float *u_film, float *output);
+    // Step 7 (per-sample part): the two scalar terms added to every output dim
+    void step_output_scalars(const float *y_gated, const float *x_h, float *d_skip_scale, float *mimo_o_sum) const;
+
+    // Steps 2-6 + step 7 scalars for one sample. proj is [IN_PROJ_DIM] contiguous.
+    void sample_core(const float *u_film, const float *proj, float *y_gated, float *d_skip_scale, float *mimo_o_sum);
 };
 
 } // namespace clara::mamba3

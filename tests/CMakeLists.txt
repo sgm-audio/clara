@@ -45,29 +45,49 @@ target_compile_definitions(test_mamba3 PRIVATE
 )
 add_test(NAME test_mamba3 COMMAND test_mamba3 "${CMAKE_SOURCE_DIR}/models/model.bin")
 
-# --- Generate Python reference outputs for bit-exact C++ comparison ---
+# --- Generate Python reference outputs for C++ comparison ---
 # Runs once, dumps input_ref.bin + output_ref.bin next to model.bin.
 # test_mamba3.cpp loads these for per-sample Python↔C++ comparison.
+#
+# The generator reads the SAME model the engine loads and runs it through
+# python/reference_forward.py (R=4 time-domain, the architecture the engine
+# implements). The previous generator used dump_reference_output.py, which
+# referenced the R=8 spectral PerTrackProcessor — a different model, so the
+# comparison could not pass. Delete the fixtures to force regeneration.
 set(MAMBA3_REF_INPUT "${CMAKE_SOURCE_DIR}/models/input_ref.bin")
 set(MAMBA3_REF_OUTPUT "${CMAKE_SOURCE_DIR}/models/output_ref.bin")
-set(MAMBA3_REF_MODEL "${CMAKE_SOURCE_DIR}/models/model_ref.bin")
-if(NOT EXISTS "${MAMBA3_REF_INPUT}" OR NOT EXISTS "${MAMBA3_REF_OUTPUT}" OR NOT EXISTS "${MAMBA3_REF_MODEL}")
+if(NOT EXISTS "${MAMBA3_REF_INPUT}" OR NOT EXISTS "${MAMBA3_REF_OUTPUT}")
     find_program(PYTHON3_EXE python3)
     if(PYTHON3_EXE)
         add_custom_target(generate_reference_outputs ALL
             COMMAND ${PYTHON3_EXE}
-                "${CMAKE_SOURCE_DIR}/python/tools/dump_reference_output.py"
+                "${CMAKE_SOURCE_DIR}/python/tools/dump_engine_reference.py"
+                --model "${MAMBA3_MODEL_BIN}"
                 --output-dir "${CMAKE_SOURCE_DIR}/models"
                 --seed 42
-            COMMENT "Generating Python↔C++ reference outputs..."
+            COMMENT "Generating Python↔C++ reference fixtures..."
             BYPRODUCTS
                 "${MAMBA3_REF_INPUT}"
                 "${MAMBA3_REF_OUTPUT}"
-                "${MAMBA3_REF_MODEL}"
         )
         add_dependencies(test_mamba3 generate_reference_outputs)
     endif()
 endif()
+
+# --- Test: Compute budget (real-time cost regression guard) ---
+# Measures per-sample cost against a same-machine calibration loop and fails if
+# the engine regresses past the budget. See docs/BLUEPRINT_COMPARISON.md for why
+# this exists: the numerical tests all pass even though the model is ~10-18x too
+# slow for real time, so cost needs its own guard.
+add_executable(test_perf_budget test_perf_budget.cpp)
+target_include_directories(test_perf_budget PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_perf_budget PRIVATE Mamba3Core)
+add_test(NAME test_perf_budget COMMAND test_perf_budget "${CMAKE_SOURCE_DIR}/models/model.bin")
+set_tests_properties(test_perf_budget PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300
+    LABELS "perf;budget"
+)
 
 # --- Test: CLAP plugin (Mamba-3) ---
 add_executable(test_clap_plugin

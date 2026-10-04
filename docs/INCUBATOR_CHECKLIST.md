@@ -1,21 +1,41 @@
 # Incubator-Testable Checklist
 
-## What's Done (shipping)
+**Updated 2026-10-04.** Superseded in places by `docs/BLUEPRINT_COMPARISON.md`,
+which contains the measurements. Read the **Blocking** section first: this project
+is not ready to be evaluated as an audio effect yet, for two reasons that have
+nothing to do with polish.
+
+## What's Done (shipping, verified)
 
 - [x] C++ engine: R=4 time-domain Mamba-3, 1.66M params, V2 flat binary weights
 - [x] CLAP plugin: `MambaSuiteClap.clap` — 3 params (bypass, wet/dry, intensity)
 - [x] VST3 wrapper: `MambaSuite.vst3` via clap-wrapper — loadable in Ableton Live
 - [x] ARA 2.0 extension: `MambaSuiteARA.so` — scaffolding only
-- [x] CLAP webview GUI: `CLAP_EXT_WEBVIEW` with inline HTML/CSS/JS (3 sliders + level meter)
-- [x] Native framebuffer GUI: `CLAP_EXT_GUI` with software RGBA8 pixel buffer (X11/Win32)
-- [x] Trained model: 6000 steps on MUSDB18-HQ, loss 0.35, identity reconstruction
-- [x] All 4 CTest tests pass (test_mamba3, test_clap_plugin, test_ara_controller, clap_validator)
-- [x] CI builds on ubuntu-22.04, macos-14, windows-2022
-- [x] Docs honest about R=4 current / R=8 planned
+- [x] GUIs: `CLAP_EXT_WEBVIEW` (inline HTML) and `CLAP_EXT_GUI` (native framebuffer, X11/Win32)
+- [x] Engine tests pass, including Python↔C++ equivalence (`test_mamba3`, 21 checks)
+- [x] Compute-budget test (`test_perf_budget`) and drift guard (`test_numeric_sensitivity`)
+- [x] Weights committed to Git — a fresh clone is runnable without LFS
+- [x] Docs honest about the model, the cost, and the drift
 
----
+## Blocking (do not skip these two)
 
-## What the Agent Must Do After Reboot
+1. **It is not real time.** 0.262 ms/sample → ~1,250% of one core per 48 kHz mono
+   stream (~2,430% stereo). Real time needs < 100%. Roughly 12–24x to find, and it
+   has to come from a smaller model: kernel work is exhausted (the GEMM is at the
+   CPU's floating-point issue limit).
+2. **No trained model ships.** `models/model.bin` is an untrained random fixture
+   with the correct shape. The trained blob was lost when the account's Git LFS
+   budget was exceeded (see `models/README.md`). Any "does it sound good" test is
+   meaningless until a trained model is installed.
+
+Also outstanding: **no DAW load test has ever been performed** on this codebase,
+and the float32 engine drifts ~2% from a float64 oracle within 12 ms (different
+CPUs will produce slightly different audio).
+
+## Historical: post-reboot tasks (2026-07-07)
+
+### What the Agent Must Do After Reboot
+
 
 ### 1. Build Windows VST3 via MinGW
 

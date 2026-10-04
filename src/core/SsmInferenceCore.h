@@ -1,10 +1,14 @@
-// CLARA PerTrackProcessor Inference Core — Multi-layer engine wrapper
+// CLARA Mamba-3 Inference Core — Multi-layer engine wrapper
 //
-// Phase 4 of the Mamba-1 → Mamba-3 migration.
-// Replaces MambaInferenceEngine (ONNX Runtime wrapper).
+// Runs the R=4 time-domain Mamba-3 model (SsmBlock) over 6 layers.
+// Weights are mmap'd from a v2 flat binary file; all scratch is owned by the
+// engine and allocated once in init(), so the audio path never touches the heap.
 //
-// Manages 6 SSMBlock layers, per-layer LayerNorm, conditioning,
-// chunked 64-sample block processing, and deferred state reset.
+// Execution model (2026-10-04): the host's block is processed in chunks of
+// PROCESS_CHUNK_SIZE samples, layer-major. Within a chunk the three projections
+// run as matrix × chunk GEMMs and the conditioning projections are evaluated
+// once; the SSM recurrence stays per-sample because it is causal. See
+// MambaConfig.h for why that is a scheduling decision, not a model change.
 
 #pragma once
 
@@ -26,8 +30,9 @@ public:
     // ── Lifecycle ──────────────────────────────────────────────────
 
     // Load weights from a flat binary .bin file and initialize all layers.
-    // Returns true on success, false on any error (file not found, dim mismatch).
-    // Must be called from the main thread (file I/O). Not RT-safe.
+    // Returns true on success, false on any error (file not found, dim mismatch,
+    // truncated payload). Must be called from the main thread (file I/O).
+    // Not RT-safe — it may allocate, but only here.
     bool init(const char *weight_filepath);
 
     // True after successful init().
@@ -42,7 +47,7 @@ public:
     // output: [n_samples] float processed audio
     // n_samples: must be ≤ MAX_BLOCK_SIZE (512)
     //
-    // Splits into 64-sample sub-blocks internally. State carries across
+    // Splits into PROCESS_CHUNK_SIZE chunks internally. State carries across
     // calls. Zero heap allocations.
     void process_block(const float *input, float *output, size_t n_samples);
 
@@ -61,6 +66,14 @@ public:
         return cond_proc_;
     }
 
+    // ── Introspection (tests, diagnostics) ────────────────────────
+
+    // Scratch this engine owns, in bytes (state + batch buffers). Useful for
+    // memory budgeting in hosts.
+    static size_t scratch_bytes() {
+        return sizeof(SsmInferenceCore);
+    }
+
 private:
     bool ready_ = false;
 
@@ -68,10 +81,11 @@ private:
     WeightLoader loader_;
     const SSMWeights *layer_weights_[MAX_LAYERS] = {};
 
-    // Per-layer SSM blocks (stack-allocated, 6 layers)
+    // Per-layer SSM blocks and states. Blocks are thin views over the weights
+    // and state below — no per-chunk construction, and nothing allocated on the
+    // audio thread.
+    SSMBlock blocks_[MAX_LAYERS];
     SSMState layer_states_[MAX_LAYERS];
-    // ponytail: SSMBlock instances created on-stack in process_block
-    // to avoid heap — each is a thin wrapper around weights+state pointers.
 
     // Per-layer LayerNorm parameters
     float ln_gamma_[MAX_LAYERS][MAX_D_MODEL] = {};
@@ -86,8 +100,20 @@ private:
     // Sub-block counter for state continuity
     size_t sample_count_ = 0;
 
+    // ── Batch scratch (channel-major: element (row, i) at row * n + i) ──
+    //
+    // x_batch holds the layer input and, after film_batch(), the FiLM'd
+    // embedding; the final combine writes the next layer's input back into it.
+    alignas(64) float x_batch_[MAX_D_MODEL * PROCESS_CHUNK_SIZE] = {};
+    alignas(64) float proj_batch_[MAX_IN_PROJ_DIM * PROCESS_CHUNK_SIZE] = {};
+    alignas(64) float y_batch_[MAX_D_INNER * PROCESS_CHUNK_SIZE] = {};
+    alignas(64) float out_batch_[MAX_D_MODEL * PROCESS_CHUNK_SIZE] = {};
+    alignas(64) float d_skip_scratch_[PROCESS_CHUNK_SIZE] = {};
+    alignas(64) float mimo_o_scratch_[PROCESS_CHUNK_SIZE] = {};
+
     // Internal helpers
-    void apply_layer_norm(float *x, size_t layer_idx);
+    void process_chunk(const float *input, float *output, size_t n_samples, const float *cond);
+    void apply_layer_norm(float *x, size_t n_samples, size_t layer_idx) const;
     bool process_ready_reset();
 };
 
