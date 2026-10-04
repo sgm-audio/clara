@@ -4,7 +4,7 @@
 #
 # Invoked from CTest via:
 #   cmake -DCLAP_VALIDATOR_EXE=<path> \
-#         -DPLUGIN_PATH=<path-to-MambaSuiteClap.clap> \
+#         -DPLUGIN_PATH=<path-to-MambaSuite.clap> \
 #         -DREQUIRED_CATEGORIES="audio-ports;params;state;latency" \
 #         -P tests/clap_validator.cmake
 #
