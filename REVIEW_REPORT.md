@@ -1,6 +1,6 @@
 # CLARA — Mamba Audio Suite: end-to-end repository review
 
-**Repository:** `sgm-audio/clara` (private) · **Reviewed revision:** `d6c64fe` + branch `arena/01a105e2-clara` (6 commits, see *Changes Applied*)
+**Repository:** `sgm-audio/clara` (private) · **Reviewed revision:** `d6c64fe` + branch `arena/01a105e2-clara` (7 commits, see *Changes Applied*)
 **Review date:** 2026-10-04 · **Scope:** repository hygiene, documentation accuracy, project scaffolding, code quality, bugs & correctness
 **Method:** read the tree; ran the build, the full test suite and the project's pinned linters before and after every change; reproduced every behavior claim with a minimal harness before writing it down.
 
@@ -27,7 +27,7 @@ the shipping code. What it did find is a repository whose *outside* is less heal
 4. **Documentation drift** away from the code in the README, AGENTS.md and the training docs — including a broken
    one-command setup that referenced a script that does not exist.
 
-Six commits on this branch fix what is safe to fix (docs, formatters, `.gitignore`, `.editorconfig`, scripts, three localized
+Seven commits on this branch fix what is safe to fix (docs, formatters, `.gitignore`, `.editorconfig`, scripts, three localized
 bugs with tests, lint-scope bugs), and record what must be decided by a human (CI root cause, VST3 naming, install components,
 `-ffast-math` policy, repository layout). Build and tests were green at every commit; no behavior was changed silently.
 
@@ -44,7 +44,7 @@ are listed as High below.
 
 ## Changes Applied
 
-Six commits on `arena/01a105e2-clara` (this report is the seventh), each verified with a build (`cmake --build`, no warnings) and the full test suite
+Seven commits on `arena/01a105e2-clara` (this report is the eighth), each verified with a build (`cmake --build`, no warnings) and the full test suite
 (`ctest`, 4/4 PASS). All are present in the final branch; the review tooling sandbox was reset mid-session, so the same change set was recommitted in the same logical grouping.
 
 | Commit | Theme | Content |
@@ -55,6 +55,7 @@ Six commits on `arena/01a105e2-clara` (this report is the seventh), each verifie
 | `201fe94` | chore | `ruff.toml` `force-exclude` (pre-commit invocation bypassed `archive/` exclusion); notebook import fixes; `scripts/{bootstrap_local,launch_train,run_test,run_train}.sh` path fixes; `docs/TRAINING_QUICKSTART.md` rewritten against the real flags; new `docs/TODO.md` §P1.5; `.editorconfig`. |
 | `4d1f2a3` | fix | The three correctness fixes below, with tests. |
 | `8a57d95` | docs | `validate_export.py` docstring said "Version 3"; the check is version 2. |
+| `3ccaa74` | docs | Fixed the last four broken relative links in `archive/mamba1-onnx-era/README.md` (now zero broken among all 55 tracked markdown files). |
 
 **Bug fixes in `4d1f2a3` (each with a test that fails before / passes after):**
 
@@ -177,7 +178,7 @@ documents the lost LFS blobs; `docs/TODO.md` carries measured numbers rather tha
 | 2.13 | `python/tools/validate_export.py` docstring said "Version 3"; `EXPECTED_VERSION = 2` | Low | **fixed** |
 | 2.14 | `tests/test_mamba3.cpp` comment said the fixture agreement is `~1e-6`; the test prints `1.5e-3` | Low | **fixed** |
 | 2.15 | Project URL is inconsistent across the tree (`scottmill306/CLARA` in `Platform.hpp:6` and the incubator checklist vs `SGM-Studios/clara` badge vs `sgm-studios/clara` GitHub homepage vs actual `sgm-audio/clara` origin). The anonymous-404 badge and the third-party repo reference cannot be verified from this token | Medium | research |
-| 2.16 | Nine broken relative links (four in `archive/mamba1-onnx-era/README.md`, four in `docs/CLARA_OVERHAUL_PLAN.md` pointing at `x`, one already fixed in ADR-001) | Low | in progress (one fixed, rest tracked) |
+| 2.16 | Broken relative links: five in total — four in `archive/mamba1-onnx-era/README.md` (`MAMBA3_MIGRATION_PLAN.md`, `MI300X_TRAINING_PLAN.md`, `TRAINING_QUICKSTART.md`, a `train_clara_mamba3.py` that no longer exists) and one in ADR-001. All five now resolve. **Correction to an earlier intermediate count of nine:** the four `](x)` "links" in `docs/CLARA_OVERHAUL_PLAN.md` were a regex artifact — they are `self.conv_stem[0](x)` expressions inside a Python code block, not markdown. A code-block-aware scan of all 55 tracked markdown files finds **0 broken relative links** after these fixes (26 relative links checked; the rest are absolute/anchor URLs or code samples) | Low | **fixed** |
 | 2.17 | README's "21 checks" figure was verified correct; no change needed | Info | fixed (verified) |
 
 ### 3. Project scaffolding
@@ -258,6 +259,6 @@ weight loader rejects size mismatches; the plugin's state format is versioned an
 
 ---
 
-*Every claim above was checked against `d6c64fe` + the six commits on `arena/01a105e2-clara`. Claims that could not be verified
+*Every claim above was checked against `d6c64fe` + the seven commits on `arena/01a105e2-clara`. Claims that could not be verified
 in this environment are explicitly marked "research". Reproductions used minimal local harnesses (a `dlopen` VST3 factory probe
 and a CLAP host that creates/activates/processes a plugin); they are throwaway and deliberately not committed.*
