@@ -100,9 +100,6 @@ if(CLARA_BUILD_VST3)
     if(NOT clap_wrapper_POPULATED)
         FetchContent_Populate(clap_wrapper)
     endif()
-
-        endif()
-    endif()
 endif()
 
 # Common include directories
