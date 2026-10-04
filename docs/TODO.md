@@ -50,19 +50,24 @@ list immediately below, and the measurements behind it are in
       level condition (Actions spending limit/billing, or Actions disabled) —
       needs someone with admin rights, not a workflow edit. Until then every CI
       claim in `CHANGELOG.md`/README is unverified.
-- [ ] **VST3 wrapper cannot find the CLAP as built.** clap-wrapper derives the
-      CLAP file name from the wrapper binary stem (`MambaSuite` →
-      `MambaSuite.clap`); the build produces `MambaSuiteClap.clap`. Reproduced:
-      `GetPluginFactory()` returns `nullptr` with only the built name present,
-      and works as soon as the same binary is also reachable as
-      `MambaSuite.clap`. Fix options: rename the CLAP target/output to
-      `MambaSuite.clap`, or install a copy/symlink under the expected name in
-      the VST3 bundle.
-- [ ] **Install components are broken** (see README *Install*):
-      `--component clap` exits 1 (the bare `.clap` file collides with the
-      `.clap` bundle dir it is installed next to), and `--component vst3`
-      ignores `--prefix` and writes into the build tree. `--component ara`
-      works.
+- [x] **VST3 wrapper could not find the CLAP as built** (fixed 2026-10-04).
+      clap-wrapper derives the CLAP file name from its own binary stem
+      (`MambaSuite` → `MambaSuite.clap`); the build produced
+      `MambaSuiteClap.clap`. `CLAP_WRAPPER_OUTPUT_NAME` now sets `OUTPUT_NAME` on
+      the CLAP target as well, so both artefacts share one stem and cannot drift.
+      Verified: `GetPluginFactory()` is `nullptr` with only the old name present
+      and returns the factory (`Mamba-3 SSM Processor`, `Elite DSP`) once
+      `MambaSuite.clap` is in `~/.clap`. Still untested: a real DAW load.
+- [x] **Install components were broken** (fixed 2026-10-04). All three now exit 0
+      and honour `--prefix`. Linux installs the CLAP as a *bare* file (a bundle
+      dir and a same-named bare file cannot coexist — that collision is what made
+      `--component clap` fail); macOS/Windows keep bundles. The `vst3` component
+      used an absolute `DESTINATION` into the build tree and installed only the
+      weights; it now installs the VST3 module into
+      `lib/vst3/MambaSuite.vst3/Contents/<arch>/`. Found while fixing it: the ARA
+      `COMPONENT ara` clause attached only to `LIBRARY`, so the Windows `.dll`
+      would have landed in the default component — both TARGETS installs now
+      repeat `COMPONENT` per artefact type.
 - [ ] **`-ffast-math` and NaN/Inf checks.** Release builds compile with
       `-ffast-math` (`-ffinite-math-only`), so `std::isfinite`/`std::isnan` are
       folded to constants; the param entry points and the test suite now use the

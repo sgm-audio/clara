@@ -1,4 +1,4 @@
-// CLARA CLAP Plugin — MambaSuiteClap.clap audio effect
+// CLARA CLAP Plugin — MambaSuite.clap audio effect
 //
 // Per-channel engine instances, 128-dim conditioning.
 

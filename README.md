@@ -1,9 +1,9 @@
 # CLARA — Mamba Audio Suite
 
-[![CI](https://github.com/SGM-Studios/clara/actions/workflows/ci.yml/badge.svg)](https://github.com/SGM-Studios/clara/actions/workflows/ci.yml)
+[![CI](https://github.com/sgm-audio/clara/actions/workflows/ci.yml/badge.svg)](https://github.com/sgm-audio/clara/actions/workflows/ci.yml)
 
 C++17 audio plugin that runs a Mamba-3 SSM (Selective State Space Model) through a
-custom C++ inference engine. Ships as a CLAP plugin (`MambaSuiteClap.clap`), a VST3
+custom C++ inference engine. Ships as a CLAP plugin (`MambaSuite.clap`), a VST3
 wrapper (`MambaSuite.vst3`, via clap-wrapper) and an ARA 2.0 extension library
 (`MambaSuiteARA.so`), all sharing one inference core. Linux is the tested platform;
 macOS and Windows presets exist but are not verified.
@@ -32,7 +32,7 @@ real time and the shipped weights are an untrained fixture.**
 | ARA real-time conditioning | 🟡 scaffolding only — no host content reader |
 | macOS / Windows builds | 🟡 presets defined; not verified in this environment |
 | CI | 🔴 **not running**: every run since 2026-10-04 ends in `startup_failure` with 0 jobs (workflow parses and is registered active, so this is account/repo-level, not a YAML error) — see *CI/CD* below |
-| VST3 in a host | 🔴 **broken by name mismatch**: the wrapper looks for `MambaSuite.clap`, the build produces `MambaSuiteClap.clap` — reproduced, see *Running* |
+| VST3 in a host | 🟡 **loads now, still not DAW-tested**: build output renamed to `MambaSuite.clap` so clap-wrapper's name match succeeds — `GetPluginFactory()` verified, see *Running* |
 
 ## Performance (measured, not estimated)
 
@@ -126,28 +126,30 @@ cmake --build build --parallel && ctest --test-dir build --output-on-failure
 Install (default prefix `/usr/local`), cross-platform presets, and the `clara_test`
 aggregate target: `cmake --preset macos-release`, `cmake --build build --target clara_test`.
 
-<!-- STATUS: in progress — the install rules are broken, see below -->
-Two of the three install components do not do what this section used to claim
-(verified 2026-10-04 on a clean build):
+`cmake --install <build> [--prefix <dir>] [--component clap|vst3|ara]` installs,
+prefix-relative, on Linux:
 
-- `cmake --install build --component clap` **fails** (exit 1). The bare
-  `lib/clap/MambaSuiteClap.clap` file that is installed "for hosts that scan bare
-  .clap files" collides with the `lib/clap/MambaSuiteClap.clap/` bundle
-  directory; the file ends up inside the bundle and the models install then dies
-  with `cannot make directory ... Permission denied`, leaving a corrupt tree.
-- `cmake --install build --component vst3` writes the weights to
-  `<build dir>/plugins/MambaSuite.vst3/Contents/Resources/models` — inside the
-  build tree, and *not* into the bundle the build actually produces
-  (`<build dir>/Release/MambaSuite.vst3/`). The `--prefix` is ignored because
-  that `install(DIRECTORY)` uses an absolute `DESTINATION`.
+```
+lib/clap/MambaSuite.clap              the CLAP plugin (bare DSO)
+lib/clap/models/*.bin                 weights — must sit next to the DSO (dladdr)
+lib/ara/MambaSuiteARA.so              the ARA2 library
+lib/ara/models/*.bin                  weights, next to the library
+lib/vst3/MambaSuite.vst3/             the clap-wrapper VST3 module
+  Contents/x86_64-linux/MambaSuite.so
+```
 
-`cmake --install build --component ara` works and deploys the weights next to
-the ARA library. Use `cmake --install build --prefix <dir>` without a component
-for the ARA path, or copy `build/plugins/models/` by hand.
+macOS/Windows install the CLAP as a bundle (`<stem>.clap/Contents/<arch>/<stem>.clap`),
+which is the local convention. A *full* install also drops the fetched CLAP SDK's
+own headers/CMake package files under `include/clap/` and `lib/cmake/clap/` —
+those come from the CLAP SDK's install rules, not from CLARA; use a component
+install if you do not want them.
+
+The VST3 bundles carry no weights of their own: clap-wrapper loads the `.clap`
+from the CLAP search paths, and *that* file reads the `models/` beside it.
 
 Outputs:
 
-- `build/plugins/MambaSuiteClap.clap` — CLAP audio effect
+- `build/plugins/MambaSuite.clap` — CLAP audio effect
 - `build/Release/MambaSuite.vst3` — VST3 bundle (`MambaSuite_as_vst3` target)
 - `build/plugins/MambaSuiteARA.so` — ARA2 library
 - `build/tests/test_*` — unit tests (`-DBUILD_TESTING=ON`)
@@ -156,36 +158,40 @@ Outputs:
 
 ## Running
 
+**CLAP hosts (Bitwig, Carla, clap-host):** load `build/plugins/MambaSuite.clap`
+directly, or copy it into a CLAP search path (`~/.clap/`, `/usr/lib/clap/`).
+
 **Ableton Live (VST3):** copy `build/Release/MambaSuite.vst3` to your VST3 folder
 (`~/.vst3/`, `~/Library/Audio/Plug-Ins/VST3/`, `C:\Program Files\Common Files\VST3\`).
+The wrapper locates the CLAP by *matching file name*: `MambaSuite.vst3` → it
+searches the CLAP paths for `MambaSuite.clap` (clap-wrapper's
+`wrapasvst3_entry.cpp` derives the name from its own binary and looks in
+`/usr/lib/clap`, `~/.clap` and `CLAP_PATH`, plus one level of subdirectories).
+The build now produces exactly that name, so the pairing is:
 
-> **The VST3 wrapper cannot find the plugin as built.** clap-wrapper resolves a
-> CLAP library whose *file name* matches the wrapper binary: `MambaSuite.so`
-> makes it search for `MambaSuite.clap` in the CLAP search paths
-> (`~/.clap`, `/usr/lib/clap`, `CLAP_PATH`), while the build produces
-> `MambaSuiteClap.clap`. Reproduced 2026-10-04: calling `GetPluginFactory()` on
-> the built bundle returns `nullptr` when only `MambaSuiteClap.clap` exists, and
-> a working factory as soon as the same binary is visible as `MambaSuite.clap`.
-> Until the naming is reconciled, the VST3 path needs a manual copy (e.g.
-> `cp build/plugins/MambaSuiteClap.clap ~/.clap/MambaSuite.clap`). Tracked in
-> [`docs/TODO.md`](docs/TODO.md).
+```bash
+cp build/plugins/MambaSuite.clap ~/.clap/            # + models/ beside it
+cp -r build/Release/MambaSuite.vst3 ~/.vst3/
+```
 
-**CLAP hosts (Bitwig, Carla, clap-host):** load `build/plugins/MambaSuiteClap.clap`.
+Verified 2026-10-04 with a `dlopen` probe: with only the old
+`MambaSuiteClap.clap` present, `GetPluginFactory()` returns `nullptr`; with
+`MambaSuite.clap` in `~/.clap`, the factory is created and reports
+`Mamba-3 SSM Processor` (vendor `Elite DSP`, id `com.mamba.audio.suite`).
 
 The weight file must sit in `models/` **next to the `.clap` binary that is
 loaded** (the plugin resolves its own module path with `dladdr`, so it is the
 `.clap` location that matters, not the host's). The build deploys it for the
-CLAP target. For the VST3 wrapper that means: put the `.clap` the wrapper will
-load somewhere in the CLAP search path, with `models/` beside it. Verified
-2026-10-04 with a minimal host harness: without `models/` the plugin's `init()`
-returns false; with it, `process()` produces finite audio.
+CLAP target. Verified 2026-10-04 with a minimal CLAP host harness: `plugin->init()`
+returns true with `models/` beside the `.clap` and false without it; with it,
+`process()` produces finite audio.
 
 Each plugin exposes three parameters: bypass (stepped, click-free 50 ms
 crossfade), wet/dry, intensity.
 
 > **No DAW load test has been performed on this codebase.** The engine is
 > verified by unit tests, by direct benchmark, and (2026-10-04) by a minimal
-> CLAP host harness that dlopens `MambaSuiteClap.clap`, creates and activates
+> CLAP host harness that dlopens `MambaSuite.clap`, creates and activates
 > the plugin and processes 512 frames — `init()` succeeds and the output is
 > finite. Nobody has confirmed audio output inside a running DAW.
 

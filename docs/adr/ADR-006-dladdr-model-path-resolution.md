@@ -1,6 +1,16 @@
 # ADR-006: `dladdr`-Based Model Path Resolution
 
-**Status:** Accepted (implemented)
+**Status:** Accepted (implemented) — see the update note below
+
+> **Update 2026-10-04.** The download-path part of this ADR is ONNX-era history
+> (`mamba_rt.onnx` and its sidecar), but two things moved: the ARA engine now
+> passes a real symbol address to `mambaResolveModulePath()` instead of
+> `nullptr` (`MambaAraController.cpp`, which had left it resolving against the
+> host's working directory), and on Linux the install layout is a bare
+> `lib/clap/MambaSuite.clap` with a sibling `models/` rather than a bundle —
+> `lib/clap/<stem>.clap/Contents/...` and a same-named bare file cannot coexist.
+> The plugin was renamed `MambaSuiteClap.clap` → `MambaSuite.clap` so the VST3
+> wrapper finds it.
 **Date:** 2026-05-30
 
 ## Context

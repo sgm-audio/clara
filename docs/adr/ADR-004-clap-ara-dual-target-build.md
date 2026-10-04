@@ -1,13 +1,20 @@
 # ADR-004: CLAP + ARA Dual-Target Build Architecture
 
-**Status:** Accepted (implemented)
+**Status:** Accepted (implemented) — see the update note below
 **Date:** 2026-05-30
+
+> **Update 2026-10-04 (historical record otherwise unchanged).** The plugin file
+> was renamed `MambaSuite.clap` → **`MambaSuite.clap`** so clap-wrapper's
+> VST3 name match succeeds, and the install layout on Linux is now a *bare*
+> `.clap` plus a sibling `models/` rather than a bundle (a bundle directory and a
+> same-named bare file cannot coexist). The links and layout in the body of this
+> ADR describe the tree as it was in May 2026, when the engine was ONNX-based.
 
 ## Context
 
 CLARA produces two shared library binaries from a single CMake project:
 
-1. **`MambaSuiteClap.clap`** — A CLAP audio effect plugin, loaded by DAWs via `dlopen()` on the `.clap` file.
+1. **`MambaSuite.clap`** — A CLAP audio effect plugin, loaded by DAWs via `dlopen()` on the `.clap` file.
 2. **`MambaSuiteARA.so`** — An ARA 2.0 library, loaded by DAWs via the ARA factory entry point.
 
 Both share one inference core (`MambaCore` static library) that encapsulates `MambaInferenceEngine` and ONNX Runtime. The build system must compile this core once, link it into both targets, and deploy runtime dependencies (ONNX Runtime shared library, model files) alongside each plugin — without requiring the user to install any system packages or set environment variables.
@@ -143,7 +150,7 @@ set_target_properties(MambaSuiteARA PROPERTIES
 
 CLAP plugins use the `.clap` extension for discovery. CMake has no built-in CLAP plugin target type. We abuse MODULE library properties:
 
-- `PREFIX ""` — Prevents CMake from adding `lib` (output is `MambaSuiteClap.clap`, not `libMambaSuiteClap.clap`).
+- `PREFIX ""` — Prevents CMake from adding `lib` (output is `MambaSuite.clap`, not `libMambaSuite.clap`).
 - `SUFFIX ".clap"` — Overrides the default `.so` suffix with `.clap`.
 
 This is a simple but important configuration detail. ADAW scanning for `.clap` files will not recognize a file named `libMambaSuiteClap.so`.
@@ -242,7 +249,7 @@ set_target_properties(MambaSuiteARA PROPERTIES
 )
 ```
 
-**What `$ORIGIN` means:** The dynamic linker resolves `libonnxruntime.so.1.17.1` relative to the directory containing the running plugin binary. If `MambaSuiteClap.clap` is in `build/plugins/`, the linker looks for `build/plugins/libonnxruntime.so.1.17.1`.
+**What `$ORIGIN` means:** The dynamic linker resolves `libonnxruntime.so.1.17.1` relative to the directory containing the running plugin binary. If `MambaSuite.clap` is in `build/plugins/`, the linker looks for `build/plugins/libonnxruntime.so.1.17.1`.
 
 **`BUILD_WITH_INSTALL_RPATH ON`** is critical: it tells CMake to use the install RPATH settings (`$ORIGIN`) during development builds too. Without this, CMake would embed an absolute build-tree path in the plugin's RPATH, and the plugin would fail to find `libonnxruntime.so` when loaded from the install tree (because the embedded path would point to the build tree).
 
@@ -256,10 +263,10 @@ No `LD_LIBRARY_PATH` manipulation, no `patchelf --set-rpath`, no wrapper scripts
 
 ```
 # CLAP bundle (for host that discover bundles):
-${CMAKE_INSTALL_PREFIX}/lib/clap/MambaSuiteClap.clap/
+${CMAKE_INSTALL_PREFIX}/lib/clap/MambaSuite.clap/
   Contents/
     linux-x86-64/
-      MambaSuiteClap.clap        # the plugin binary
+      MambaSuite.clap        # the plugin binary
       libonnxruntime.so.1.17.1    # ONNX Runtime
       libonnxruntime.so           # symlink for SONAME resolution
       models/
@@ -267,7 +274,7 @@ ${CMAKE_INSTALL_PREFIX}/lib/clap/MambaSuiteClap.clap/
         mamba_rt.onnx.data
 
 # Bare CLAP binary (for hosts that don't support bundles):
-${CMAKE_INSTALL_PREFIX}/lib/clap/MambaSuiteClap.clap
+${CMAKE_INSTALL_PREFIX}/lib/clap/MambaSuite.clap
 
 # ARA standalone:
 ${CMAKE_INSTALL_PREFIX}/lib/ara/

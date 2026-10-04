@@ -19,7 +19,7 @@ clap-wrapper and the VST3 SDK; `-DVST3_SDK_ROOT=/path` reuses an SDK checkout.
 Tests: `test_mamba3` (21 checks), `test_perf_budget`, `test_clap_plugin`,
 `test_ara_controller`, `clap_validator` (SKIPs without the binary).
 
-C++17 audio plugin producing `MambaSuiteClap.clap`, `MambaSuite.vst3` (clap-wrapper)
+C++17 audio plugin producing `MambaSuite.clap`, `MambaSuite.vst3` (clap-wrapper)
 and `MambaSuiteARA.so`.
 
 ## Engine architecture (current)
