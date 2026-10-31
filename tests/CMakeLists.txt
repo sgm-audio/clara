@@ -82,7 +82,7 @@ endif()
 
 # --- Test: Compute budget (real-time cost regression guard) ---
 # Measures per-sample cost against a same-machine calibration loop and fails if
-# the engine regresses past the budget. See docs/BLUEPRINT_COMPARISON.md for why
+# the engine regresses past the budget. See docs/TODO.md (P1) for why
 # this exists: the numerical tests all pass even though the model is ~10-18x too
 # slow for real time, so cost needs its own guard.
 add_executable(test_perf_budget test_perf_budget.cpp)

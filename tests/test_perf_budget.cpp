@@ -1,7 +1,7 @@
 // CLARA engine compute budget — regression guard for real-time cost.
 //
 // Why this test exists: the engine is currently far too slow for real-time use
-// (see docs/BLUEPRINT_COMPARISON.md). Without a budget check in CI, a change that
+// (see docs/TODO.md, P1). Without a budget check in CI, a change that
 // doubles the per-sample cost is invisible — the numerical tests still pass.
 //
 // The budget is expressed as a RATIO against a calibration loop measured on the
