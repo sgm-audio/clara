@@ -145,7 +145,7 @@ built the project, ran its tests and benchmarked the engine
 ## v0.1.0 — 2026-07-09
 
 First tagged release. Version numbering starts at 0.1.0: the earlier internal
-"1.x" numbers (preserved in [`docs/CHANGELOG.md`](docs/CHANGELOG.md)) predated
+"1.x" numbers (preserved in git history as `docs/CHANGELOG.md`) predated
 any release and overstated maturity.
 
 ### What this is
@@ -187,7 +187,7 @@ audible effect: a proof of the engine and pipeline, not a finished product.
 - CI on ubuntu-22.04 / macos-14 / windows-2022: build, symbol checks,
   clap-validator, model round-trip validation, CTest
 - pre-commit: clang-format, black, ruff
-- Mamba-1/ONNX era fully retired to `archive/mamba1-onnx-era/`
+- Mamba-1/ONNX era fully retired to `archive/mamba1-onnx-era/` (since removed from the tree; see git history)
 
 ### Known limitations
 

@@ -10,11 +10,9 @@ macOS and Windows presets exist but are not verified.
 
 No ONNX Runtime. Weights are a flat binary file (`model.bin`) loaded via `mmap` at init.
 
-**Read this first:** [`docs/BLUEPRINT_COMPARISON.md`](docs/BLUEPRINT_COMPARISON.md) —
-a verification pass over this repository (build, tests, benchmarks, model files)
-that documents what works, what does not, and what the remaining work is. The
-short version: **the engine is real and tested, but it is ~12x too slow for
-real time and the shipped weights are an untrained fixture.**
+**Short version:** the engine is real and tested, but it is ~12x too slow for
+real time and the shipped weights are an untrained fixture. The tables below are
+measured, not estimated.
 
 ## Status — 2026-10-04
 
@@ -48,8 +46,7 @@ The 2026-10-04 optimization pass (batched projections + blocked GEMM kernels +
 hoisted RoPE trigonometry) bought **1.45x mono / 1.6x stereo**, not the 3–5x
 originally hoped: per-component profiling shows the `in_proj` GEMM is already at
 this CPU's floating-point issue limit, so the remaining lever is **model size**
-(`d_model`, `in_proj` width, MIMO rank), not more kernel tuning. See
-`docs/BLUEPRINT_COMPARISON.md` §5.
+(`d_model`, `in_proj` width, MIMO rank), not more kernel tuning.
 
 Where the time goes now, per sample, per layer: `in_proj` 0.0246 ms (57%),
 SSM recurrence 0.0148 ms (34%), `out_proj` 0.0037 ms (9%), FiLM ≈ 0.
@@ -63,13 +60,14 @@ sits at exactly 1.000, i.e. the periodic state clamp is active every 4096 sample
 The output is finite and stable, but float32 precision is not sufficient for this
 recurrence, and different CPUs/compilers will produce slightly different audio.
 `test_numeric_sensitivity` tracks this; the fix (double accumulation or a
-less saturating state) is tracked in [`docs/TODO.md`](docs/TODO.md).
+less saturating state) is open work ([`docs/TODO.md`](docs/TODO.md)).
 
 ## Build
 
-Dependencies are fetched by CMake `FetchContent`: CLAP SDK (`29ffcc27`), ARA SDK
-(`2.3.0`), clap-wrapper (`v0.9.1`), and — for the VST3 target — the Steinberg
-VST3 SDK (`v3.7.6_build_18`). Only a C++17 toolchain, CMake ≥ 3.14, `git` and a
+Dependencies are fetched by CMake `FetchContent` at configure time — none are
+vendored in this repository: CLAP SDK (`29ffcc27`), ARA SDK (`2.3.0`),
+clap-wrapper (`v0.9.1`), and — for the VST3 target — the Steinberg VST3 SDK
+(`v3.7.6_build_18`). See [*Third-party SDKs and licensing*](#third-party-sdks-and-licensing). Only a C++17 toolchain, CMake ≥ 3.14, `git` and a
 network connection to GitHub are required (the project is built with
 `CMAKE_CXX_STANDARD 17`; the VST3 SDK is the only dependency that would accept
 a newer standard):
@@ -269,12 +267,12 @@ shipping implementation. See the module docstring for the list.
 
 ```
 ├── CMakeLists.txt              # FetchContent deps, dual-target build
-├── AGENTS.md                   # Build/architecture reference for agents
 ├── models/                     # Weights + reference fixtures (see models/README.md)
 ├── docs/
-│   ├── BLUEPRINT_COMPARISON.md # Verification pass: measurements, gaps, priorities
 │   ├── MAMBA3_MIGRATION_PLAN.md# R=8 target architecture and roadmap
-│   ├── TRAINING.md             # Training reference
+│   ├── PHASE2_ROADMAP.md       # Conditioning and multi-stem training plan
+│   ├── TRAINING.md             # Training reference (R=4)
+│   ├── TRAIN_GUIDE.md          # Training guide (R=8 PerTrackProcessor)
 │   ├── TODO.md                 # Open work, incl. stability and compute budget
 │   └── adr/                    # ADR-001..013
 ├── python/
@@ -286,8 +284,7 @@ shipping implementation. See the module docstring for the list.
 │   ├── clap/                   # CLAP plugin entry + extensions
 │   ├── ara/                    # ARA document controller
 │   └── gui/                    # Native (X11/Win32) and webview GUIs
-├── tests/                      # test_mamba3, test_perf_budget, test_clap_plugin, ...
-└── archive/mamba1-onnx-era/    # Deprecated Mamba-1 / ONNX code and docs
+└── tests/                      # test_mamba3, test_perf_budget, test_clap_plugin, ...
 ```
 
 ## CI/CD
@@ -300,24 +297,33 @@ deployment (including that `model.bin` is not an LFS pointer), downloads
 platforms, and uploads the CLAP plugin, ARA library, VST3 bundle and deployed
 weights as artifacts.
 
-<!-- STATUS: in progress -->
-**None of that has run since 2026-10-04.** Every workflow run created on that
-date and later — the three pushes, both `pull_request` runs, and the scheduled
-CodeQL runs — completed with conclusion `startup_failure`, zero jobs and
-`path=BuildFailed`. The last run that actually executed was 2026-07-10
-(`workflow_dispatch`, `path=.github/workflows/ci.yml`). The file itself is not
-the problem: it parses as YAML, `gh api .../actions/workflows` lists `CI` as
-`active` at `.github/workflows/ci.yml`, and the working tree copy is byte-identical
-to `main`. A `startup_failure` with no jobs on *all* workflows at once points at
-the repository/account level — Actions spending limit or billing, or Actions
-disabled for the repo — which only someone with admin rights can check
-(Settings → Billing → Actions, and Settings → Actions → General). Until that is
-resolved the CI claims in `CHANGELOG.md` v0.1.1/v0.1.2 (clap-validator pin,
-model checks, X11-free build) are written but **unverified on CI**.
+**CI is currently not running** (account-level Actions issue, not a workflow
+error): the last executed run was 2026-07-10, so the CI items in `CHANGELOG.md`
+v0.1.1/v0.1.2 (clap-validator pin, model checks, X11-free build) are verified
+locally but not yet on CI.
 
 ## License
 
-Apache 2.0. See [`LICENSE`](LICENSE).
+CLARA's own source is Apache 2.0. See [`LICENSE`](LICENSE).
+
+## Third-party SDKs and licensing
+
+No third-party SDK source is committed here; CMake downloads each one at
+configure time, under its own licence:
+
+| SDK | Pinned revision | Licence |
+|---|---|---|
+| CLAP | `29ffcc27` (1.2.7) | MIT |
+| ARA SDK (Celemony) | `releases/2.3.0` | Apache 2.0 |
+| clap-wrapper | `v0.9.1` | MIT |
+| Steinberg VST3 SDK (VST3 target only) | `v3.7.6_build_18` | dual: GPLv3 **or** Steinberg proprietary agreement |
+
+The VST3 SDK licence matters only when you **distribute a built VST3 binary**: a
+VST3 built against 3.7.x must be released under GPLv3 or under a signed
+Steinberg agreement. Steinberg relicensed the SDK as MIT from v3.8.0
+(2025-10-20); moving the pin there would remove the conflict with Apache 2.0 but
+has not been tested with clap-wrapper v0.9.1. To build without it at all, use
+`-DCLARA_BUILD_VST3=OFF`. "VST" is a Steinberg trademark. See [`NOTICE`](NOTICE).
 
 ## Roadmap
 

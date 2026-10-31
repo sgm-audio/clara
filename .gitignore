@@ -57,3 +57,10 @@ ScottMills_*.md
 venv_rocm/
 venv/
 get-pip.py
+
+# Local AI-assistant / session files — never commit
+AGENTS.md
+CLAUDE.md
+SESSION_LOG.md
+REVIEW_REPORT.md
+omo-config.json
