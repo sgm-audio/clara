@@ -5,7 +5,7 @@
 #include <fstream>
 #include <string>
 
-#define MAMBA_PROJECT_URL "https://github.com/scottmill306/CLARA"
+#define MAMBA_PROJECT_URL "https://github.com/sgm-audio/clara"
 
 #if defined(_WIN32)
 #    define NOMINMAX
