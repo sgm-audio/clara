@@ -658,7 +658,7 @@ Arena allocator
 Build system structure
 Coding conventions (Wall, Werror, fno-rtti, visibility=hidden)
 CI/CD structure
-AGENTS.md (updated with reference to this file)
+README.md (updated with reference to this file)
 ADR-*.md (architectural decisions remain valid)
 ```
 

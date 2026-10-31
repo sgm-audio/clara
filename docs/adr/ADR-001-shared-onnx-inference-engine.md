@@ -203,7 +203,7 @@ The `$ORIGIN` RPATH is set at build time (`BUILD_WITH_INSTALL_RPATH ON` and `CMA
 
 ## Related
 
-- AGENTS.md — build, model export, architecture summary
+- README.md — build, model export, architecture summary
 - `src/core/MambaInferenceEngine.hpp` — class interface with all member declarations
 - `src/core/MambaInferenceEngine.cpp` — implementation
 - `export_mamba_onnx.py` — model definition and ONNX export

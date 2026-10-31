@@ -177,8 +177,7 @@ Each OS gets its own test job or uses a `needs` dependency chain. Tests are OS-a
 
 **Documentation updates:**
 
-- `AGENTS.md` — Update build instructions to mention Windows (MSVC) and macOS (Xcode CLT) prerequisites.
-- `ADR-WORKFLOW.md` — Mark ADR-007 as `[ACCEPTED]` with file reference.
+- `README.md` — Update build instructions to mention Windows (MSVC) and macOS (Xcode CLT) prerequisites.
 - `README.md` — Add cross-platform build badge to CI status.
 
 ## Files Modified — Summary
@@ -266,4 +265,4 @@ Each OS gets its own test job or uses a `needs` dependency chain. Tests are OS-a
 - ADR-006: `dladdr`-Based Model Path Resolution — Evolution from `dladdr` to portable `Platform.hpp`
 - ADR-004: CLAP + ARA Dual-Target Build Architecture — RPATH strategy, `$ORIGIN` → platform-conditional
 - ADR-001: Shared ONNX Inference Engine — ONNX Runtime dependency, deployment contract
-- `AGENTS.md` — Build instructions, model export, architecture summary
+- `README.md` — Build instructions, model export, architecture summary

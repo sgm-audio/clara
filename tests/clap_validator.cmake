@@ -27,7 +27,7 @@
 #     time in tests/CMakeLists.txt is the primary SKIP mechanism.)
 #
 # KNOWN-FAILURE / SKIPPED results:
-#   - The plugin currently has no GUI (CLAP_EXT_GUI deferred, see TODO.md).
+#   - The plugin currently has no GUI (CLAP_EXT_GUI deferred, see docs/TODO.md).
 #     Any clap-validator test tagged with "gui" or "editor" will be SKIPPED by
 #     the validator itself, not by this script. The required categories
 #     (audio-ports, params, state, latency) are non-GUI and are not affected.
