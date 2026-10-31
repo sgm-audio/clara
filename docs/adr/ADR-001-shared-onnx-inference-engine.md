@@ -2,7 +2,7 @@
 
 **Status:** Accepted (implemented) — **Historical / Superseded**
 **Date:** 2026-05-30
-**Note:** This ADR documents the Mamba-1 / ONNX Runtime era. CLARA has since migrated to the Mamba-3 custom C++ engine with flat binary weights. See [`MAMBA3_MIGRATION_PLAN.md`](../MAMBA3_MIGRATION_PLAN.md) for the current architecture.
+**Note:** This ADR documents the Mamba-1 / ONNX Runtime era. CLARA has since migrated to the Mamba-3 custom C++ engine with flat binary weights. See [`MAMBA3_MIGRATION_PLAN.md`](../design/MAMBA3_MIGRATION_PLAN.md) for the current architecture.
 
 ## Context
 
@@ -203,7 +203,7 @@ The `$ORIGIN` RPATH is set at build time (`BUILD_WITH_INSTALL_RPATH ON` and `CMA
 
 ## Related
 
-- AGENTS.md — build, model export, architecture summary
+- README.md — build, model export, architecture summary
 - `src/core/MambaInferenceEngine.hpp` — class interface with all member declarations
 - `src/core/MambaInferenceEngine.cpp` — implementation
 - `export_mamba_onnx.py` — model definition and ONNX export
