@@ -48,7 +48,7 @@ const clap_plugin_descriptor_t mamba_plugin_info = {
     nullptr,
     nullptr,
     "0.1.0",
-    "Real-time Mamba-3 SSM audio processor with ARA2 integration",
+    "Causal SSM audio effect (Mamba-3-inspired); not real time yet",
     mamba_features,
 };
 
@@ -258,14 +258,16 @@ static bool mamba_state_context_load(const clap_plugin_t *plugin, const clap_ist
 const clap_plugin_state_context_t mamba_state_context_extension = {mamba_state_context_save, mamba_state_context_load};
 
 // -----------------------------------------------------------------------------
-// Render + Tail (unchanged)
+// Render + Tail
 // -----------------------------------------------------------------------------
 
+// The engine is slower than real time, so offline render must be allowed;
+// processing is identical in both modes.
 static bool clap_render_has_hard_realtime(const clap_plugin_t *) {
-    return true;
+    return false;
 }
 static bool clap_render_set_mode(const clap_plugin_t *, clap_plugin_render_mode mode) {
-    return mode == CLAP_RENDER_REALTIME;
+    return mode == CLAP_RENDER_REALTIME || mode == CLAP_RENDER_OFFLINE;
 }
 const clap_plugin_render_t mamba_render_extension = {clap_render_has_hard_realtime, clap_render_set_mode};
 
@@ -358,6 +360,12 @@ static void mamba_reset(const clap_plugin_t *plugin) {
 
 static clap_process_status mamba_process(const clap_plugin_t *plugin, const clap_process_t *process) {
     auto *state = (MambaPluginState *) plugin->plugin_data;
+
+    // Apply parameter events sent with this block. Before this, process()
+    // ignored in_events, so host automation never reached the plugin
+    // (clap-validator param-set-events). Applied at block start, not
+    // sample-accurately.
+    clap_params_flush(plugin, process->in_events, process->out_events);
 
     if (process->audio_outputs_count == 0 || process->audio_inputs_count == 0) return CLAP_PROCESS_CONTINUE;
 

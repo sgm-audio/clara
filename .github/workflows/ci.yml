@@ -90,9 +90,13 @@ jobs:
           echo "CLAP_VALIDATOR=$V" >> "$GITHUB_ENV"
           "$V" --version || true
 
-      - name: Validate CLAP plugin
+      # Advisory. A full local run on 2026-10-31 had 5 known failures
+      # (state-reproducibility x3, param-fuzz-basic/bounds timing out because
+      # the engine is slower than real time). The required subset runs in
+      # ctest (tests/clap_validator.cmake) and must pass.
+      - name: Validate CLAP plugin (full, advisory)
         run: |
-          "$CLAP_VALIDATOR" --no-gui build/plugins/MambaSuite.clap 2>&1 || true
+          "$CLAP_VALIDATOR" validate build/plugins/MambaSuite.clap
         continue-on-error: true
 
       - name: Verify ARA library
@@ -137,8 +141,9 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake g++
+          sudo apt-get install -y -qq cmake g++ python3 python3-numpy
 
+      # models/model.bin is generated at configure time (numpy only).
       # The reference fixtures (models/input_ref.bin, output_ref.bin) are
       # committed, so the torch-based generator is not invoked here. See
       # python/tools/dump_engine_reference.py if it ever needs regenerating.
@@ -164,7 +169,6 @@ jobs:
       - name: Install Python deps
         shell: pwsh
         run: |
-          pip install torch --index-url https://download.pytorch.org/whl/cpu --quiet
           pip install numpy --quiet
 
       - name: Configure CMake
@@ -205,6 +209,14 @@ jobs:
     needs: build-windows
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Python deps
+        run: pip install numpy --quiet
 
       - name: Configure CMake with tests
         run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5

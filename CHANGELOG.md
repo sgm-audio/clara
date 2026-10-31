@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### 2026-10-31 cleanup
+
+- Automation now reaches the plugin: `process()` applies `CLAP_EVENT_PARAM_VALUE`
+  events from `in_events` at block start. Before, only `params.flush` read them
+  (clap-validator `param-set-events` / `param-set-no-cookies` failed).
+- Offline render accepted; `has_hard_realtime_requirement` now returns false.
+- Release flags: `-ffast-math` replaced by `-fno-math-errno -fno-trapping-math`.
+  With clang, `-ffast-math` folded the NaN/Inf guards and made bypass inexact
+  (`test_clap_plugin` failed twice).
+- X11 linked through `X11::X11` (plugin and `test_clap_plugin`), so a non-default
+  X11 prefix works.
+- VST3 SDK v3.7.6_build_18 → v3.8.0_build_66 (MIT); clap-wrapper v0.9.1 →
+  v0.14.0. clap-wrapper ≥ 0.10 doesn't create `<name>_as_vst3` when it isn't
+  the top-level project, so CLARA creates `MambaSuite_as_vst3` itself.
+- `tests/clap_validator.cmake`: `--invert-filter --test-filter` (not accepted by
+  clap-validator 0.4.1) → `--exclude`.
+- `test_install_layout` now builds the VST3 target first (CTest fixture).
+- `models/model.bin` is no longer tracked; CMake generates it at configure time
+  (`export_mamba_weights.py --seed 42`, same sha256 as before).
+- Training guides moved to `docs/training/`, design plans to `docs/design/`.
+
 ### Fixed
 
 - **The VST3 wrapper could not find the CLAP plugin.** clap-wrapper locates the
@@ -79,7 +100,7 @@ environment that permits `git clone` but blocks GitHub *release-asset* downloads
 
 Correctness, reproducibility and performance pass, after an external review that
 built the project, ran its tests and benchmarked the engine
-([`docs/BLUEPRINT_COMPARISON.md`](docs/BLUEPRINT_COMPARISON.md)).
+(`docs/BLUEPRINT_COMPARISON.md`, removed 2026-10-31).
 
 ### Fixed — the repository could not be used from a fresh clone
 
@@ -145,7 +166,7 @@ built the project, ran its tests and benchmarked the engine
 ## v0.1.0 — 2026-07-09
 
 First tagged release. Version numbering starts at 0.1.0: the earlier internal
-"1.x" numbers (preserved in [`docs/CHANGELOG.md`](docs/CHANGELOG.md)) predated
+"1.x" numbers (preserved in git history as `docs/CHANGELOG.md`) predated
 any release and overstated maturity.
 
 ### What this is
@@ -187,7 +208,7 @@ audible effect: a proof of the engine and pipeline, not a finished product.
 - CI on ubuntu-22.04 / macos-14 / windows-2022: build, symbol checks,
   clap-validator, model round-trip validation, CTest
 - pre-commit: clang-format, black, ruff
-- Mamba-1/ONNX era fully retired to `archive/mamba1-onnx-era/`
+- Mamba-1/ONNX era fully retired to `archive/mamba1-onnx-era/` (since removed from the tree; see git history)
 
 ### Known limitations
 

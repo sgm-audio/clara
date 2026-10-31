@@ -81,7 +81,7 @@ Both paths read the same `cond` vector via double-buffered atomic pointer swap. 
 
 ## Related
 
-- AGENTS.md — invariant #7 (conditioning vector design summary at line 67)
+- README.md — model and execution-model summary
 - ADR-001: ONNX I/O contract (now 10 inputs, cond is input 10)
 - `src/core/MambaInferenceEngine.hpp` — `kNumInputs=10`, `setConditioning()`, `loadCondWeights()`, `activeCond_`, `combinedWeights_`, `kCondDim`
 - `src/core/MambaInferenceEngine.cpp` — `processBlock()` passes cond as ONNX input + gain modulation, `setConditioning()` atomic swap, `loadCondWeights()` combined weight computation

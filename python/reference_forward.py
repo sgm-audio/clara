@@ -24,7 +24,7 @@ match SsmBlock.cpp, which is the shipping implementation:
 Architecture:  d_model=128, d_inner=256, nheads=4, headdim=64,
                d_state=32, mimo_rank=4, n_layers=6, cond_dim=128
 
-Reference: MAMBA3_MIGRATION_PLAN.md SECTIONS B, C
+Reference: docs/design/MAMBA3_MIGRATION_PLAN.md SECTIONS B, C
 
 Usage:
     python reference_forward.py                  # Run with random weights, check output
@@ -175,7 +175,7 @@ def ssm_block_forward(
     cond: torch.Tensor | None,  # [COND_DIM] — conditioning vector (None = skip FiLM)
 ) -> torch.Tensor:  # [D_MODEL] — output embedding
     """Single-sample forward pass through one SSM block.
-    Steps 0-7 as specified in MAMBA3_MIGRATION_PLAN.md SECTIONS B, C.
+    Steps 0-7 as specified in docs/design/MAMBA3_MIGRATION_PLAN.md SECTIONS B, C.
     """
     # ── Step 0: FiLM conditioning ──
     if cond is not None:

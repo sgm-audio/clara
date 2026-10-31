@@ -27,7 +27,7 @@
 #     time in tests/CMakeLists.txt is the primary SKIP mechanism.)
 #
 # KNOWN-FAILURE / SKIPPED results:
-#   - The plugin currently has no GUI (CLAP_EXT_GUI deferred, see TODO.md).
+#   - The plugin currently has no GUI (CLAP_EXT_GUI deferred, see docs/TODO.md).
 #     Any clap-validator test tagged with "gui" or "editor" will be SKIPPED by
 #     the validator itself, not by this script. The required categories
 #     (audio-ports, params, state, latency) are non-GUI and are not affected.
@@ -36,7 +36,7 @@
 #     informational, not failures.
 #   - Quick mode (default): processing tests (param-fuzz, process-*, and
 #     param-set-wrong, all of which call process() through Mamba inference)
-#     are excluded via --invert-filter because Mamba runs in CPU-only ONNX
+#     are excluded via --exclude because Mamba runs in CPU-only ONNX
 #     Runtime with untrained random weights. The structural checks
 #     (descriptor-consistency, features, param-conversions, scan-time,
 #     audio-ports shape) still run. Pass CLAP_VALIDATOR_FULL=ON at configure
@@ -75,11 +75,11 @@ message(STATUS "[clap_validator] Mode:    ${TEST_LABEL}")
 message(STATUS "[clap_validator] Required: ${REQUIRED_CATEGORIES}")
 
 # Build the command. In quick mode (TEST_FILTER non-empty), pass
-# --invert-filter to SKIP the named tests instead of including-only.
+# --exclude (clap-validator 0.4.x) to skip the named tests.
 set(_cv_command "${CLAP_VALIDATOR_EXE}" validate "${PLUGIN_PATH}")
 if(TEST_FILTER)
     message(STATUS "[clap_validator] Skipping tests matching: ${TEST_FILTER}")
-    list(APPEND _cv_command --invert-filter --test-filter "${TEST_FILTER}")
+    list(APPEND _cv_command --exclude "${TEST_FILTER}")
 endif()
 
 message(STATUS "[clap_validator] Running validate ...")
