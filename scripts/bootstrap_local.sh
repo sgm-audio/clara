@@ -15,7 +15,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VENV_DIR="/home/sgm/micromamba/envs/rocm_torch"
+VENV_DIR="${CLARA_VENV:-${HOME}/micromamba/envs/rocm_torch}"
 CHECKPOINT_DIR="${SCRIPT_DIR}/checkpoints_clara"
 DATA_DIR="${HOME}/datasets/musdb18hq/train"
 PRECOMP_DIR="${HOME}/datasets/musdb18hq/precomputed"
