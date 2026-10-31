@@ -20,7 +20,9 @@ if(MSVC)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 else()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Werror=return-type")
-    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -ffast-math -DNDEBUG -fno-rtti")
+    # No -ffast-math: it implies -ffinite-math-only, which lets clang fold the
+    # NaN/Inf guards (mambaIsFinite) and reassociate the bypass mix.
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fno-math-errno -fno-trapping-math -DNDEBUG -fno-rtti")
     set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g -DDEBUG")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")  # ponytail: POSITION_INDEPENDENT_CODE doesn't propagate to C for MODULE targets on CMake 4.3
 endif()
@@ -73,13 +75,13 @@ if(CLARA_BUILD_VST3 AND "${VST3_SDK_ROOT}" STREQUAL "")
     FetchContent_Declare(
         clara_vst3sdk
         GIT_REPOSITORY https://github.com/steinbergmedia/vst3sdk.git
-        GIT_TAG v3.7.6_build_18
+        GIT_TAG v3.8.0_build_66
         GIT_SUBMODULES base public.sdk pluginterfaces
         GIT_SHALLOW FALSE
     )
     FetchContent_GetProperties(clara_vst3sdk)
     if(NOT clara_vst3sdk_POPULATED)
-        message(STATUS "CLARA: fetching VST3 SDK v3.7.6_build_18 via git (bypasses clap-wrapper's CPM bootstrap)")
+        message(STATUS "CLARA: fetching VST3 SDK v3.8.0_build_66 (MIT) via git (bypasses clap-wrapper's CPM bootstrap)")
         FetchContent_Populate(clara_vst3sdk)
     endif()
     if(EXISTS "${clara_vst3sdk_SOURCE_DIR}/public.sdk")
@@ -93,7 +95,7 @@ if(CLARA_BUILD_VST3)
     FetchContent_Declare(
         clap_wrapper
         GIT_REPOSITORY https://github.com/free-audio/clap-wrapper.git
-        GIT_TAG v0.9.1
+        GIT_TAG v0.14.0
     )
     # Populate without MakeAvailable to avoid running its CMakeLists.txt twice
     FetchContent_GetProperties(clap_wrapper)
@@ -167,7 +169,7 @@ if(UNIX AND NOT APPLE)
     # without it instead of failing the build.
     find_package(X11 QUIET)
     if(X11_FOUND)
-        target_link_libraries(MambaSuiteClap PRIVATE pthread dl X11)
+        target_link_libraries(MambaSuiteClap PRIVATE pthread dl X11::X11)
     else()
         message(STATUS "CLARA: X11 not found — building MambaSuiteClap without the native GUI")
         target_compile_definitions(MambaSuiteClap PRIVATE CLARA_NO_NATIVE_GUI=1)
@@ -244,6 +246,17 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 if(CLARA_BUILD_VST3)
     add_subdirectory(${clap_wrapper_SOURCE_DIR} build/clap_wrapper_build EXCLUDE_FROM_ALL)
+    # clap-wrapper >= 0.10 only creates <name>_as_vst3 when it is the top-level
+    # project, so create it here with its own wrapper function.
+    if(NOT TARGET MambaSuite_as_vst3)
+        add_library(MambaSuite_as_vst3 MODULE EXCLUDE_FROM_ALL)
+        target_add_vst3_wrapper(
+            TARGET            MambaSuite_as_vst3
+            OUTPUT_NAME       "${CLAP_WRAPPER_OUTPUT_NAME}"
+            BUNDLE_IDENTIFIER "${CLAP_WRAPPER_BUNDLE_IDENTIFIER}"
+            BUNDLE_VERSION    "${CLAP_WRAPPER_BUNDLE_VERSION}"
+        )
+    endif()
 endif()
 
 # GCC 16 false positive in clap-wrapper's vendored sha1.cpp (stringop-overflow
@@ -251,6 +264,11 @@ endif()
 # just this diagnostic on its interface target.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND TARGET clap-wrapper-compile-options)
     target_compile_options(clap-wrapper-compile-options INTERFACE -Wno-error=stringop-overflow)
+endif()
+# clang: the VST3 SDK headers use push/pop pack pragmas across includes, which
+# clang reports as -Wpragma-pack; clap-wrapper's -Werror turns that into an error.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND TARGET clap-wrapper-compile-options)
+    target_compile_options(clap-wrapper-compile-options INTERFACE -Wno-error=pragma-pack)
 endif()
 
 # Strip release builds (Unix linker flag — generator-expr for multi-config support)
@@ -285,6 +303,32 @@ endif()
 # every configuration, so single-config (Ninja, Unix Makefiles) and
 # multi-config (VS, Xcode) generators both get the right layout.
 # ---------------------------------------------------------------------------
+
+# --- Generate models/model.bin (untrained test weights) ---
+# Not tracked in git: python/tools/export_mamba_weights.py --seed 42 is
+# deterministic (sha256 in models/ref_meta.txt) and needs only numpy.
+# Runs at configure time, only if the file doesn't exist yet. The plugin and
+# the tests both load it.
+set(MAMBA3_MODEL_BIN "${CMAKE_SOURCE_DIR}/models/model.bin")
+if(NOT EXISTS "${MAMBA3_MODEL_BIN}")
+    find_program(PYTHON3_EXE NAMES python3 python)
+    if(PYTHON3_EXE)
+        execute_process(
+            COMMAND ${PYTHON3_EXE}
+                "${CMAKE_SOURCE_DIR}/python/tools/export_mamba_weights.py"
+                --output "${MAMBA3_MODEL_BIN}" --seed 42
+            RESULT_VARIABLE _m3_result
+            OUTPUT_VARIABLE _m3_out
+            ERROR_VARIABLE  _m3_err
+            TIMEOUT 60
+        )
+        if(NOT _m3_result EQUAL 0)
+            message(WARNING "Failed to generate ${MAMBA3_MODEL_BIN}: ${_m3_err}")
+        endif()
+    else()
+        message(WARNING "python3 not found — the plugin has no weights and Mamba-3 tests will SKIP. Install python3 + numpy.")
+    endif()
+endif()
 
 # Models -> <binary-dir>/models/
 if(EXISTS ${CMAKE_SOURCE_DIR}/models)
