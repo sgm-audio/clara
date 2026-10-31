@@ -277,31 +277,12 @@ python python/training/train_clara.py \
   --batch 2
 ```
 
-### Cloud Training (MI300X)
+### Cloud Training
 
-See `python/training/train_clara.py` for training options. For the launch workflow:
-
-```bash
-# On the cloud VM — the launcher is archived, not in scripts/ (verified 2026-10-04:
-# the URL this block used to print pointed at a different account and a missing file)
-git clone https://github.com/sgm-audio/clara.git && cd clara
-bash archive/old-training-files/setup_cloud.sh
-```
-
-This installs ROCm + PyTorch, downloads MUSDB18-HQ, precomputes features, starts cost monitoring (warns at $75, kills at $90), syncs checkpoints to S3 every 5 minutes, and begins Stage 0 training.
-
-### Monitoring
-
-```bash
-# GPU status (inside distrobox or on cloud VM)
-watch -n 2 rocm-smi --showtemp --showpower --showuse --showmemuse
-
-# Training log
-tail -f checkpoints_clara/train.log
-
-# Most recent checkpoint
-ls -lt checkpoints_clara/ | head -5
-```
+The original MI300X cloud launcher (ROCm + PyTorch install, MUSDB18-HQ download,
+cost monitoring, S3 checkpoint sync) was retired with the Mamba-1/ONNX-era
+scripts. Use `python/training/train_clara.py` directly on the VM; see its
+`--help` for options.
 
 ---
 
@@ -514,4 +495,3 @@ Followed by the concatenated float32 weight arrays (13 per layer).
 - [`MAMBA3_MIGRATION_PLAN.md`](MAMBA3_MIGRATION_PLAN.md) — Full architecture, C++ engine spec, product roadmap, risk register
 - [`TRAINING_QUICKSTART.md`](TRAINING_QUICKSTART.md) — One-command quick start
 - [`reference_forward.py`](../python/reference_forward.py) — PyTorch bit-exact gold standard
-- [`MAMBA3_DRIVE_AUDIT.md`](MAMBA3_DRIVE_AUDIT.md) — mamba3 external drive audit
