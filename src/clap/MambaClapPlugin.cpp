@@ -24,7 +24,9 @@
 #include <clap/ext/tail.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <new>
 
@@ -130,27 +132,33 @@ static bool clap_params_value_to_text(const clap_plugin_t *, clap_id param_id, d
     }
 }
 
+// Percent parsing shared by Wet/Dry and Intensity. strtod, so "nan" and "inf"
+// can be rejected explicitly: std::clamp(NaN, 0, 1) returns NaN, and a NaN
+// parameter poisons the engine. A bare number means percent, which is what
+// value_to_text prints ("50.0%").
+static bool mambaParsePercent(const char *display, double *value) {
+    if (!display) return false;
+    char *end = nullptr;
+    errno = 0;
+    const double parsed = std::strtod(display, &end);
+    if (end == display) return false;
+    if (!mambaIsFinite(parsed)) return false;
+    while (*end == ' ' || *end == '\t') ++end;
+    if (*end == '%') ++end;
+    while (*end == ' ' || *end == '\t') ++end;
+    if (*end != '\0') return false;
+    *value = std::clamp(parsed / 100.0, 0.0, 1.0);
+    return true;
+}
+
 static bool clap_params_text_to_value(const clap_plugin_t *, clap_id param_id, const char *display, double *value) {
     switch (param_id) {
         case PARAM_BYPASS:
             *value = (std::strcmp(display, "On") == 0 || std::strcmp(display, "1") == 0) ? 1.0 : 0.0;
             return true;
         case PARAM_WET_DRY:
-        case PARAM_INTENSITY: {
-            double pct = 0.0;
-            if (std::strchr(display, '%')) {
-                if (std::sscanf(display, "%lf%%", &pct) == 1) {
-                    *value = std::clamp(pct / 100.0, 0.0, 1.0);
-                    return true;
-                }
-            } else {
-                if (std::sscanf(display, "%lf", &pct) == 1) {
-                    *value = std::clamp(pct, 0.0, 1.0);
-                    return true;
-                }
-            }
-            return false;
-        }
+        case PARAM_INTENSITY:
+            return mambaParsePercent(display, value);
         default:
             return false;
     }
@@ -207,15 +215,51 @@ struct MambaPresetData {
 };
 #pragma pack(pop)
 
+// CLAP streams may move fewer bytes per call than asked (the spec allows a
+// short read/write), so a single call is not enough. These loop until done and
+// treat a zero/negative return as failure.
+static bool mambaWriteAll(const clap_ostream_t *stream, const void *buffer, size_t size) {
+    const auto *p = static_cast<const uint8_t *>(buffer);
+    size_t done = 0;
+    while (done < size) {
+        const int64_t n = stream->write(stream, p + done, static_cast<uint64_t>(size - done));
+        if (n <= 0) return false;
+        done += static_cast<size_t>(n);
+    }
+    return true;
+}
+
+static bool mambaReadAll(const clap_istream_t *stream, void *buffer, size_t size) {
+    auto *p = static_cast<uint8_t *>(buffer);
+    size_t done = 0;
+    while (done < size) {
+        const int64_t n = stream->read(stream, p + done, static_cast<uint64_t>(size - done));
+        if (n <= 0) return false;
+        done += static_cast<size_t>(n);
+    }
+    return true;
+}
+
+// Loading a state changes parameter values under the host's feet. CLAP requires
+// a rescan request in that case; without it clap-validator's
+// state-reproducibility-* tests report "these parameter values changed without a
+// rescan request" even though the values themselves were restored correctly.
+static void mambaRequestParamRescan(MambaPluginState *state) {
+    if (!state->host) return;
+    const auto *params =
+        static_cast<const clap_host_params_t *>(state->host->get_extension(state->host, CLAP_EXT_PARAMS));
+    if (params && params->rescan) params->rescan(state->host, CLAP_PARAM_RESCAN_VALUES);
+}
+
 static bool mamba_state_save(const clap_plugin_t *plugin, const clap_ostream_t *stream) {
     auto *state = (MambaPluginState *) plugin->plugin_data;
     const int32_t version = 2;
-    if (stream->write(stream, &version, sizeof(version)) < 0) return false;
     MambaPresetData data;
+    std::memset(&data, 0, sizeof(data)); // deterministic bytes; the binary test compares blobs
     data.bypass = state->bypass.load(std::memory_order_acquire);
     data.wetDry = state->wetDry.load(std::memory_order_acquire);
     data.intensity = state->intensity.load(std::memory_order_acquire);
-    return stream->write(stream, &data, sizeof(data)) >= 0;
+    return mambaWriteAll(stream, &version, sizeof(version)) && mambaWriteAll(stream, &data, sizeof(data));
 }
 
 // Shared by the state and state-context loaders, which differ only in whether
@@ -223,19 +267,19 @@ static bool mamba_state_save(const clap_plugin_t *plugin, const clap_ostream_t *
 // are clamped to the declared [0, 1] range instead of being stored verbatim.
 static bool mambaReadPresetState(MambaPluginState *state, const clap_istream_t *stream, bool resetEngines) {
     int32_t version = 0;
-    if (stream->read(stream, &version, sizeof(version)) < (int64_t) sizeof(version)) return false;
-    if (version > 2) return false;
+    if (!mambaReadAll(stream, &version, sizeof(version))) return false;
+    if (version < 0 || version > 2) return false;
     MambaPresetData data;
-    if (stream->read(stream, &data, sizeof(data)) < (int64_t) sizeof(data)) return false;
+    if (!mambaReadAll(stream, &data, sizeof(data))) return false;
     const float bypass = mambaClampParamValue(data.bypass);
     state->bypass.store(bypass, std::memory_order_release);
     state->wetDry.store(mambaClampParamValue(data.wetDry), std::memory_order_release);
     state->intensity.store(mambaClampParamValue(data.intensity), std::memory_order_release);
-    state->currentBypassValue = bypass;
-    if (resetEngines) {
-        if (state->engineL) state->engineL->reset_states();
-        if (state->engineR) state->engineR->reset_states();
-    }
+    // The audio thread owns currentBypassValue; it snaps to the loaded value
+    // when it consumes resetRequested.
+    state->targetBypassValue.store(bypass, std::memory_order_release);
+    if (resetEngines) state->resetRequested.store(true, std::memory_order_release);
+    mambaRequestParamRescan(state);
     return true;
 }
 
@@ -271,8 +315,11 @@ static bool clap_render_set_mode(const clap_plugin_t *, clap_plugin_render_mode 
 }
 const clap_plugin_render_t mamba_render_extension = {clap_render_has_hard_realtime, clap_render_set_mode};
 
-static uint32_t clap_tail_get(const clap_plugin_t *) {
-    return 0;
+static uint32_t clap_tail_get(const clap_plugin_t *plugin) {
+    auto *state = (MambaPluginState *) plugin->plugin_data;
+    auto *engine = state->enginePtrL.load(std::memory_order_acquire);
+    if (!engine) return 0;
+    return engine->tail_samples(static_cast<double>(state->sampleRate));
 }
 const clap_plugin_tail_t mamba_tail_extension = {clap_tail_get};
 
@@ -358,6 +405,21 @@ static void mamba_reset(const clap_plugin_t *plugin) {
 // Audio Processing
 // -----------------------------------------------------------------------------
 
+static void mambaUpdateMeters(MambaPluginState *state, const clap_process_t *process, uint32_t chans, uint32_t n) {
+    float peakInVal = 0.0f, peakOutVal = 0.0f;
+    for (uint32_t ch = 0; ch < chans; ++ch) {
+        for (uint32_t s = 0; s < n; ++s) {
+            peakInVal = std::max(peakInVal, std::abs(process->audio_inputs[0].data32[ch][s]));
+            peakOutVal = std::max(peakOutVal, std::abs(process->audio_outputs[0].data32[ch][s]));
+        }
+    }
+    const float alpha = 0.3f;
+    const float prevIn = state->peakIn.load(std::memory_order_relaxed);
+    const float prevOut = state->peakOut.load(std::memory_order_relaxed);
+    state->peakIn.store(prevIn + alpha * (peakInVal - prevIn), std::memory_order_relaxed);
+    state->peakOut.store(prevOut + alpha * (peakOutVal - prevOut), std::memory_order_relaxed);
+}
+
 static clap_process_status mamba_process(const clap_plugin_t *plugin, const clap_process_t *process) {
     auto *state = (MambaPluginState *) plugin->plugin_data;
 
@@ -380,13 +442,21 @@ static clap_process_status mamba_process(const clap_plugin_t *plugin, const clap
     float targetBypass = state->bypass.load(std::memory_order_acquire);
     float intensityVal = state->intensity.load(std::memory_order_acquire);
 
+    auto *engineL = state->enginePtrL.load(std::memory_order_acquire);
+    auto *engineR = state->enginePtrR.load(std::memory_order_acquire);
+
+    // A state load (main thread) only sets this flag. The reset itself runs
+    // here so it never overlaps process() on the audio thread.
+    if (state->resetRequested.exchange(false, std::memory_order_acq_rel)) {
+        if (engineL) engineL->reset_states();
+        if (engineR) engineR->reset_states();
+        state->currentBypassValue = state->targetBypassValue.load(std::memory_order_acquire);
+    }
+
     const float crossfadeStep =
         (targetBypass != state->currentBypassValue)
             ? ((targetBypass > state->currentBypassValue) ? state->crossfadeStep : -state->crossfadeStep)
             : 0.0f;
-
-    auto *engineL = state->enginePtrL.load(std::memory_order_acquire);
-    auto *engineR = state->enginePtrR.load(std::memory_order_acquire);
 
     if (!engineL || !engineR || state->modelReloadPending.load(std::memory_order_acquire)) {
         // Passthrough
@@ -396,6 +466,20 @@ static clap_process_status mamba_process(const clap_plugin_t *plugin, const clap
         for (uint32_t ch = processChans; ch < outChans; ++ch)
             std::memcpy(process->audio_outputs[0].data32[ch], process->audio_outputs[0].data32[0],
                         numSamples * sizeof(float));
+        return CLAP_PROCESS_CONTINUE;
+    }
+
+    // Fully bypassed and the ramp has finished: copy the input through and skip
+    // the engines. The SSM state is left frozen while bypassed and resumes from
+    // where it stopped when bypass is lifted (see README).
+    if (targetBypass >= 1.0f && state->currentBypassValue >= 1.0f) {
+        for (uint32_t ch = 0; ch < processChans; ++ch)
+            std::memcpy(process->audio_outputs[0].data32[ch], process->audio_inputs[0].data32[ch],
+                        numSamples * sizeof(float));
+        for (uint32_t ch = processChans; ch < outChans; ++ch)
+            std::memcpy(process->audio_outputs[0].data32[ch], process->audio_outputs[0].data32[0],
+                        numSamples * sizeof(float));
+        mambaUpdateMeters(state, process, processChans, numSamples);
         return CLAP_PROCESS_CONTINUE;
     }
 
@@ -437,21 +521,7 @@ static clap_process_status mamba_process(const clap_plugin_t *plugin, const clap
                     numSamples * sizeof(float));
 
     // Level meter (RMS over current block, smoothed)
-    float peakInVal = 0.0f, peakOutVal = 0.0f;
-    for (uint32_t ch = 0; ch < processChans; ++ch) {
-        for (uint32_t s = 0; s < numSamples; ++s) {
-            float in = process->audio_inputs[0].data32[ch][s];
-            float out = process->audio_outputs[0].data32[ch][s];
-            peakInVal = std::max(peakInVal, std::abs(in));
-            peakOutVal = std::max(peakOutVal, std::abs(out));
-        }
-    }
-    // Smooth with exponential moving average
-    const float alpha = 0.3f;
-    float prevIn = state->peakIn.load(std::memory_order_relaxed);
-    float prevOut = state->peakOut.load(std::memory_order_relaxed);
-    state->peakIn.store(prevIn + alpha * (peakInVal - prevIn), std::memory_order_relaxed);
-    state->peakOut.store(prevOut + alpha * (peakOutVal - prevOut), std::memory_order_relaxed);
+    mambaUpdateMeters(state, process, processChans, numSamples);
 
     return CLAP_PROCESS_CONTINUE;
 }

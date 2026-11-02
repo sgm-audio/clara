@@ -18,7 +18,7 @@ CI job exist; neither has been checked on this branch.
 |---|---|
 | Build, Linux | CLAP, ARA library and VST3 build from a fresh clone. Release, zig clang 22.1.8 (libc++), CMake + Ninja. |
 | Tests | `ctest`: 7/7 pass (see *Tests*). |
-| clap-validator 0.4.1, full run | 44 tests: 27 pass, 5 fail, 1 warning, 11 skipped. The failures are state-reproducibility-basic/binary/buffered, and param-fuzz-basic/bounds timing out at 45 s. |
+| clap-validator 0.4.1, full run | 44 tests: 30 pass, 2 fail, 0 warnings, 12 skipped. The two failures are param-fuzz-basic/bounds timing out at 45 s; the engine costs about 0.28 ms per sample. |
 | Real time | No. 0.19–0.21 ms per sample, about 1,000% of one core per 48 kHz mono stream. |
 | Weights | Untrained. Generated at configure time with a fixed seed. |
 | VST3 | Builds, and `GetPluginFactory()` returns a factory when `MambaSuite.clap` is in `~/.clap`. Not loaded in a DAW. |
@@ -122,14 +122,26 @@ non-commercial research only.
 
 Three parameters: bypass (50 ms crossfade), wet/dry, intensity. Parameter
 events are applied at the start of each block, not sample-accurately. Latency
-is reported as 0 samples (no conv1d). Tail is reported as 0, although the
-state decays over time. Offline render is accepted.
+is reported as 0 samples (no conv1d). Offline render is accepted.
+
+Bypass: while bypass is fully on the engine does not run; input is copied to
+output. The SSM state is frozen, not reset, so lifting bypass resumes from where
+it stopped instead of restarting the reverb tail. A state load resets the engine
+at the start of the next block (on the audio thread).
+
+Tail: reported as the number of samples until the slowest zero-input pole has
+decayed 60 dB, clamped to 10 s. With the current random weights `dt_bias` puts
+that pole at |A_bar| ≈ 0.61 per sample, which is 14 samples at any sample rate
+(0.3 ms at 48 kHz); louder input or more intensity raises dt and shortens it
+further. Before activation the engine has no weights loaded and the tail is 0.
+See [`src/core/SsmInferenceCore.cpp`](src/core/SsmInferenceCore.cpp)
+(`tail_samples`).
 
 Known problems:
-- State load calls `reset_states()` on the main thread while the audio thread
-  may be processing (data race).
-- The engine runs even when bypass has settled at 1.0.
-- clap-validator state-reproducibility fails (above).
+- clap-validator's `param-fuzz-basic` and `param-fuzz-bounds` time out at 45 s:
+  the engine costs about 0.28 ms per sample here, so the fuzz cases never
+  finish. That is a speed problem, not a correctness one (see
+  [`docs/TODO.md`](docs/TODO.md)).
 
 ## Tests
 
@@ -138,8 +150,9 @@ Known problems:
 | `test_mamba3` | init, silence/sine response, conditioning, determinism, state continuity, long-run finiteness, Python↔C++ agreement on 512 samples, 1-ULP sensitivity |
 | `test_perf_budget` | per-sample cost vs a same-machine calibration loop (ratio budget 3.0) |
 | `test_clap_plugin` | descriptor, params, state round-trip, bypass, process path, param events in `process()`, render modes |
+| `test_state_roundtrip` | params set through `process()` survive save/load, 1- and 7-byte streams, text parsing (NaN/Inf rejected), tail, bypass early-out, state load during `process()` |
 | `test_ara_controller` | ARA document controller lifecycle, archive round-trip |
-| `clap_validator` | clap-validator subset; skips (77) if it isn't installed. Excludes the slow tests and state-reproducibility, which fails |
+| `clap_validator` | clap-validator subset; skips (77) if it isn't installed. Excludes the two fuzz tests that time out at 45 s |
 | `build_vst3_for_install`, `test_install_layout` | builds the VST3, then checks the `cmake --install` layout |
 
 Results on the machine above, 2026-10-31:

@@ -252,8 +252,12 @@ static int test_param_text_to_value() {
     TEST_ASSERT(val == 0.75, "wetDry \"75%\" -> 0.75");
     TEST_ASSERT(params->text_to_value(&plugin, PARAM_WET_DRY, "50.0%", &val), "wetDry \"50.0%\" -> value");
     TEST_ASSERT(val == 0.5, "wetDry \"50.0%\" -> 0.5");
+    // A bare number means percent, matching what value_to_text prints
+    // ("50.0%") and clap-validator's param-conversions expectations. The old
+    // behaviour read "0.5" as a fraction and "50" as a fraction too, so the
+    // same user-visible text meant two different values.
     TEST_ASSERT(params->text_to_value(&plugin, PARAM_WET_DRY, "0.5", &val), "wetDry \"0.5\" -> value");
-    TEST_ASSERT(val == 0.5, "wetDry \"0.5\" -> 0.5");
+    TEST_ASSERT(std::fabs(val - 0.005) < 1e-12, "wetDry \"0.5\" -> 0.005 (percent, not a fraction)");
 
     // Intensity (same parsing as Wet/Dry)
     TEST_ASSERT(params->text_to_value(&plugin, PARAM_INTENSITY, "75%", &val), "intensity \"75%\" -> value");
@@ -261,7 +265,7 @@ static int test_param_text_to_value() {
     TEST_ASSERT(params->text_to_value(&plugin, PARAM_INTENSITY, "50.0%", &val), "intensity \"50.0%\" -> value");
     TEST_ASSERT(val == 0.5, "intensity \"50.0%\" -> 0.5");
     TEST_ASSERT(params->text_to_value(&plugin, PARAM_INTENSITY, "0.5", &val), "intensity \"0.5\" -> value");
-    TEST_ASSERT(val == 0.5, "intensity \"0.5\" -> 0.5");
+    TEST_ASSERT(std::fabs(val - 0.005) < 1e-12, "intensity \"0.5\" -> 0.005 (percent)");
 
     TEST_PASS("param text to value");
     return 0;
@@ -290,7 +294,12 @@ static int test_state_save_load_roundtrip() {
     TEST_ASSERT(loadState.bypass.load() == 1.0f, "bypass restored");
     TEST_ASSERT(loadState.wetDry.load() == 0.3f, "wetDry restored");
     TEST_ASSERT(loadState.intensity.load() == 0.7f, "intensity restored");
-    TEST_ASSERT(loadState.currentBypassValue == 1.0f, "currentBypassValue restored");
+    // The load runs on the main thread, so it only sets the target and asks the
+    // audio thread for a reset; currentBypassValue snaps to it at the start of
+    // the next process() (see test_state_roundtrip for that half).
+    TEST_ASSERT(loadState.targetBypassValue.load() == 1.0f, "targetBypassValue set by load");
+    TEST_ASSERT(loadState.resetRequested.load(), "load requests an engine reset");
+    TEST_ASSERT(loadState.currentBypassValue == 0.0f, "currentBypassValue untouched by the main thread");
 
     // Verify saved stream is exactly 4 (version) + 12 (3 floats) = 16 bytes
     TEST_ASSERT(os.buf.size() == 16, "serialized size is 16 bytes");

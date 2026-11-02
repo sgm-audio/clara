@@ -77,6 +77,34 @@ set_tests_properties(test_perf_budget PROPERTIES
     LABELS "perf;budget"
 )
 
+# --- Test: CLAP state round-trip (params through process(), 1-byte streams) ---
+# Included unconditionally: the round-trip and text tests do not need weights;
+# only the bypass timing check does, and that one skips without a model.
+add_executable(test_state_roundtrip
+    test_state_roundtrip.cpp
+    ${CMAKE_SOURCE_DIR}/src/clap/MambaClapPlugin.cpp
+)
+target_include_directories(test_state_roundtrip PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/clap
+    ${CMAKE_SOURCE_DIR}/src/core
+    ${clap_SOURCE_DIR}/include
+)
+target_link_libraries(test_state_roundtrip PRIVATE Mamba3Core)
+if(UNIX AND NOT APPLE)
+    if(X11_FOUND)
+        target_link_libraries(test_state_roundtrip PRIVATE pthread dl X11::X11)
+    else()
+        target_compile_definitions(test_state_roundtrip PRIVATE CLARA_NO_NATIVE_GUI=1)
+        target_link_libraries(test_state_roundtrip PRIVATE pthread dl)
+    endif()
+endif()
+target_compile_definitions(test_state_roundtrip PRIVATE
+    TEST_MODEL_DIR="${MAMBA3_MODEL_DIR}"
+)
+add_test(NAME test_state_roundtrip COMMAND test_state_roundtrip)
+set_tests_properties(test_state_roundtrip PROPERTIES TIMEOUT 300)
+
 # --- Test: CLAP plugin (Mamba-3) ---
 add_executable(test_clap_plugin
     test_clap_plugin.cpp
@@ -163,14 +191,14 @@ else()
     #   - param-fuzz-basic          (50 random param sets, process 5 buffers each)
     #   - param-set-wrong-namespace (calls process to verify param unchanged)
     #   - process-audio-out-of-place-basic / process-note-* (process audio)
-    #   - state-reproducibility-*   (roundtrip requires process() per clap docs)
-    #     NOTE 2026-10-31: these three are not slow, they FAIL (in ~2 ms) on a
-    #     full run, so this filter also hides a real failure. A full run
-    #     (clap-validator 0.4.1, Release, zig clang 22.1.8): 44 run, 27 pass,
-    #     5 fail (state-reproducibility-basic/binary/buffered; param-fuzz-basic
-    #     and param-fuzz-bounds time out at 45 s), 11 skipped.
-    #   - state-buffered-streams    (same; reproducibility check via process)
-    set(_clap_validator_test_filter "fuzz|process|param-set-wrong|state-reproducibility|state-buffered")
+    #   - state-buffered-streams    (reproducibility check via process)
+    # state-reproducibility-* used to be listed here because it failed in ~2 ms;
+    # it passes now (values come back and the load requests a param rescan), so
+    # it runs in this subset. A full run (clap-validator 0.4.1) still has
+    # param-fuzz-basic and param-fuzz-bounds timing out at 45 s because the
+    # engine costs ~0.28 ms per sample; those two are excluded here and listed
+    # in docs/TODO.md.
+    set(_clap_validator_test_filter "fuzz|process|param-set-wrong|state-buffered")
     set(_clap_validator_test_label "quick")
 endif()
 

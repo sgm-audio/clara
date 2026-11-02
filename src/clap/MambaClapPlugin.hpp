@@ -53,7 +53,17 @@ struct MambaPluginState {
     std::atomic<float> intensity{0.5f};
 
     float sampleRate{44100.0f};
+
+    // Audio-thread only. The main thread writes targetBypassValue; the audio
+    // thread ramps currentBypassValue towards it and snaps once when a state
+    // load asked for a reset. Never written from the main thread.
     float currentBypassValue{0.0f};
+    std::atomic<float> targetBypassValue{0.0f};
+
+    // Set by state load (main thread), consumed at the start of process() so
+    // the engine is only ever reset from the audio thread.
+    std::atomic<bool> resetRequested{false};
+
     float crossfadeStep{0.001f};
 
     std::vector<float> chIn[2];

@@ -22,6 +22,44 @@
 
 namespace clara::mamba3 {
 
+// ── Introspection ─────────────────────────────────────────────────
+
+uint32_t SsmInferenceCore::tail_samples(double sample_rate) const {
+    if (!ready_ || sample_rate <= 0.0) return 0;
+
+    // The recurrence (SSMBlock::step_dt_A) is
+    //   dt = softplus(dd_dt + dt_bias), A = -softplus(dd_A),
+    //   A_bar = (1 + A*dt/2) / (1 - A*dt/2),   h <- A_bar*h + B*x
+    // and |A_bar| < 1, so the impulse response decays like |A_bar|^n.
+    //
+    // Zero input is the longest tail this engine can have: it makes dd_dt and
+    // dd_A zero, so dt = softplus(dt_bias) (the smallest dt) and A = -log 2
+    // (the largest |A|); any signal raises dt and shortens the ringing. That
+    // also makes the number independent of the input, which is what a host
+    // wants from clap_plugin_tail. Conditioning is taken as neutral here; the
+    // intensity knob only raises dt, so it shortens the tail as well.
+    float slowest = 0.0f;
+    for (size_t l = 0; l < MAX_LAYERS; ++l) {
+        const SSMWeights *w = layer_weights_[l];
+        if (!w) continue;
+        for (size_t h = 0; h < MAX_NHEADS; ++h) {
+            const float xd = w->dt_bias[h];
+            const float dt = (xd > 20.0f) ? xd : (xd < -20.0f ? std::exp(xd) : std::log1p(std::exp(xd)));
+            const float a = -0.6931472f; // -softplus(0)
+            const float half_a = 0.5f * a * dt;
+            const float a_bar = std::fabs((1.0f + half_a) / (1.0f - half_a));
+            if (a_bar > slowest && a_bar < 1.0f) slowest = a_bar;
+        }
+    }
+
+    if (slowest <= 0.0f) return 0;
+    // Samples until |A_bar|^n = 1e-3 (-60 dB).
+    const double n = std::log(1.0e-3) / std::log(static_cast<double>(slowest));
+    const double cap = 10.0 * sample_rate;
+    if (!(n > 0.0)) return 0; // NaN-safe
+    return static_cast<uint32_t>(std::min(n, cap));
+}
+
 // ── Lifecycle ──────────────────────────────────────────────────────
 
 bool SsmInferenceCore::init(const char *weight_filepath) {
