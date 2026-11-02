@@ -348,10 +348,16 @@ static bool is_lfs_pointer(const std::string &path) {
 static void test_python_reference(const std::string &model_path) {
     std::printf("\n--- test_python_reference (python/reference_forward.py) ---\n");
 
-    // Reference files live next to the model
+    // Reference files live next to the model unless the build points them at
+    // the tracked fixtures in <source>/models (the model itself is generated
+    // into the build directory).
+#ifdef TEST_REF_DIR
+    std::string dir = std::string(TEST_REF_DIR) + "/";
+#else
     std::string input_path = model_path;
     size_t pos = input_path.rfind('/');
     std::string dir = (pos != std::string::npos) ? input_path.substr(0, pos + 1) : "";
+#endif
     std::string ref_input = dir + "input_ref.bin";
     std::string ref_output = dir + "output_ref.bin";
 

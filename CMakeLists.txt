@@ -304,17 +304,39 @@ endif()
 # multi-config (VS, Xcode) generators both get the right layout.
 # ---------------------------------------------------------------------------
 
-# --- Generate models/model.bin (untrained test weights) ---
+# --- Generate model.bin (untrained test weights) ---
 # Not tracked in git: python/tools/export_mamba_weights.py --seed 42 is
 # deterministic (sha256 in models/ref_meta.txt) and needs only numpy.
-# Runs at configure time, only if the file doesn't exist yet. The plugin and
-# the tests both load it.
-set(MAMBA3_MODEL_BIN "${CMAKE_SOURCE_DIR}/models/model.bin")
+#
+# The file is generated into the build directory, not into the source tree, so
+# two build directories cannot fight over one file and a `git status` stays
+# clean. It runs at configure time, only if it is missing.
+#
+# A missing model is a hard configure error: without it the plugin cannot
+# `init()`, and ctest used to report the Mamba tests as "Skipped", which counts
+# as a pass. `-DCLARA_ALLOW_NO_MODEL=ON` opts out and marks the model-dependent
+# tests DISABLED instead.
+option(CLARA_ALLOW_NO_MODEL "Configure without generated weights; model-dependent tests are marked disabled" OFF)
+
+set(MAMBA3_MODEL_DIR "${CMAKE_BINARY_DIR}/models" CACHE INTERNAL "Generated weights and Python reference fixtures")
+set(MAMBA3_MODEL_BIN "${MAMBA3_MODEL_DIR}/model.bin")
+file(MAKE_DIRECTORY "${MAMBA3_MODEL_DIR}")
+
+# Reuse the interpreter the user pointed CMake at, if any; otherwise look one up.
+if(DEFINED Python3_EXECUTABLE AND EXISTS "${Python3_EXECUTABLE}")
+    set(CLARA_PYTHON "${Python3_EXECUTABLE}" CACHE INTERNAL "Python used to generate the weights")
+else()
+    find_program(CLARA_PYTHON NAMES python3 python)
+    set(CLARA_PYTHON "${CLARA_PYTHON}" CACHE INTERNAL "Python used to generate the weights")
+endif()
+
+set(_clara_model_error "")
 if(NOT EXISTS "${MAMBA3_MODEL_BIN}")
-    find_program(PYTHON3_EXE NAMES python3 python)
-    if(PYTHON3_EXE)
+    if(NOT CLARA_PYTHON)
+        set(_clara_model_error "no python3/python found on PATH")
+    else()
         execute_process(
-            COMMAND ${PYTHON3_EXE}
+            COMMAND "${CLARA_PYTHON}"
                 "${CMAKE_SOURCE_DIR}/python/tools/export_mamba_weights.py"
                 --output "${MAMBA3_MODEL_BIN}" --seed 42
             RESULT_VARIABLE _m3_result
@@ -323,29 +345,63 @@ if(NOT EXISTS "${MAMBA3_MODEL_BIN}")
             TIMEOUT 60
         )
         if(NOT _m3_result EQUAL 0)
-            message(WARNING "Failed to generate ${MAMBA3_MODEL_BIN}: ${_m3_err}")
+            set(_clara_model_error
+                "python '${CLARA_PYTHON}' could not generate it (exit ${_m3_result}):\n${_m3_err}")
         endif()
-    else()
-        message(WARNING "python3 not found — the plugin has no weights and Mamba-3 tests will SKIP. Install python3 + numpy.")
     endif()
 endif()
 
-# Models -> <binary-dir>/models/
-if(EXISTS ${CMAKE_SOURCE_DIR}/models)
-    add_custom_command(TARGET MambaSuiteClap POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_SOURCE_DIR}/models
-            $<TARGET_FILE_DIR:MambaSuiteClap>/models
-        COMMENT "Deploying models to $<TARGET_FILE_DIR:MambaSuiteClap>/models"
+if(EXISTS "${MAMBA3_MODEL_BIN}")
+    set(CLARA_MODEL_AVAILABLE ON)
+else()
+    set(CLARA_MODEL_AVAILABLE OFF)
+    if(CLARA_ALLOW_NO_MODEL)
+        message(WARNING
+            "CLARA: ${MAMBA3_MODEL_BIN} is missing — ${_clara_model_error}\n"
+            "CLARA_ALLOW_NO_MODEL=ON, so the model-dependent tests will be marked DISABLED and the "
+            "installed plugin will not init(). Install numpy for '${CLARA_PYTHON}', or re-run configure "
+            "with -DPython3_EXECUTABLE=<python-with-numpy>.")
+    else()
+        message(FATAL_ERROR
+            "CLARA: cannot generate ${MAMBA3_MODEL_BIN} — ${_clara_model_error}\n"
+            "The plugin and the Mamba tests need this file. Fix it with one of:\n"
+            "  - install numpy for '${CLARA_PYTHON}' (pip install numpy), or\n"
+            "  - re-run configure with -DPython3_EXECUTABLE=<python-with-numpy>, or\n"
+            "  - pass -DCLARA_ALLOW_NO_MODEL=ON to build without weights (the model-dependent tests "
+            "are then DISABLED and the plugin will not init()).")
+    endif()
+endif()
+
+# model.bin -> <target-file-dir>/models/ for both plugin artefacts.
+#
+# A POST_BUILD copy only ran when the plugin was relinked, so re-configuring
+# with a working python produced a model that was never deployed and
+# clap-validator then failed with 'clap_plugin::init() returned false'. This is
+# its own target, keyed on the file, and copy_if_different keeps it cheap.
+if(CLARA_MODEL_AVAILABLE)
+    set(CLARA_MODEL_DEPLOY_DIR "${CMAKE_BINARY_DIR}/plugins/models")
+    add_custom_target(clara_model_deploy ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CLARA_MODEL_DEPLOY_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${MAMBA3_MODEL_BIN}" "${CLARA_MODEL_DEPLOY_DIR}/model.bin"
+        DEPENDS "${MAMBA3_MODEL_BIN}"
+        COMMENT "Deploying model.bin to ${CLARA_MODEL_DEPLOY_DIR}"
         VERBATIM
     )
-    add_custom_command(TARGET MambaSuiteARA POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_SOURCE_DIR}/models
-            $<TARGET_FILE_DIR:MambaSuiteARA>/models
-        COMMENT "Deploying models to $<TARGET_FILE_DIR:MambaSuiteARA>/models"
-        VERBATIM
-    )
+    add_dependencies(MambaSuiteClap clara_model_deploy)
+    add_dependencies(MambaSuiteARA clara_model_deploy)
+    # Multi-config generators put the module in plugins/<CONFIG>/; copy there at
+    # link time as well. copy_if_different keeps a relink from touching the file.
+    foreach(_clara_model_target MambaSuiteClap MambaSuiteARA)
+        add_custom_command(TARGET ${_clara_model_target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:${_clara_model_target}>/models"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CLARA_MODEL_DEPLOY_DIR}/model.bin"
+                "$<TARGET_FILE_DIR:${_clara_model_target}>/models/model.bin"
+            VERBATIM
+        )
+    endforeach()
 endif()
 
 
@@ -440,11 +496,12 @@ install(TARGETS MambaSuiteClap
 )
 
 # --- Weights for the CLAP ---
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
-    DESTINATION ${CLAP_BUNDLE_DIR}/models
-    COMPONENT clap
-    FILES_MATCHING PATTERN "*.bin"
-)
+if(CLARA_MODEL_AVAILABLE)
+    install(FILES ${MAMBA3_MODEL_BIN}
+        DESTINATION ${CLAP_BUNDLE_DIR}/models
+        COMPONENT clap
+    )
+endif()
 
 # --- ARA install ---
 set(ARA_INSTALL_PREFIX "lib/ara" CACHE STRING "ARA install directory relative to CMAKE_INSTALL_PREFIX")
@@ -454,11 +511,12 @@ install(TARGETS MambaSuiteARA
 )
 
 # --- Models for ARA ---
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
-    DESTINATION ${ARA_INSTALL_PREFIX}/models
-    COMPONENT ara
-    FILES_MATCHING PATTERN "*.bin"
-)
+if(CLARA_MODEL_AVAILABLE)
+    install(FILES ${MAMBA3_MODEL_BIN}
+        DESTINATION ${ARA_INSTALL_PREFIX}/models
+        COMPONENT ara
+    )
+endif()
 
 # --- VST3 module (clap-wrapper) ---
 # Installs the built VST3 into a conventional, prefix-relative bundle. The
