@@ -1,8 +1,11 @@
 # CLARA
 
 A causal state-space audio effect in a small C++17 engine, built as a CLAP
-plugin (`MambaSuite.clap`), a VST3 wrapper (`MambaSuite.vst3`, via clap-wrapper)
-and a separate ARA 2 library (`MambaSuiteARA.so`). The engine is Mamba-3-inspired:
+plugin (`MambaSuite.clap`) and a VST3 wrapper (`MambaSuite.vst3`, via clap-wrapper).
+The ARA 2 controller (`src/ara/`) is compiled into `MambaSuite.clap` and its factory
+is exposed through CLAP (`clap_entry.get_factory(CLAP_EXT_ARA_FACTORY)` /
+`plugin.get_extension(CLAP_EXT_ARA_PLUGINEXTENSION)`), so a host can reach it.
+The engine is Mamba-3-inspired:
 it uses multi-head state, RoPE on B/C and a trapezoidal (bilinear) step, but the
 recurrence isn't the Mamba-3 MIMO update (see *Engine* below).
 
@@ -16,13 +19,18 @@ CI job exist; neither has been checked on this branch.
 
 | | |
 |---|---|
-| Build, Linux | CLAP, ARA library and VST3 build from a fresh clone. Release, zig clang 22.1.8 (libc++), CMake + Ninja. |
+| Build, Linux | CLAP (ARA compiled in) and VST3 build from a fresh clone. Release, zig clang 22.1.8 (libc++), CMake + Ninja. |
 | Tests | `ctest`: 7/7 pass (see *Tests*). |
 | clap-validator 0.4.1, full run | 44 tests: 30 pass, 2 fail, 0 warnings, 12 skipped. The two failures are param-fuzz-basic/bounds timing out at 45 s; the engine costs about 0.28 ms per sample. |
 | Real time | No. 0.19–0.21 ms per sample, about 1,000% of one core per 48 kHz mono stream. |
 | Weights | Untrained. Generated at configure time with a fixed seed. |
 | VST3 | Builds, and `GetPluginFactory()` returns a factory when `MambaSuite.clap` is in `~/.clap`. Not loaded in a DAW. |
-| ARA | `MambaSuiteARA.so` exports `ARAGetFactory`, but the CLAP plugin doesn't expose the ARA factory or plug-in extension, so no host can reach it. |
+| ARA | `ARAGetFactory` is compiled into `MambaSuite.clap` and exposed through CLAP
+   (`clap_entry.get_factory(CLAP_EXT_ARA_FACTORY)` and
+   `plugin.get_extension(CLAP_EXT_ARA_PLUGINEXTENSION)`), so a host can reach it.
+   Verified programmatically (factory identity + plugin ID). Not yet opened in an
+   ARA host: REAPER/Ableton not installed on this build box; Pro Tools is AAX-only
+   and does not load CLAP. |
 | GUI | Native X11/Win32 framebuffer editor and a webview editor exist. Neither has been opened in a host. |
 | CI | GitHub Actions is blocked by an account billing lock. No run has completed since 2026-07-10. |
 
@@ -93,12 +101,12 @@ ctest --test-dir build --output-on-failure
 `-DCLARA_BUILD_VST3=OFF` skips clap-wrapper and the VST3 SDK.
 `-DVST3_SDK_ROOT=/path` uses your own SDK checkout.
 
-Outputs: `build/plugins/MambaSuite.clap`, `build/plugins/MambaSuiteARA.so`,
+Outputs: `build/plugins/MambaSuite.clap` (ARA factory exposed through CLAP),
 `build/Release/MambaSuite.vst3`, and `build/plugins/models/` (the weights, which
 must sit next to the `.clap`; the plugin finds them with `dladdr`).
 
-`cmake --install build [--component clap|vst3|ara]` installs to
-`lib/clap/`, `lib/ara/` and `lib/vst3/` under the prefix. The VST3 carries no
+`cmake --install build [--component clap|vst3]` installs to `lib/clap/` and
+`lib/vst3/` under the prefix. The VST3 carries no
 weights; clap-wrapper loads `MambaSuite.clap` from the CLAP search paths
 (`~/.clap`, `/usr/lib/clap`, `CLAP_PATH`), and that file reads the `models/`
 beside it.

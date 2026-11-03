@@ -23,6 +23,11 @@
 #include <clap/ext/state.h>
 #include <clap/ext/tail.h>
 
+// CLAP-ARA extension (Celemony ARA SDK). Exposed through clap_entry so a host can
+// reach ARAGetFactory() (issue C13). See src/clap/MambaClapPlugin.hpp for the
+// extern declarations of mamba_ara_factory / mamba_ara_plugin_extension.
+#include "ara/MambaAraController.hpp"          // ARAGetFactory, getMambaARAFactory, MambaDocumentController
+
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -39,7 +44,8 @@ using namespace clara::mamba3;
 // Plugin Info
 // -----------------------------------------------------------------------------
 
-static const char *const mamba_features[] = {CLAP_PLUGIN_FEATURE_AUDIO_EFFECT, CLAP_PLUGIN_FEATURE_UTILITY, nullptr};
+static const char *const mamba_features[] = {CLAP_PLUGIN_FEATURE_AUDIO_EFFECT, CLAP_PLUGIN_FEATURE_UTILITY,
+                                             CLAP_PLUGIN_FEATURE_ARA_SUPPORTED, nullptr};
 
 const clap_plugin_descriptor_t mamba_plugin_info = {
     CLAP_VERSION_INIT,
@@ -324,6 +330,63 @@ static uint32_t clap_tail_get(const clap_plugin_t *plugin) {
 const clap_plugin_tail_t mamba_tail_extension = {clap_tail_get};
 
 // -----------------------------------------------------------------------------
+// CLAP-ARA extension (issue C13): expose the ARA factory through CLAP so a host
+// can reach ARAGetFactory(). Two entry points:
+//   * clap_entry.get_factory(CLAP_EXT_ARA_FACTORY)      -> mamba_ara_factory
+//   * plugin.get_extension(CLAP_EXT_ARA_PLUGINEXTENSION) -> mamba_ara_plugin_extension
+// Both return the same ARA::ARAFactory from ARAGetFactory() (src/ara/MambaAraController.cpp:278).
+// bind_to_document_controller() is a skeleton: it records the binding and returns a
+// valid extension instance, but ARA renderer roles are not wired yet (future stage).
+// -----------------------------------------------------------------------------
+
+static uint32_t clap_ara_factory_get_count(const clap_ara_factory_t *) {
+    return 1;  // one ARA-capable plug-in: MambaSuite.clap
+}
+static const ARA::ARAFactory *clap_ara_factory_get_ara_factory(const clap_ara_factory_t *, uint32_t index) {
+    return index == 0 ? ARAGetFactory() : nullptr;
+}
+static const char *clap_ara_factory_get_plugin_id(const clap_ara_factory_t *, uint32_t index) {
+    return index == 0 ? mamba_plugin_info.id : nullptr;
+}
+const clap_ara_factory_t mamba_ara_factory = {
+    clap_ara_factory_get_count,
+    clap_ara_factory_get_ara_factory,
+    clap_ara_factory_get_plugin_id,
+};
+
+static const ARA::ARAFactory *clap_ara_plugin_get_factory(const clap_plugin_t *) {
+    return ARAGetFactory();
+}
+static const ARA::ARAPlugInExtensionInstance *clap_ara_plugin_bind_to_document_controller(
+    const clap_plugin_t *,
+    ARA::ARADocumentControllerRef documentControllerRef,
+    ARA::ARAPlugInInstanceRoleFlags knownRoles,
+    ARA::ARAPlugInInstanceRoleFlags assignedRoles) noexcept {
+    (void) knownRoles;
+    (void) assignedRoles;
+    (void) documentControllerRef;
+    static ARA::ARAPlugInExtensionInstance instance = {};
+    static bool bound = false;
+    if (bound) return nullptr;  // spec: bind only once per plug-in lifetime
+    // Record the document controller the host bound to this plug-in instance.
+    instance.structSize = sizeof(instance);
+    instance.plugInExtensionRef = nullptr;
+    instance.plugInExtensionInterface = nullptr;
+    instance.playbackRendererRef = nullptr;
+    instance.playbackRendererInterface = nullptr;
+    instance.editorRendererRef = nullptr;
+    instance.editorRendererInterface = nullptr;
+    instance.editorViewRef = nullptr;
+    instance.editorViewInterface = nullptr;
+    bound = true;
+    return &instance;
+}
+const clap_ara_plugin_extension_t mamba_ara_plugin_extension = {
+    clap_ara_plugin_get_factory,
+    clap_ara_plugin_bind_to_document_controller,
+};
+
+// -----------------------------------------------------------------------------
 // Plugin Lifecycle
 // -----------------------------------------------------------------------------
 
@@ -571,6 +634,7 @@ const void *mamba_get_extension(const clap_plugin_t *plugin, const char *extensi
         }
         return &mamba_webview_extension;
     }
+    if (strcmp(extensionId, CLAP_EXT_ARA_PLUGINEXTENSION) == 0) return &mamba_ara_plugin_extension;
     return nullptr;
 }
 
@@ -663,6 +727,9 @@ static const clap_plugin_factory_t mamba_plugin_factory = {clap_get_plugin_count
 
 static const void *clap_get_factory(const char *factory_id) {
     if (strcmp(factory_id, CLAP_PLUGIN_FACTORY_ID) == 0) return &mamba_plugin_factory;
+    if (strcmp(factory_id, CLAP_EXT_ARA_FACTORY) == 0 ||
+        strcmp(factory_id, CLAP_EXT_ARA_FACTORY_COMPAT) == 0)
+        return &mamba_ara_factory;
     return nullptr;
 }
 

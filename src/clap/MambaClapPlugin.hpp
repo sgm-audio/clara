@@ -16,6 +16,10 @@ struct MambaNativeGUIState;
 #include <clap/ext/state.h>
 #include <clap/ext/tail.h>
 
+// CLAP-ARA extension (Celemony ARA SDK, ARA_API/ARACLAP.h). Not part of CLAP 1.2.7;
+// exposed so a host can reach ARAGetFactory() through this CLAP plugin (issue C13).
+#include "ARACLAP.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -114,5 +118,11 @@ extern "C" const clap_plugin_state_t mamba_state_extension;
 extern const clap_plugin_state_context_t mamba_state_context_extension;
 extern const clap_plugin_render_t mamba_render_extension;
 extern const clap_plugin_tail_t mamba_tail_extension;
+
+// CLAP-ARA extension instances (defined in MambaClapPlugin.cpp). A host queries
+// these via clap_entry.get_factory(CLAP_EXT_ARA_FACTORY) and
+// plugin.get_extension(CLAP_EXT_ARA_PLUGINEXTENSION) respectively.
+extern const clap_ara_factory_t mamba_ara_factory;
+extern const clap_ara_plugin_extension_t mamba_ara_plugin_extension;
 
 const void *mamba_get_extension(const clap_plugin_t *plugin, const char *extensionId);
