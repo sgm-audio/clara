@@ -83,12 +83,25 @@ set_tests_properties(test_perf_budget PROPERTIES
 add_executable(test_state_roundtrip
     test_state_roundtrip.cpp
     ${CMAKE_SOURCE_DIR}/src/clap/MambaClapPlugin.cpp
+    ${CMAKE_SOURCE_DIR}/src/ara/MambaAraController.cpp
+    ${ara_sdk_SOURCE_DIR}/ARA_Library/PlugIn/ARAPlug.cpp
+    ${ara_sdk_SOURCE_DIR}/ARA_Library/Debug/ARADebug.c
+    ${ara_sdk_SOURCE_DIR}/ARA_Library/Utilities/ARAChannelFormat.cpp
+    ${ara_sdk_SOURCE_DIR}/ARA_Library/Utilities/ARAPitchInterpretation.cpp
+    ${ara_sdk_SOURCE_DIR}/ARA_Library/Dispatch/ARAPlugInDispatch.cpp
 )
 target_include_directories(test_state_roundtrip PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/clap
     ${CMAKE_SOURCE_DIR}/src/core
+    ${CMAKE_SOURCE_DIR}/src/ara                      # MambaAraController.hpp
     ${clap_SOURCE_DIR}/include
+    ${ara_sdk_SOURCE_DIR}                          # ARA_Library/PlugIn/ARAPlug.h etc.
+    ${ara_sdk_SOURCE_DIR}/ARA_API                    # ARACLAP.h (CLAP-ARA extension)
+    ${ara_sdk_SOURCE_DIR}/ARA_Library                # ARA_Library/PlugIn/ARAPlug.h
+    ${ara_sdk_SOURCE_DIR}/ARA_Library/Debug
+    ${ara_sdk_SOURCE_DIR}/ARA_Library/Dispatch
+    ${ara_sdk_SOURCE_DIR}/ARA_Library/Utilities
 )
 target_link_libraries(test_state_roundtrip PRIVATE Mamba3Core)
 if(UNIX AND NOT APPLE)
