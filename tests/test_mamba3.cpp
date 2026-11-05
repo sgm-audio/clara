@@ -344,7 +344,7 @@ static bool is_lfs_pointer(const std::string &path) {
 //
 // Earlier this section was called "bit_exact" and compared the R=4 time-domain
 // engine against the R=8 spectral PerTrackProcessor exporter — different
-// architectures, so it could never pass. See docs/BLUEPRINT_COMPARISON.md.
+// architectures, so it could never pass.
 static void test_python_reference(const std::string &model_path) {
     std::printf("\n--- test_python_reference (python/reference_forward.py) ---\n");
 

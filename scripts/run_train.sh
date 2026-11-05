@@ -17,7 +17,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV="${SCRIPT_DIR}/venv_rocm"
-DEFAULT_DATA_DIR="/home/sgm/datasets/musdb18hq/train"
+DEFAULT_DATA_DIR="${CLARA_DATA_DIR:-${HOME}/datasets/musdb18hq/train}"
 CKPT_DIR="${SCRIPT_DIR}/checkpoints_clara"
 
 # ROCm / GPU env (set before any python/torch import)

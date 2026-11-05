@@ -7,6 +7,7 @@
 #include <clap/ext/audio-ports.h>
 #include <clap/ext/latency.h>
 #include <clap/ext/params.h>
+#include <clap/ext/render.h>
 #include <clap/ext/state.h>
 
 #include <algorithm>
@@ -487,7 +488,8 @@ static int test_spsc_wrap_around() {
 //     The plugin's audio path had no coverage: create -> init -> activate ->
 //     start_processing -> process, plus the two passthrough paths (no engine
 //     after deactivate, and bypass settled at 1.0). models/model.bin is
-//     committed, so this runs wherever the rest of the suite does.
+//     generated at configure time (tests/CMakeLists.txt), so this runs
+//     wherever the rest of the suite does.
 // ---------------------------------------------------------------------------
 static int test_process_audio_path() {
     MambaPluginState state;
@@ -524,8 +526,8 @@ static int test_process_audio_path() {
     bool finite = true;
     float peak = 0.0f;
     for (uint32_t i = 0; i < N; ++i) {
-        // mambaIsFinite, not std::isfinite: Release builds use -ffast-math,
-        // which folds std::isfinite() away and would make this check vacuous.
+        // mambaIsFinite rather than std::isfinite, so the check still means
+        // something if someone builds with -ffast-math.
         if (!mambaIsFinite(outL[i]) || !mambaIsFinite(outR[i])) finite = false;
         peak = std::max(peak, std::fabs(outL[i]));
     }
@@ -624,6 +626,64 @@ static int test_plugin_descriptor_urls() {
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 17. test_process_applies_param_events
+//     process() used to ignore process->in_events, so automation never reached
+//     the plugin (clap-validator param-set-events failed). Events are applied
+//     at block start.
+// ---------------------------------------------------------------------------
+struct OneEventList {
+    clap_event_param_value_t ev;
+};
+static uint32_t one_event_size(const clap_input_events_t *) { return 1; }
+static const clap_event_header_t *one_event_get(const clap_input_events_t *list, uint32_t) {
+    return &static_cast<const OneEventList *>(list->ctx)->ev.header;
+}
+
+static int test_process_applies_param_events() {
+    MambaPluginState state;
+    clap_plugin_t plugin = makeMockPlugin(&state);
+    state.wetDry.store(1.0f, std::memory_order_release);
+
+    OneEventList list{};
+    list.ev.header.size = sizeof(clap_event_param_value_t);
+    list.ev.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+    list.ev.header.type = CLAP_EVENT_PARAM_VALUE;
+    list.ev.param_id = PARAM_WET_DRY;
+    list.ev.value = 0.25;
+    clap_input_events_t in{&list, one_event_size, one_event_get};
+
+    clap_process_t proc{};  // no audio buffers: process returns before the engine
+    proc.in_events = &in;
+    TEST_ASSERT(plugin.process(&plugin, &proc) == CLAP_PROCESS_CONTINUE, "process returns continue");
+
+    const auto *params = static_cast<const clap_plugin_params_t *>(mamba_get_extension(&plugin, CLAP_EXT_PARAMS));
+    double v = -1.0;
+    TEST_ASSERT(params->get_value(&plugin, PARAM_WET_DRY, &v), "get_value wet/dry");
+    TEST_ASSERT(std::fabs(v - 0.25) < 1e-6, "param event in process() changes the value");
+
+    TEST_PASS("process applies param events");
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// 18. test_render_modes
+//     The engine is far slower than real time, so offline render is the only
+//     way to get a usable bounce. The render extension used to report
+//     hard-realtime and refuse CLAP_RENDER_OFFLINE.
+// ---------------------------------------------------------------------------
+static int test_render_modes() {
+    MambaPluginState state;
+    clap_plugin_t plugin = makeMockPlugin(&state);
+    const auto *render = static_cast<const clap_plugin_render_t *>(mamba_get_extension(&plugin, CLAP_EXT_RENDER));
+    TEST_ASSERT(render != nullptr, "render extension available");
+    TEST_ASSERT(!render->has_hard_realtime_requirement(&plugin), "no hard real-time requirement");
+    TEST_ASSERT(render->set(&plugin, CLAP_RENDER_OFFLINE), "offline render accepted");
+    TEST_ASSERT(render->set(&plugin, CLAP_RENDER_REALTIME), "realtime render accepted");
+    TEST_PASS("render modes");
+    return 0;
+}
+
 int main() {
     std::printf("=== Mamba CLAP Plugin Tests ===\n\n");
 
@@ -647,6 +707,8 @@ int main() {
         {"process audio path", test_process_audio_path},
         {"webview message handling", test_webview_message_handling},
         {"plugin descriptor URLs", test_plugin_descriptor_urls},
+        {"process applies param events", test_process_applies_param_events},
+        {"render modes", test_render_modes},
     };
 
     int failures = 0;

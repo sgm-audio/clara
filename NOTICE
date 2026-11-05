@@ -1,0 +1,27 @@
+CLARA — Mamba Audio Suite
+Copyright 2026 CLARA contributors (see LICENSE)
+
+This product's own source code is licensed under the Apache License 2.0
+(see LICENSE).
+
+This repository does not contain third-party SDK source code. The CMake build
+downloads the following SDKs at configure time; each is governed by its own
+licence, not by this project's Apache 2.0 licence:
+
+  CLAP (free-audio/clap) .................. MIT License
+  ARA SDK (Celemony/ARA_SDK) .............. Apache License 2.0
+  clap-wrapper (free-audio/clap-wrapper) .. MIT License (v0.14.0)
+  Steinberg VST3 SDK (steinbergmedia/vst3sdk), pinned v3.8.0_build_66,
+  fetched only when CLARA_BUILD_VST3=ON ... MIT License
+
+The VST3 SDK pin moved from v3.7.6_build_18 (GPLv3 or Steinberg proprietary
+licence) to v3.8.0_build_66 on 2026-10-31. Steinberg released v3.8.0 under the
+MIT License (2025-10-20), so a VST3 built from this tree no longer carries the
+GPLv3/proprietary condition. Binaries built from older revisions of this
+repository (VST3 SDK 3.7.x) still do. Build with -DCLARA_BUILD_VST3=OFF to
+produce only the CLAP plugin and ARA library, which don't use the VST3 SDK.
+
+clap-wrapper is pinned to v0.14.0 (the first release that defaults to
+VST3 SDK 3.8.0).
+
+VST is a registered trademark of Steinberg Media Technologies GmbH.

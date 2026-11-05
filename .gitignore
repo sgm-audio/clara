@@ -57,3 +57,21 @@ ScottMills_*.md
 venv_rocm/
 venv/
 get-pip.py
+
+# Local AI-assistant / session files — never commit
+AGENTS.md
+CLAUDE.md
+SESSION_LOG.md
+REVIEW_REPORT.md
+omo-config.json
+
+# Test weights: generated at configure time by
+# python/tools/export_mamba_weights.py --seed 42 (deterministic; sha256 in models/ref_meta.txt)
+models/model.bin
+*.clap
+*.vst3
+.agent_context/
+AGENTS.md
+CLAUDE.md
+SESSION_LOG.md
+omo-config.json

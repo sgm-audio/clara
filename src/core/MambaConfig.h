@@ -1,11 +1,11 @@
 // CLARA Mamba-3 Configuration — Compile-time dimension constants
 //
-// Part of the Mamba-1 → Mamba-3 migration (MAMBA3_MIGRATION_PLAN.md).
+// Part of the Mamba-1 → Mamba-3 migration (docs/design/MAMBA3_MIGRATION_PLAN.md).
 // All constants are template-ready (MAX_ prefix) to support eventual
 // model-size variability without runtime overhead.
 //
 // Architecture: Multi-head MIMO R=4, trapezoidal SSM, RoPE, FiLM
-// Reference:  MAMBA3_MIGRATION_PLAN.md §B, §C
+// Reference:  docs/design/MAMBA3_MIGRATION_PLAN.md §B, §C
 
 #pragma once
 

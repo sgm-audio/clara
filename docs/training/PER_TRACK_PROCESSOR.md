@@ -4,13 +4,18 @@ How to train the PerTrackProcessor (Mamba-3 SSM, R=8 spectral-domain, ~4.26M par
 
 ## Prerequisites
 
-- **Dataset:** MUSDB18-HQ at `/run/media/sgm/Data/datasets/musdb18hq`
+- **Dataset:** MUSDB18-HQ (set `DATA=/path/to/musdb18hq` below)
   - 43 complete tracks (vocals, drums, bass, other per track)
   - CREPE f0 features pre-extracted (`.crepe.npy` + `.pitched.npy` next to each `.wav`)
-- **Python env:** `/home/sgm/micromamba/envs/rocm_torch` (PyTorch 2.11 ROCm build)
-- **GPU:** AMD Radeon 860M (15.2 GB UMA VRAM, shared with system RAM)
+- **Python env:** a PyTorch 2.11 environment (ROCm build for AMD GPUs); `PYTHON` below is its interpreter
+- **GPU (optional):** developed on an AMD Radeon 860M iGPU (15.2 GB UMA); CPU training works too
 
 ## Quick Start
+
+```bash
+export PYTHON=/path/to/env/bin/python3   # PyTorch environment
+export DATA=/path/to/musdb18hq           # contains train/ and test/
+```
 
 ### 1. Smoke Test (5 checks, ~10 seconds)
 
@@ -20,7 +25,7 @@ HSA_OVERRIDE_GFX_VERSION=11.0.0 HIP_VISIBLE_DEVICES=0 ROC_VISIBLE_DEVICES=0 \
   PYTORCH_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 \
   MIOPEN_FIND_MODE=5 \
   PYTHONPATH="$(pwd)/python/training" \
-  /home/sgm/micromamba/envs/rocm_torch/bin/python3 \
+  "$PYTHON" \
   python/tools/test_model.py --device cuda
 ```
 
@@ -30,9 +35,9 @@ Expect: `5/5 passed`.
 
 ```bash
 PYTHONPATH="$(pwd)/python/training" \
-  /home/sgm/micromamba/envs/rocm_torch/bin/python3 \
+  "$PYTHON" \
   python/training/train_clara.py \
-  --data /run/media/sgm/Data/datasets/musdb18hq/train \
+  --data "$DATA"/train \
   --save checkpoints_clara \
   --device cpu \
   --batch 2 --grad-accum 4 \
@@ -57,9 +62,9 @@ HSA_OVERRIDE_GFX_VERSION=11.0.0 HIP_VISIBLE_DEVICES=0 ROC_VISIBLE_DEVICES=0 \
   PYTORCH_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6,max_split_size_mb:64 \
   MIOPEN_FIND_MODE=5 \
   PYTHONPATH="$(pwd)/python/training" \
-  /home/sgm/micromamba/envs/rocm_torch/bin/python3 \
+  "$PYTHON" \
   python/training/train_clara.py \
-  --data /run/media/sgm/Data/datasets/musdb18hq/train \
+  --data "$DATA"/train \
   --save checkpoints_clara \
   --device cuda \
   --batch 2 --grad-accum 4 \

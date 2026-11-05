@@ -71,9 +71,14 @@ list(FILTER _built_vst3_dirs EXCLUDE REGEX "/plugins/")
 set(_prefix "${BUILD_DIR}/install_check_prefix")
 file(REMOVE_RECURSE "${_prefix}")
 
+set(_cfg_args "")
+if(DEFINED CONFIG AND NOT "${CONFIG}" STREQUAL "")
+    set(_cfg_args --config "${CONFIG}")
+endif()
+
 foreach(_component clap ara)
     execute_process(
-        COMMAND ${CMAKE_COMMAND} --install "${BUILD_DIR}" --component ${_component} --prefix "${_prefix}"
+        COMMAND ${CMAKE_COMMAND} --install "${BUILD_DIR}" ${_cfg_args} --component ${_component} --prefix "${_prefix}"
         RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
     if(NOT _rc EQUAL 0)
         message(FATAL_ERROR "install --component ${_component} failed (exit ${_rc})\n${_out}\n${_err}")
@@ -86,7 +91,7 @@ endforeach()
 # build tree to decide whether its absence is expected.
 if(_built_vst3_dirs)
     execute_process(
-        COMMAND ${CMAKE_COMMAND} --install "${BUILD_DIR}" --component vst3 --prefix "${_prefix}"
+        COMMAND ${CMAKE_COMMAND} --install "${BUILD_DIR}" ${_cfg_args} --component vst3 --prefix "${_prefix}"
         RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
     if(NOT _rc EQUAL 0)
         message(FATAL_ERROR "install --component vst3 failed (exit ${_rc})\n${_out}\n${_err}")
@@ -136,10 +141,10 @@ endif()
 
 # ---- 5. The VST3 actually installed ----------------------------------------
 if(_built_vst3_dirs)
-    file(GLOB_RECURSE _installed_vst3 "${_prefix}/*/*.so" "${_prefix}/*/*.dll" "${_prefix}/*/*.dylib")
+    file(GLOB_RECURSE _installed_vst3 "${_prefix}/*.so" "${_prefix}/*.dll" "${_prefix}/*.dylib" "${_prefix}/*.vst3")
     set(_vst3_modules "")
     foreach(_entry IN LISTS _installed_vst3)
-        if(_entry MATCHES "\\.vst3/Contents/")
+        if(NOT IS_DIRECTORY "${_entry}" AND _entry MATCHES "\\.vst3[/\\\\]Contents[/\\\\]")
             list(APPEND _vst3_modules "${_entry}")
         endif()
     endforeach()

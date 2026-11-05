@@ -378,4 +378,4 @@ Tests are opt-in via `-DBUILD_TESTING=ON`. When enabled, CMake descends into the
 - `src/ara/MambaAraController.cpp` — compiled into `MambaSuiteARA`
 - ADR-001: Shared ONNX Runtime Inference Engine (MambaCore context, deployment contract)
 - ADR-006: `dladdr`-Based Model Path Resolution (runtime dependency on `$ORIGIN` layout)
-- AGENTS.md — build instructions, verification commands
+- README.md — build instructions, verification commands

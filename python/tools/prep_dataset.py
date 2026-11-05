@@ -9,7 +9,7 @@ Sources:
   - .txt file:  reads as pass list (one absolute path per line)
 
 Output: symlinks at <output_dir>/ named as {label}_{index:06d}.{ext}
-  Example: fma_000042.flac → /home/sgm/datasets/fma/track_42.flac
+  Example: fma_000042.flac → /data/fma/track_42.flac
 
 Usage:
     python scripts/prep_dataset.py \
