@@ -141,10 +141,10 @@ endif()
 
 # ---- 5. The VST3 actually installed ----------------------------------------
 if(_built_vst3_dirs)
-    file(GLOB_RECURSE _installed_vst3 "${_prefix}/*/*.so" "${_prefix}/*/*.dll" "${_prefix}/*/*.dylib")
+    file(GLOB_RECURSE _installed_vst3 "${_prefix}/*.so" "${_prefix}/*.dll" "${_prefix}/*.dylib" "${_prefix}/*.vst3")
     set(_vst3_modules "")
     foreach(_entry IN LISTS _installed_vst3)
-        if(_entry MATCHES "\\.vst3/Contents/")
+        if(NOT IS_DIRECTORY "${_entry}" AND _entry MATCHES "\\.vst3[/\\\\]Contents[/\\\\]")
             list(APPEND _vst3_modules "${_entry}")
         endif()
     endforeach()
