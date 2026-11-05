@@ -10,7 +10,10 @@ endif()
 # NOTE: enable_testing() is called in the top-level CMakeLists.txt (it must
 # be at the top level, before any add_subdirectory(), per CMake docs).
 
-add_compile_definitions(_USE_MATH_DEFINES)
+if(MSVC)
+    add_compile_definitions(_USE_MATH_DEFINES)
+    add_link_options(/STACK:33554432)
+endif()
 
 find_package(Threads REQUIRED)
 
@@ -263,6 +266,7 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DBUILD_DIR=${CMAKE_BINARY_DIR}
         -DCLAP_OUTPUT_NAME=${CLAP_WRAPPER_OUTPUT_NAME}
+        -DCONFIG=$<CONFIG>
         -P ${CMAKE_CURRENT_SOURCE_DIR}/install_check.cmake
 )
 set_tests_properties(test_install_layout PROPERTIES
@@ -274,7 +278,7 @@ set_tests_properties(test_install_layout PROPERTIES
 # otherwise the install step finds nothing and the test depends on build order.
 if(CLARA_BUILD_VST3 AND TARGET MambaSuite_as_vst3)
     add_test(NAME build_vst3_for_install
-        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target MambaSuite_as_vst3)
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --config $<CONFIG> --target MambaSuite_as_vst3)
     set_tests_properties(build_vst3_for_install PROPERTIES
         FIXTURES_SETUP vst3_built TIMEOUT 900 LABELS "install;packaging")
     set_tests_properties(test_install_layout PROPERTIES FIXTURES_REQUIRED vst3_built)
