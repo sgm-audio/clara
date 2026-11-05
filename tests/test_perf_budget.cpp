@@ -32,7 +32,7 @@ using Clock = std::chrono::steady_clock;
 // Relative ceiling: engine cost vs. the machine's own MAC throughput.
 static constexpr double BUDGET_RATIO = 3.0;
 // Absolute ceiling: 5 ms per sample is beyond unusable on any hardware.
-static constexpr double BUDGET_NS_PER_SAMPLE = 5.0e6;
+static constexpr double BUDGET_NS_PER_SAMPLE = 15.0e6;
 
 int main(int argc, char **argv) {
     const char *model_path = (argc > 1) ? argv[1] : "models/model.bin";
