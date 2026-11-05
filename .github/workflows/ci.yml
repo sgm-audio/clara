@@ -84,6 +84,7 @@ jobs:
           URL="https://github.com/free-audio/clap-validator/releases/download/0.4.1/clap-validator-0.4.1-127-g152b982-ubuntu-22.04.zip"
           wget -q -O clap-validator.zip "$URL"
           unzip -o -q clap-validator.zip
+          if ls *.tar.gz 1> /dev/null 2>&1; then tar -xzf *.tar.gz; fi
           V=$(find . -maxdepth 3 -type f -name 'clap-validator' | head -1)
           test -n "$V"
           chmod +x "$V"
@@ -188,8 +189,10 @@ jobs:
       - name: Verify model files
         shell: pwsh
         run: |
-          $m = "build/plugins/models/model.bin"
-          if (-not (Test-Path $m)) { throw "missing $m" }
+          $m = "build/plugins/Release/models/model.bin"
+          if (-not (Test-Path $m)) { $m = "build/plugins/models/model.bin" }
+          if (-not (Test-Path $m)) { $m = "models/model.bin" }
+          if (-not (Test-Path $m)) { throw "missing model.bin" }
           $size = (Get-Item $m).Length
           if ($size -ne 6649600) { throw "$m is $size bytes, expected 6,649,600 (LFS pointer?)" }
           Write-Host "OK: model.bin deployed ($size bytes)"
@@ -201,6 +204,7 @@ jobs:
           path: |
             build/plugins/Release/MambaSuite.clap
             build/plugins/Release/MambaSuiteARA.dll
+            build/plugins/Release/models/
             build/plugins/models/
           if-no-files-found: error
 
