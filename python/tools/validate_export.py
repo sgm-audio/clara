@@ -186,7 +186,7 @@ def validate_weights(layers: list[list[np.ndarray]]) -> list[str]:
 
 def main():
     parser = argparse.ArgumentParser(description="Validate Mamba-3 flat binary weight file")
-    parser.add_argument("filepath", help="Path to .bin file")
+    parser.add_argument("filepath", nargs="?", default="models/model.bin", help="Path to .bin file")
     args = parser.parse_args()
 
     filepath = Path(args.filepath)
