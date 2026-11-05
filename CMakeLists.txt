@@ -245,6 +245,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-dangling-reference -Wno-tautological-compare")
 endif()
 if(CLARA_BUILD_VST3)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
     add_subdirectory(${clap_wrapper_SOURCE_DIR} build/clap_wrapper_build EXCLUDE_FROM_ALL)
     # clap-wrapper >= 0.10 only creates <name>_as_vst3 when it is the top-level
     # project, so create it here with its own wrapper function.
