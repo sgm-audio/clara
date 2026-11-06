@@ -55,6 +55,12 @@ public:
     // process_block() call. Safe from any thread.
     void reset_states();
 
+    // Samples until the slowest first-layer pole has decayed by 60 dB, for
+    // clap_plugin_tail. Computed from the loaded weights (in_proj dd_A/dd_dt
+    // rows and dt_bias) at their neutral conditioning; clamped to 10 s.
+    // Returns 0 before init().
+    uint32_t tail_samples(double sample_rate) const;
+
     // ── Conditioning (RT-safe reads, non-RT writes) ───────────────
 
     // Set the conditioning vector. Called from non-RT threads (ARA, UI).

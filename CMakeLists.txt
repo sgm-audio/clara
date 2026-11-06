@@ -58,8 +58,9 @@ FetchContent_MakeAvailable(ara_sdk)
 # 3. Fetch clap-wrapper (for VST3 + AU builds)
 #
 # Optional: the VST3 target is the Ableton path but pulls in clap-wrapper, CPM and
-# the VST3 SDK. Set -DCLARA_BUILD_VST3=OFF to build the CLAP plugin, ARA library
-# and tests without any of that (useful on restricted networks / minimal CI).
+# the VST3 SDK. Set -DCLARA_BUILD_VST3=OFF to build the CLAP plugin (with the ARA
+# factory exposed through CLAP) and tests without any of that
+# (useful on restricted networks / minimal CI).
 option(CLARA_BUILD_VST3 "Build the VST3 wrapper via clap-wrapper (fetches VST3 SDK)" ON)
 
 # We only declare it here; add_subdirectory is used later for the VST3 target.
@@ -108,7 +109,11 @@ endif()
 set(COMMON_INCLUDES
     ${clap_SOURCE_DIR}/include
     ${ara_sdk_SOURCE_DIR}
+    ${ara_sdk_SOURCE_DIR}/ARA_API            # ARACLAP.h (CLAP-ARA extension)
+    ${ara_sdk_SOURCE_DIR}/ARA_Library        # ARA_Library/PlugIn/ARAPlug.h etc.
+    ${ara_sdk_SOURCE_DIR}/ARA_Library/Debug  # ARADebug.c
     ${ara_sdk_SOURCE_DIR}/ARA_Library/Dispatch
+    ${ara_sdk_SOURCE_DIR}/ARA_Library/Utilities
 )
 
 # --- Mamba-3 Core (custom C++ engine, flat binary weights) ---
@@ -138,8 +143,24 @@ set_target_properties(Mamba3Core PROPERTIES
 set(CLAP_WRAPPER_OUTPUT_NAME "MambaSuite" CACHE STRING
     "Plugin name stem: produces '<stem>.clap' and the wrapped '<stem>.vst3'")
 
-add_library(MambaSuiteClap MODULE src/clap/MambaClapPlugin.cpp)
-target_include_directories(MambaSuiteClap PRIVATE ${COMMON_INCLUDES})
+# ARA controller sources are compiled into the same binary as the CLAP plugin so a
+# host can reach the ARA factory through CLAP (issue C13). MambaSuite.clap exposes
+# CLAP_EXT_ARA_FACTORY via clap_entry.get_factory() and CLAP_EXT_ARA_PLUGINEXTENSION
+# via mamba_get_extension(); ARAGetFactory() (src/ara/MambaAraController.cpp:278)
+# is the single ARA entry point.
+set(ARA_SOURCES
+    src/ara/MambaAraController.cpp
+    ${ara_sdk_SOURCE_DIR}/ARA_Library/PlugIn/ARAPlug.cpp
+    ${ara_sdk_SOURCE_DIR}/ARA_Library/Debug/ARADebug.c
+    ${ara_sdk_SOURCE_DIR}/ARA_Library/Utilities/ARAChannelFormat.cpp
+    ${ara_sdk_SOURCE_DIR}/ARA_Library/Utilities/ARAPitchInterpretation.cpp
+    ${ara_sdk_SOURCE_DIR}/ARA_Library/Dispatch/ARAPlugInDispatch.cpp
+)
+
+add_library(MambaSuiteClap MODULE src/clap/MambaClapPlugin.cpp ${ARA_SOURCES})
+target_include_directories(MambaSuiteClap PRIVATE ${COMMON_INCLUDES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ara   # MambaAraController.hpp
+)
 set_target_properties(MambaSuiteClap PROPERTIES
     PREFIX ""
     OUTPUT_NAME "${CLAP_WRAPPER_OUTPUT_NAME}"
@@ -175,57 +196,6 @@ if(UNIX AND NOT APPLE)
         target_compile_definitions(MambaSuiteClap PRIVATE CLARA_NO_NATIVE_GUI=1)
         target_link_libraries(MambaSuiteClap PRIVATE pthread dl)
     endif()
-endif()
-
-# --- ARA Plugin ---
-set(ARA_SOURCES
-    src/ara/MambaAraController.cpp
-    ${ara_sdk_SOURCE_DIR}/ARA_Library/PlugIn/ARAPlug.cpp
-    ${ara_sdk_SOURCE_DIR}/ARA_Library/Debug/ARADebug.c
-    ${ara_sdk_SOURCE_DIR}/ARA_Library/Utilities/ARAChannelFormat.cpp
-    ${ara_sdk_SOURCE_DIR}/ARA_Library/Utilities/ARAPitchInterpretation.cpp
-    ${ara_sdk_SOURCE_DIR}/ARA_Library/Dispatch/ARAPlugInDispatch.cpp
-)
-
-add_library(MambaSuiteARA MODULE ${ARA_SOURCES})
-target_include_directories(MambaSuiteARA PRIVATE ${COMMON_INCLUDES}
-    ${ara_sdk_SOURCE_DIR}/ARA_Library
-    ${ara_sdk_SOURCE_DIR}/ARA_Library/Debug
-    ${ara_sdk_SOURCE_DIR}/ARA_Library/Dispatch
-    ${ara_sdk_SOURCE_DIR}/ARA_Library/Utilities
-    ${ara_sdk_SOURCE_DIR}/ARA_API
-)
-if(WIN32)
-    set(ARA_SUFFIX ".dll")
-elseif(APPLE)
-    set(ARA_SUFFIX ".dylib")
-else()
-    set(ARA_SUFFIX ".so")
-endif()
-set_target_properties(MambaSuiteARA PROPERTIES
-    PREFIX ""
-    SUFFIX "${ARA_SUFFIX}"
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins
-    CXX_VISIBILITY_PRESET hidden
-    POSITION_INDEPENDENT_CODE ON
-)
-if(WIN32)
-    # DLL search path: no RPATH needed
-elseif(APPLE)
-    set_property(TARGET MambaSuiteARA PROPERTY INSTALL_RPATH "@loader_path")
-    set_property(TARGET MambaSuiteARA PROPERTY BUILD_RPATH "@loader_path")
-    set_property(TARGET MambaSuiteARA PROPERTY BUILD_WITH_INSTALL_RPATH ON)
-else()
-    set_property(TARGET MambaSuiteARA PROPERTY INSTALL_RPATH "$ORIGIN")
-    set_property(TARGET MambaSuiteARA PROPERTY BUILD_RPATH "$ORIGIN")
-    set_property(TARGET MambaSuiteARA PROPERTY BUILD_WITH_INSTALL_RPATH ON)
-endif()
-target_link_libraries(MambaSuiteARA
-    PRIVATE
-    Mamba3Core
-)
-if(UNIX AND NOT APPLE)
-    target_link_libraries(MambaSuiteARA PRIVATE pthread dl)
 endif()
 
 # --- VST3 Wrapper (via clap-wrapper) ---
@@ -274,7 +244,6 @@ endif()
 
 # Strip release builds (Unix linker flag — generator-expr for multi-config support)
 target_link_options(MambaSuiteClap PRIVATE $<$<AND:$<PLATFORM_ID:Linux,Darwin>,$<CONFIG:Release>>:-s>)
-target_link_options(MambaSuiteARA PRIVATE $<$<AND:$<PLATFORM_ID:Linux,Darwin>,$<CONFIG:Release>>:-s>)
 
 # --- VST3 target configuration (only when the wrapper is enabled) ---
 if(CLARA_BUILD_VST3)
@@ -305,17 +274,39 @@ endif()
 # multi-config (VS, Xcode) generators both get the right layout.
 # ---------------------------------------------------------------------------
 
-# --- Generate models/model.bin (untrained test weights) ---
+# --- Generate model.bin (untrained test weights) ---
 # Not tracked in git: python/tools/export_mamba_weights.py --seed 42 is
 # deterministic (sha256 in models/ref_meta.txt) and needs only numpy.
-# Runs at configure time, only if the file doesn't exist yet. The plugin and
-# the tests both load it.
-set(MAMBA3_MODEL_BIN "${CMAKE_SOURCE_DIR}/models/model.bin")
+#
+# The file is generated into the build directory, not into the source tree, so
+# two build directories cannot fight over one file and a `git status` stays
+# clean. It runs at configure time, only if it is missing.
+#
+# A missing model is a hard configure error: without it the plugin cannot
+# `init()`, and ctest used to report the Mamba tests as "Skipped", which counts
+# as a pass. `-DCLARA_ALLOW_NO_MODEL=ON` opts out and marks the model-dependent
+# tests DISABLED instead.
+option(CLARA_ALLOW_NO_MODEL "Configure without generated weights; model-dependent tests are marked disabled" OFF)
+
+set(MAMBA3_MODEL_DIR "${CMAKE_BINARY_DIR}/models" CACHE INTERNAL "Generated weights and Python reference fixtures")
+set(MAMBA3_MODEL_BIN "${MAMBA3_MODEL_DIR}/model.bin")
+file(MAKE_DIRECTORY "${MAMBA3_MODEL_DIR}")
+
+# Reuse the interpreter the user pointed CMake at, if any; otherwise look one up.
+if(DEFINED Python3_EXECUTABLE AND EXISTS "${Python3_EXECUTABLE}")
+    set(CLARA_PYTHON "${Python3_EXECUTABLE}" CACHE INTERNAL "Python used to generate the weights")
+else()
+    find_program(CLARA_PYTHON NAMES python3 python)
+    set(CLARA_PYTHON "${CLARA_PYTHON}" CACHE INTERNAL "Python used to generate the weights")
+endif()
+
+set(_clara_model_error "")
 if(NOT EXISTS "${MAMBA3_MODEL_BIN}")
-    find_program(PYTHON3_EXE NAMES python3 python)
-    if(PYTHON3_EXE)
+    if(NOT CLARA_PYTHON)
+        set(_clara_model_error "no python3/python found on PATH")
+    else()
         execute_process(
-            COMMAND ${PYTHON3_EXE}
+            COMMAND "${CLARA_PYTHON}"
                 "${CMAKE_SOURCE_DIR}/python/tools/export_mamba_weights.py"
                 --output "${MAMBA3_MODEL_BIN}" --seed 42
             RESULT_VARIABLE _m3_result
@@ -324,29 +315,62 @@ if(NOT EXISTS "${MAMBA3_MODEL_BIN}")
             TIMEOUT 60
         )
         if(NOT _m3_result EQUAL 0)
-            message(WARNING "Failed to generate ${MAMBA3_MODEL_BIN}: ${_m3_err}")
+            set(_clara_model_error
+                "python '${CLARA_PYTHON}' could not generate it (exit ${_m3_result}):\n${_m3_err}")
         endif()
-    else()
-        message(WARNING "python3 not found — the plugin has no weights and Mamba-3 tests will SKIP. Install python3 + numpy.")
     endif()
 endif()
 
-# Models -> <binary-dir>/models/
-if(EXISTS ${CMAKE_SOURCE_DIR}/models)
-    add_custom_command(TARGET MambaSuiteClap POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_SOURCE_DIR}/models
-            $<TARGET_FILE_DIR:MambaSuiteClap>/models
-        COMMENT "Deploying models to $<TARGET_FILE_DIR:MambaSuiteClap>/models"
+if(EXISTS "${MAMBA3_MODEL_BIN}")
+    set(CLARA_MODEL_AVAILABLE ON)
+else()
+    set(CLARA_MODEL_AVAILABLE OFF)
+    if(CLARA_ALLOW_NO_MODEL)
+        message(WARNING
+            "CLARA: ${MAMBA3_MODEL_BIN} is missing — ${_clara_model_error}\n"
+            "CLARA_ALLOW_NO_MODEL=ON, so the model-dependent tests will be marked DISABLED and the "
+            "installed plugin will not init(). Install numpy for '${CLARA_PYTHON}', or re-run configure "
+            "with -DPython3_EXECUTABLE=<python-with-numpy>.")
+    else()
+        message(FATAL_ERROR
+            "CLARA: cannot generate ${MAMBA3_MODEL_BIN} — ${_clara_model_error}\n"
+            "The plugin and the Mamba tests need this file. Fix it with one of:\n"
+            "  - install numpy for '${CLARA_PYTHON}' (pip install numpy), or\n"
+            "  - re-run configure with -DPython3_EXECUTABLE=<python-with-numpy>, or\n"
+            "  - pass -DCLARA_ALLOW_NO_MODEL=ON to build without weights (the model-dependent tests "
+            "are then DISABLED and the plugin will not init()).")
+    endif()
+endif()
+
+# model.bin -> <target-file-dir>/models/ for both plugin artefacts.
+#
+# A POST_BUILD copy only ran when the plugin was relinked, so re-configuring
+# with a working python produced a model that was never deployed and
+# clap-validator then failed with 'clap_plugin::init() returned false'. This is
+# its own target, keyed on the file, and copy_if_different keeps it cheap.
+if(CLARA_MODEL_AVAILABLE)
+    set(CLARA_MODEL_DEPLOY_DIR "${CMAKE_BINARY_DIR}/plugins/models")
+    add_custom_target(clara_model_deploy ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CLARA_MODEL_DEPLOY_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${MAMBA3_MODEL_BIN}" "${CLARA_MODEL_DEPLOY_DIR}/model.bin"
+        DEPENDS "${MAMBA3_MODEL_BIN}"
+        COMMENT "Deploying model.bin to ${CLARA_MODEL_DEPLOY_DIR}"
         VERBATIM
     )
-    add_custom_command(TARGET MambaSuiteARA POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_SOURCE_DIR}/models
-            $<TARGET_FILE_DIR:MambaSuiteARA>/models
-        COMMENT "Deploying models to $<TARGET_FILE_DIR:MambaSuiteARA>/models"
-        VERBATIM
-    )
+    add_dependencies(MambaSuiteClap clara_model_deploy)
+    # Multi-config generators put the module in plugins/<CONFIG>/; copy there at
+    # link time as well. copy_if_different keeps a relink from touching the file.
+    foreach(_clara_model_target MambaSuiteClap)
+        add_custom_command(TARGET ${_clara_model_target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:${_clara_model_target}>/models"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CLARA_MODEL_DEPLOY_DIR}/model.bin"
+                "$<TARGET_FILE_DIR:${_clara_model_target}>/models/model.bin"
+            VERBATIM
+        )
+    endforeach()
 endif()
 
 
@@ -365,7 +389,7 @@ add_subdirectory(tests)
 # is enabled.
 # ---------------------------------------------------------------------------
 if(BUILD_TESTING)
-    set(_clara_test_deps MambaSuiteClap MambaSuiteARA)
+    set(_clara_test_deps MambaSuiteClap)
     if(CLARA_BUILD_VST3)
         list(APPEND _clara_test_deps MambaSuite_as_vst3)
     endif()
@@ -391,10 +415,10 @@ endif()
 #
 # Layout produced (Linux, relative to CMAKE_INSTALL_PREFIX or --prefix):
 #
-#   lib/clap/MambaSuite.clap        the CLAP plugin (bare DSO)
+#   lib/clap/MambaSuite.clap        the CLAP plugin (bare DSO), ARA factory
+#                                   reachable via CLAP_EXT_ARA_FACTORY /
+#                                   CLAP_EXT_ARA_PLUGINEXTENSION
 #   lib/clap/models/*.bin           weights — must sit next to the DSO (dladdr)
-#   lib/ara/MambaSuiteARA.so        the ARA2 library
-#   lib/ara/models/*.bin            weights, next to the library
 #   lib/vst3/MambaSuite.vst3/       the clap-wrapper VST3 module
 #     Contents/x86_64-linux/MambaSuite.so
 #
@@ -441,25 +465,12 @@ install(TARGETS MambaSuiteClap
 )
 
 # --- Weights for the CLAP ---
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
-    DESTINATION ${CLAP_BUNDLE_DIR}/models
-    COMPONENT clap
-    FILES_MATCHING PATTERN "*.bin"
-)
-
-# --- ARA install ---
-set(ARA_INSTALL_PREFIX "lib/ara" CACHE STRING "ARA install directory relative to CMAKE_INSTALL_PREFIX")
-install(TARGETS MambaSuiteARA
-    LIBRARY DESTINATION ${ARA_INSTALL_PREFIX} COMPONENT ara   # .so / .dylib
-    RUNTIME DESTINATION ${ARA_INSTALL_PREFIX} COMPONENT ara   # .dll on Windows
-)
-
-# --- Models for ARA ---
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/
-    DESTINATION ${ARA_INSTALL_PREFIX}/models
-    COMPONENT ara
-    FILES_MATCHING PATTERN "*.bin"
-)
+if(CLARA_MODEL_AVAILABLE)
+    install(FILES ${MAMBA3_MODEL_BIN}
+        DESTINATION ${CLAP_BUNDLE_DIR}/models
+        COMPONENT clap
+    )
+endif()
 
 # --- VST3 module (clap-wrapper) ---
 # Installs the built VST3 into a conventional, prefix-relative bundle. The
@@ -487,5 +498,4 @@ endif()
 
 # Convenience: `cmake --install . --component clap`  for CLAP only
 #              `cmake --install . --component vst3`  for the VST3 wrapper
-#              `cmake --install . --component ara`   for ARA only
 #              `cmake --install .`                   for everything

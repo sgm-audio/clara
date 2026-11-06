@@ -30,8 +30,9 @@ remaining work, highest priority first.
       calibration loop is about 2x slower and the engine about 4.5x faster, so
       the ratio went from ~3.4 to ~0.38 against a budget of 3.0. The guard is
       now loose; pick a budget from a few machines, or make it a median-of-N.
-- [ ] **clap-validator full run:** 5 failures (state-reproducibility ×3,
-      param-fuzz-basic/bounds time out at 45 s). The ctest subset excludes them.
+- [ ] **clap-validator full run:** 2 failures (param-fuzz-basic/bounds time out
+      at 45 s because the engine costs ~0.28 ms per sample). The ctest subset
+      excludes those two and runs the rest, including state-reproducibility.
 - [ ] **Native GUI** (`CLAP_EXT_GUI`, X11/Win32 framebuffer, plus webview) exists
       but hasn't been opened in a host.
 

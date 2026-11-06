@@ -16,6 +16,10 @@ struct MambaNativeGUIState;
 #include <clap/ext/state.h>
 #include <clap/ext/tail.h>
 
+// CLAP-ARA extension (Celemony ARA SDK, ARA_API/ARACLAP.h). Not part of CLAP 1.2.7;
+// exposed so a host can reach ARAGetFactory() through this CLAP plugin (issue C13).
+#include "ARACLAP.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -53,7 +57,17 @@ struct MambaPluginState {
     std::atomic<float> intensity{0.5f};
 
     float sampleRate{44100.0f};
+
+    // Audio-thread only. The main thread writes targetBypassValue; the audio
+    // thread ramps currentBypassValue towards it and snaps once when a state
+    // load asked for a reset. Never written from the main thread.
     float currentBypassValue{0.0f};
+    std::atomic<float> targetBypassValue{0.0f};
+
+    // Set by state load (main thread), consumed at the start of process() so
+    // the engine is only ever reset from the audio thread.
+    std::atomic<bool> resetRequested{false};
+
     float crossfadeStep{0.001f};
 
     std::vector<float> chIn[2];
@@ -104,5 +118,11 @@ extern "C" const clap_plugin_state_t mamba_state_extension;
 extern const clap_plugin_state_context_t mamba_state_context_extension;
 extern const clap_plugin_render_t mamba_render_extension;
 extern const clap_plugin_tail_t mamba_tail_extension;
+
+// CLAP-ARA extension instances (defined in MambaClapPlugin.cpp). A host queries
+// these via clap_entry.get_factory(CLAP_EXT_ARA_FACTORY) and
+// plugin.get_extension(CLAP_EXT_ARA_PLUGINEXTENSION) respectively.
+extern const clap_ara_factory_t mamba_ara_factory;
+extern const clap_ara_plugin_extension_t mamba_ara_plugin_extension;
 
 const void *mamba_get_extension(const clap_plugin_t *plugin, const char *extensionId);
